@@ -37,7 +37,14 @@ flomo 对接（本环境实测可行的连接方式）
   2. notifications/initialized（带同一会话）。
   3. tools/call：body {method:tools/call, params:{name,arguments}}，带 Mcp-Session-Id 头；响应为 SSE，结果在 data 行的 result 里。
   4. 写 memo 前先调 get_format_guide 确认最新格式规范（含加粗/高亮/下划线/列表标签写法）。
-- 工具：memo_create（写）、memo_update（改）、memo_search（查）、memo_batch_get（批读）、memo_recommended（联想）、tag_tree（标签树）、tag_search（定位）、tag_rename（改标签名）、memory_context / memory_user（读记忆档案）。依赖 flomo Max 会员。
+- 工具与关键参数（本环境实测）：
+  - memo_search（查重/检索）：keywords（检索词，多词空格分隔表示 AND，勿用 | 或相对时间词）、tag、start_date、end_date、from、has_tag、limit（最多 50）。
+  - tag_tree（标签树）：prefix（前缀过滤）、depth、limit；tag_search（定位）：keywords、limit。
+  - memo_batch_get（批读）：ids（数组或单 id，最多 10）；memo_recommended（联想）：id、limit、no_same_tag。
+  - memo_create（写）：content（必填）、format；memo_update（改）：id（必填）、content、format、local_updated_at；tag_rename（改标签）：old_tag、new_tag（必填）、max_memos。
+  - memory_context / memory_user（读记忆档案）：无参数。
+  - get_format_guide / get_tag_guide：无参数；创建/整理前先调用确认规范。
+  - 依赖 flomo Max 会员。
 - 权限边界：只读（tag_tree、memo_search、memo_batch_get、memo_recommended、get_format_guide、get_tag_guide）可直接做；写操作（memo_create、memo_update、tag_rename）须把内容/改动完整展示给用户并征得明确授权后执行，绝不静默写云。
 
 卡片格式（写到云端 memo 的格式）
