@@ -124,11 +124,12 @@ def main():
         fm = c["fm"]
         tag = f"[{rel}]"
 
-        # source：原创允许留空，否则必须有
+        # source：按需，仅抓取外部资料才需要；原创可整行省略
         src = fm.get("source", "").strip()
-        has_source = bool(src) or bool(re.search(r"(?m)^##\s*来源", c["body"]))
-        if not has_source:
-            errors.append(f"{tag} 缺 source / ## 来源（原创请写 source: local://原创）")
+        has_body_source = bool(re.search(r"(?m)^##\s*来源", c["body"]))
+        if src and not has_body_source:
+            if not re.match(r"^https?://", src) and "://" not in src:
+                errors.append(f"{tag} source 不是合法 URL: {src}")
 
         if "tags" not in fm:
             warnings.append(f"{tag} frontmatter 缺 tags")
@@ -154,12 +155,9 @@ def main():
             errors.append(f"{tag} 正文过长({body_len}字>600)，应拆成多张卡片")
         elif body_len > BODY_MAX_WARN:
             warnings.append(f"{tag} 正文偏长({body_len}字>400)，考虑拆分")
-        elif body_len < BODY_MIN_WARN:
-            warnings.append(f"{tag} 正文过薄({body_len}字<20)，疑似空洞")
 
-        # 首行一句话定位：正文首段加粗
-        if not re.search(r"^\*\*.+?\*\*", c["body"], flags=re.M):
-            warnings.append(f"{tag} 缺少首行加粗『一句话定位』")
+        if not fm.get("created"):
+            warnings.append(f"{tag} 缺 created 日期（统一骨架要求 YYYY-MM-DD）")
 
     # 索引一致性：主标签下 >=INDEX_THRESHOLD 张卡却无索引卡 => 警告
     for maintag, bases in main_tag_cards.items():
