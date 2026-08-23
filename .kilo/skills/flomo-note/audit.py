@@ -67,27 +67,38 @@ def main():
         if ILLEGAL_FNAME.search(cw["name"]):
             errors.append(f"[{rel}] 文件名含非法字符: {cw['name']}")
 
-        tag_matches = TAG_RE.findall(cw["body"])
+        lines_ = cw["body"].splitlines()
+        first_line = lines_[0] if lines_ else ""
+        first_tags = TAG_RE.findall(first_line)              # 标签须集中在第一行单独成段
+        all_tags = TAG_RE.findall(cw["body"])                # 仅用于判"标签未放首行"
 
-        # 无标签：flomo 靠标签找卡，缺标签是缺陷
-        if not tag_matches:
+        if not first_tags:
+            warnings.append(f"[{rel}] 首行无标签——#标签 应单独放第一行成段，空一行再接正文")
+        else:
+            remain = re.sub(r"#[^\s#:]+", "", first_line).strip()
+            if remain:
+                errors.append(f"[{rel}] 首行标签未单独成段——第一行应只放 #标签，正文从第三行起（当前混有：{remain[:20]}）")
+            if len(all_tags) > len(first_tags):
+                errors.append(f"[{rel}] 除首行外还有标签——标签应全部集中在第一行标签段")
+
+        if not all_tags:
             warnings.append(f"[{rel}] 无任何 #标签")
             continue
 
         # 标签格式校验（flomo：无 emoji/特殊字符、段内无空格、层级 `<...>/<...>` 非空）
-        for body in tag_matches:
+        for body in first_tags:
             if not ALLOW_TAG.match(body):
                 errors.append(f"[{rel}] 非法标签 #/ {body} —— 仅允许汉字/字母/数字/下划线，层级用 / ，禁 emoji、&、空格等")
-        if len(tag_matches) > FILE_MAX_TAGS:
-            warnings.append(f"[{rel}] 标签数量 {len(tag_matches)}>7，建议精简")
+        if len(first_tags) > FILE_MAX_TAGS:
+            warnings.append(f"[{rel}] 标签数量 {len(first_tags)}>7，建议精简")
 
         # 外部资料出处：有"来源:"时其同行须带内容
         src_m = SRC_RE.search(cw["body"])
         if src_m and not src_m.group(1).strip():
             warnings.append(f"[{rel}] 来源: 后为空")
 
-        # 计数主标签（取每卡首个标签，及所有标签的第一段）用于概览一致性
-        first = tag_matches[0]
+        # 计数主标签（取首行首个标签的第一段）用于概览一致性
+        first = first_tags[0]
         maintag = first.split("/")[0]
         main_tag_cards.setdefault(maintag, []).append(cw["name"])
 
