@@ -92,10 +92,22 @@ def main():
         if len(first_tags) > FILE_MAX_TAGS:
             warnings.append(f"[{rel}] 标签数量 {len(first_tags)}>7，建议精简")
 
-        # 外部资料出处：有"来源:"时其同行须带内容
+        # 外部资料出处：有"来源:"时须放正文末尾（来源殿后）
         src_m = SRC_RE.search(cw["body"])
-        if src_m and not src_m.group(1).strip():
-            warnings.append(f"[{rel}] 来源: 后为空")
+        if src_m:
+            if not src_m.group(1).strip():
+                warnings.append(f"[{rel}] 来源: 后为空")
+            elif cw["body"][src_m.end():].strip():
+                warnings.append(f"[{rel}] 来源不在文末——「来源」应放正文最后一行")
+
+        # 正文结构：结论先行。标签段后应立即接一句话正文
+        rest = cw["body"].split("\n", 1)[1].strip() if "\n" in cw["body"] else ""
+        if not rest:
+            errors.append(f"[{rel}] 正文为空——标签段后需接正文")
+        else:
+            paras = [p.strip() for p in re.split(r"\n\s*\n", rest) if p.strip()]
+            if len(paras[0]) > 120:
+                warnings.append(f"[{rel}] 正文首句过长({len(paras[0])}字)——应为一句核心结论")
 
         # 计数主标签（取首行首个标签的第一段）用于概览一致性
         first = first_tags[0]
