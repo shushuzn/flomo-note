@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """flomo 卡片库只读质检（镜像 flomo-note SKILL.md 标尺）。
+卡片无 frontmatter：一条 MEMO，标签 `#标签/子标签` 写在正文行内（flomo 官方规则）。
 用法: python audit.py            # 打印报告并写入 audit-report.md
       python audit.py -s         # Strict: 有错误级缺陷则退出码 1
       python audit.py --no-report # 仅打印，不写文件（供 git pre-commit 钩子）
@@ -14,44 +15,18 @@ FLOMO_ROOT = r"D:\OpenClaw\flomo-note"
 EXCLUDED_DIRS = {".obsidian", ".kilo", ".workbuddy", ".git", ".githooks", "node_modules"}
 EXCLUDED_ROOT = {"AGENTS.md", "README.md"}
 ILLEGAL_FNAME = re.compile(r"[\\/:*?\"<>|]")
-# 主标签卡片达此数仍未建索引卡则警告
-INDEX_THRESHOLD = 6
+
+# flomo 标签只允许：汉字 / 字母 / 数字 / 下划线，层级用 `/`，段内不含空格与其它字符
+TAG_BODY = r"[\u4e00-\u9fffA-Za-z0-9_]+"
+ALLOW_TAG = re.compile(r"^" + TAG_BODY + r"(/" + TAG_BODY + r")*$")
+# 提取：`#` 后紧跟标签，且 `#` 前不是标签字符（避免句子里普通 `#` 干扰 markdown 标题/井号）
+TAG_RE = re.compile(r"(?<![A-Za-z0-9_\u4e00-\u9fff#])#([^\s#:]+)")
+SRC_RE = re.compile(r"来源\s*[:：]\s*(\S.*)", re.M)
+
 BODY_MAX_ERROR = 600
 BODY_MAX_WARN = 400
-BODY_MIN_WARN = 20
-
-
-def parse_frontmatter(text):
-    fm = {}
-    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
-    if not m:
-        return fm
-    lines = m.group(1).split("\n")
-    for i, line in enumerate(lines):
-        mm = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$", line)
-        if not mm:
-            continue
-        key, val = mm.group(1), mm.group(2).strip()
-        if key == "tags" and val == "":
-            items = []
-            j = i + 1
-            while j < len(lines):
-                bm = re.match(r"^\s*-\s+(.+)$", lines[j])
-                if not bm:
-                    break
-                items.append(bm.group(1).strip().strip('"').strip("'"))
-                j += 1
-            fm[key] = items
-        else:
-            fm[key] = val
-    return fm
-
-
-def body_text(body):
-    # 剥离 frontmatter 与一级标题后，去掉空白统计卡片正文长度（字+符号）
-    text = re.sub(r"^---\r?\n.*?\r?\n---\r?\n", "", body, count=1, flags=re.S)
-    text = re.sub(r"^#\s.*$", "", text, flags=re.M)
-    return re.sub(r"\s", "", text)
+FILE_MAX_TAGS = 7
+OVERVIEW_THRESHOLD = 6
 
 
 def main():
@@ -63,7 +38,6 @@ def main():
                 continue
             rel = os.path.relpath(os.path.join(root, fn), FLOMO_ROOT)
             parts = rel.split(os.sep)
-            # 只认库根（一层）平铺卡片；子目录（含索引）也算，但排除根元文件
             if len(parts) == 1 and fn in EXCLUDED_ROOT:
                 continue
             card_files.append(os.path.join(root, fn))
@@ -71,7 +45,10 @@ def main():
     errors = []
     warnings = []
 
+    overviews = set()          # 已存在的概览卡文件名（去扩展名，含"概览"）
+    main_tag_cards = {}        # 主标签(首标签第一段) -> 卡名列表
     cards = {}
+
     for path in card_files:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -79,103 +56,62 @@ def main():
         if content.startswith("\ufeff"):
             errors.append(f"[{rel}] 含 UTF-8 BOM（skill 要求无 BOM UTF-8）")
             content = content.lstrip("\ufeff")
-        fm = parse_frontmatter(content)
-        ntype = fm.get("type", "memo")
-        if ntype not in ("memo", "index"):
-            continue
         base = os.path.splitext(os.path.basename(path))[0]
-        cards[base.lower()] = {
-            "name": base, "path": rel, "type": ntype,
-            "fm": fm, "body": content,
-        }
+        cards[base.lower()] = {"name": base, "path": rel, "body": content}
+        if "概览" in base and content.count("#") == 0:
+            overviews.add(base)
 
-    # 主标签 -> memo 卡列表
-    main_tag_cards = {}
-    for base, c in cards.items():
-        if c["type"] != "memo":
-            continue
-        tags = c["fm"].get("tags")
-        if isinstance(tags, list) and tags:
-            main_tag_cards.setdefault(tags[0], []).append(base)
-        elif isinstance(tags, str) and tags.startswith("["):
-            m = re.search(r'"([^"]+)"', tags)
-            if m:
-                main_tag_cards.setdefault(m.group(1), []).append(base)
+    for base_l, c in cards.items():
+        cw = cards[base_l]
+        rel = cw["path"]
+        if ILLEGAL_FNAME.search(cw["name"]):
+            errors.append(f"[{rel}] 文件名含非法字符: {cw['name']}")
 
-    # 索引卡按主标签归类（首 tag 即索引卡的标签）
-    index_by_main = {}
-    for base, c in cards.items():
-        if c["type"] != "index":
-            continue
-        tags = c["fm"].get("tags")
-        if isinstance(tags, list) and tags:
-            index_by_main.setdefault(tags[0], []).append(base)
+        tag_matches = TAG_RE.findall(cw["body"])
 
-    for base in sorted(cards.keys()):
-        c = cards[base]
-        rel = c["path"]
-        if ILLEGAL_FNAME.search(c["name"]):
-            errors.append(f"[{rel}] 文件名含非法字符: {c['name']}")
-
-        if c["type"] != "memo":
-            # index 卡：creator/type/tags 即可，不查 source
+        # 无标签：flomo 靠标签找卡，缺标签是缺陷
+        if not tag_matches:
+            warnings.append(f"[{rel}] 无任何 #标签")
             continue
 
-        fm = c["fm"]
-        tag = f"[{rel}]"
+        # 标签格式校验（flomo：无 emoji/特殊字符、段内无空格、层级 `<...>/<...>` 非空）
+        for body in tag_matches:
+            if not ALLOW_TAG.match(body):
+                errors.append(f"[{rel}] 非法标签 #/ {body} —— 仅允许汉字/字母/数字/下划线，层级用 / ，禁 emoji、&、空格等")
+        if len(tag_matches) > FILE_MAX_TAGS:
+            warnings.append(f"[{rel}] 标签数量 {len(tag_matches)}>7，建议精简")
 
-        # source：按需，仅抓取外部资料才需要；原创可整行省略
-        src = fm.get("source", "").strip()
-        has_body_source = bool(re.search(r"(?m)^##\s*来源", c["body"]))
-        if src and not has_body_source:
-            if not re.match(r"^https?://", src) and "://" not in src:
-                errors.append(f"{tag} source 不是合法 URL: {src}")
+        # 外部资料出处：有"来源:"时其同行须带内容
+        src_m = SRC_RE.search(cw["body"])
+        if src_m and not src_m.group(1).strip():
+            warnings.append(f"[{rel}] 来源: 后为空")
 
-        if "tags" not in fm:
-            warnings.append(f"{tag} frontmatter 缺 tags")
-        else:
-            tv = fm["tags"]
-            if isinstance(tv, list):
-                if len(tv) == 0:
-                    warnings.append(f"{tag} tags 为空数组")
-                if len(tv) > 5:
-                    warnings.append(f"{tag} tags 数量>5，建议精简")
-            elif isinstance(tv, str):
-                if not re.match(r"^\[.*\]$", tv):
-                    errors.append(f"{tag} tags 非数组: {tv}")
-                else:
-                    inner = tv[1:-1].strip()
-                    if inner == "":
-                        warnings.append(f"{tag} tags 为空数组")
-                    elif '"' not in inner:
-                        errors.append(f"{tag} tags 含裸词(未引号): {tv}")
+        # 计数主标签（取每卡首个标签，及所有标签的第一段）用于概览一致性
+        first = tag_matches[0]
+        maintag = first.split("/")[0]
+        main_tag_cards.setdefault(maintag, []).append(cw["name"])
 
-        body_len = len(body_text(c["body"]))
+        # 长度
+        body_len = len(re.sub(r"\s", "", cw["body"]))
         if body_len > BODY_MAX_ERROR:
-            errors.append(f"{tag} 正文过长({body_len}字>600)，应拆成多张卡片")
+            errors.append(f"[{rel}] 正文过长({body_len}字>600)，应拆成多张卡片")
         elif body_len > BODY_MAX_WARN:
-            warnings.append(f"{tag} 正文偏长({body_len}字>400)，考虑拆分")
+            warnings.append(f"[{rel}] 正文偏长({body_len}字>400)，考虑拆分")
 
-        if not fm.get("created"):
-            warnings.append(f"{tag} 缺 created 日期（统一骨架要求 YYYY-MM-DD）")
+    # 概览一致性：某主标签下 >=OVERVIEW_THRESHOLD 张卡且无对应概览卡 => 建议
+    for maintag, names in main_tag_cards.items():
+        if len(names) >= OVERVIEW_THRESHOLD and maintag not in overviews:
+            warnings.append(f"主标签 #{maintag} 已有 {len(names)} 张卡片，可建同名概览卡")
 
-    # 索引一致性：主标签下 >=INDEX_THRESHOLD 张卡却无索引卡 => 警告
-    for maintag, bases in main_tag_cards.items():
-        if len(bases) >= INDEX_THRESHOLD and maintag not in index_by_main:
-            warnings.append(f"主标签 #{maintag} 已有 {len(bases)} 张卡片，建议建索引卡")
-
-    memo_count = sum(1 for c in cards.values() if c["type"] == "memo")
-    index_count = sum(1 for c in cards.values() if c["type"] == "index")
-
+    of = os.path.join(FLOMO_ROOT, ".kilo", "skills", "flomo-note", "audit-report.md")
+    all_cards = [c for c in card_files if c not in (EXCLUDED_ROOT or {})]
     lines = []
     lines.append("# flomo 卡片质检报告")
     lines.append(f"生成时间: {__import__('datetime').datetime.now():%Y-%m-%d %H:%M}")
     lines.append(f"库根: {FLOMO_ROOT}")
     lines.append("")
     lines.append("## 概览")
-    lines.append(f"- 卡片总数(memo+index): {len(cards)}")
-    lines.append(f"- memo 卡: {memo_count}")
-    lines.append(f"- index 卡: {index_count}")
+    lines.append(f"- 卡片总数: {len(cards)}")
     lines.append(f"- 错误级缺陷: {len(errors)}")
     lines.append(f"- 警告级缺陷: {len(warnings)}")
     lines.append("")
@@ -192,8 +128,7 @@ def main():
 
     report = "\n".join(lines)
     if "--no-report" not in sys.argv:
-        out_path = os.path.join(FLOMO_ROOT, ".kilo", "skills", "flomo-note", "audit-report.md")
-        with open(out_path, "w", encoding="utf-8") as f:
+        with open(of, "w", encoding="utf-8") as f:
             f.write(report)
     print(report)
 
