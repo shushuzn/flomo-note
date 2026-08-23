@@ -9,6 +9,11 @@
 node_modules/
 *.log
 
+# 本地 MCP 配置含个人 token，不入库
+.mcp.json
+.flomo_token
+.env
+
 # 系统文件
 .DS_Store
 Thumbs.db
