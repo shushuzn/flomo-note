@@ -28,14 +28,17 @@ flomo 卡片笔记（云端）
 - 需先征得用户明确允许：① flomo.memo_create、flomo.memo_update、flomo.tag_rename（写/改云端数据，每次执行前说明将写入的内容并等同意）；② 下载/保存文件到本地；③ 调用需下载或消耗资源的本地重型工具；④ 任何用户此前明确反对的路径。
 - 每步动作开头先自标类别（"只读"或"需授权"），对需授权动作说明后果并停下等待同意；拿不准按需授权处理。
 
-flomo MCP 集成（前置条件）
+flomo 对接（本环境实测可行的连接方式）
 
-- 依赖 flomo Max 会员，且项目 .mcp.json 已配置远程 server（https://flomoapp.com/mcp 加 streamable-http 加 Bearer token），并已连接。
-- 本技能全靠 MCP 读写云端；若 server 未连接，不得改用本地文件代存，而是告知用户需先重启加载 MCP 连接 flomo。
-- 可用工具：
-  - 笔记：memo_create（写入，支持标签与格式）、memo_search（关键词、标签、时间、语义检索）、memo_batch_get（批量读）、memo_update（改）、memo_recommended（找相关内容）。
-  - 标签：tag_tree（云端完整标签树）、tag_search（定位）、tag_rename（改标签名，关联同步）。
-  - 记忆：memory_context、memory_user（读已生成的记忆档案，需先在 flomo 生成）。
+- flomo 提供 streamable-http 的 MCP 端点 https://flomoapp.com/mcp，用 Bearer 鉴权（token 由用户提供，记在项目 .mcp.json）。本环境 TRAE 无 MCP 面板，且 .mcp.json 不会被加载（run_mcp 报 server not found），MCP 框架直连走不通。
+- 实测可用方式：用 curl 直连该端点，先 MCP 握手拿会话，再 tools/call 调工具。
+- 调用步骤：
+  1. initialize：curl.exe -s -X POST https://flomoapp.com/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -H "Authorization: Bearer <token>" --data-binary "MCP initialize 请求 JSON"，从响应头 Mcp-Session-Id 拿会话 ID。
+  2. notifications/initialized（带同一会话）。
+  3. tools/call：body {method:tools/call, params:{name,arguments}}，带 Mcp-Session-Id 头；响应为 SSE，结果在 data 行的 result 里。
+  4. 写 memo 前先调 get_format_guide 确认最新格式规范（含加粗/高亮/下划线/列表标签写法）。
+- 工具：memo_create（写）、memo_update（改）、memo_search（查）、memo_batch_get（批读）、memo_recommended（联想）、tag_tree（标签树）、tag_search（定位）、tag_rename（改标签名）、memory_context / memory_user（读记忆档案）。依赖 flomo Max 会员。
+- 权限边界：只读（tag_tree、memo_search、memo_batch_get、memo_recommended、get_format_guide、get_tag_guide）可直接做；写操作（memo_create、memo_update、tag_rename）须把内容/改动完整展示给用户并征得明确授权后执行，绝不静默写云。
 
 卡片格式（写到云端 memo 的格式）
 
@@ -54,10 +57,10 @@ flomo MCP 集成（前置条件）
 
 来源: https://example.com
 
-flomo 富文本边界（官方）：flomo 整体不做 Markdown——不渲染标题、表格、引用、链接、代码块、图片、星号加粗等标准语法。它只内建 5 种原生格式：加粗、高亮、下划线、无序列表（- 空格）、有序列表（1. 空格），编辑器内用快捷键生成。因此正文不写任何 Markdown 排版符号，只用：
-- 纯文本换行分段；
-- flomo 无序/有序列表（- 要点 / 1. 要点）列要点与成组数字；
-- 强调用 flomo 内的加粗/高亮（不写星号或等号标记，MCP 写入不依赖不可靠标记）。
+flomo 富文本边界（官方 get_format_guide 实测）：
+- 支持并渲染：加粗 **文字**、高亮 <mark>文字</mark>、下划线 <u>文字</u>、无序列表 - 项目（两级嵌套用两空格缩进）、有序列表 1. 项目；段落用空行分隔。
+- 不渲染：标题、引用、代码块、链接、表格、图片等其他语法（只作纯文本；外部来源链接按用户要求保留为纯文本行，不追求可点链接）。
+- 正文按需用这些原生格式，避免写不生效的 Markdown 排版符号。
 
 标签规则（flomo 官方）：
 - 第一行即标签段：一个或多个 #标签，空格分隔。
