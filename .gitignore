@@ -1,0 +1,13 @@
+# 内部工作数据区（不交付用户）
+.kilo/
+
+# 中间态/草稿/缓存（不交付用户）
+.workbuddy/
+
+# 依赖与日志
+node_modules/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
