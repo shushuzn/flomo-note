@@ -77,7 +77,7 @@ flomo 对接（本环境实测可用）
 
 - flomo 提供 streamable-http MCP 端点 https://flomoapp.com/mcp，Bearer 鉴权（token 在 .mcp.json）。本环境无 MCP 面板，.mcp.json 不被加载，MCP 框架直连走不通。
 - 实测可用 curl 直连：initialize（从响应头 Mcp-Session-Id 拿会话）→ notifications/initialized → tools/call（带会话头）；SSE 结果在 data 行的 result。写 memo 前先 get_format_guide 确认格式。
-- 工具与参数见 flomo_client.py（实测透传 JSON，无额外封装）；仅记差异项：memo_create(content/format)、memo_update(id/content/format/local_updated_at)、tag_rename(old_tag/new_tag/max_memos)；依赖 flomo Max 会员。
+- 工具与参数见 flomo_client.py（实测透传 JSON，无额外封装）；仅记差异项：memo_create(content；format 可选字符串 markdown/html，勿传布尔、省略即纯文本)、memo_update(id/content；format 可选同 memo_create)、tag_rename(old_tag/new_tag/max_memos)；依赖 flomo Max 会员。
 
 记录流程（每次经 MCP 写云端）
 
