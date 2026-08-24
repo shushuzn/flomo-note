@@ -1,6 +1,6 @@
 ---
 name: flomo-note
-description: 通过 flomo MCP 把网页、文章、想法整理成 flomo 卡片，直接写入云端 flomo 账号。本地不存任何笔记。当用户发送链接、要求保存文章、抓取网页、随手记想法、整理资料、新建或更新云端 memo 时使用；纯闲聊不触发。轻量卡片 + 标签聚合，一事一卡、去文件夹。
+description: Use when the user sends a link, asks to save an article, clip a webpage, jot a thought, or create/update a flomo memo. 通过 flomo MCP 把网页、文章、想法整理成 flomo 卡片，直接写入云端 flomo 账号；本地不存任何笔记正文。纯闲聊不触发。轻量卡片 + 标签聚合，一事一卡、去文件夹。
 ---
 
 flomo 卡片笔记（云端）
