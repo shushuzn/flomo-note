@@ -30,6 +30,7 @@ SOUNDING_TMP_WIN="$(cygpath -w "$SOUNDING_TMP")"
 
 DO_MCP=0
 KEEP=0
+rc=0
 for a in "$@"; do
   case "$a" in
     --mcp)  DO_MCP=1 ;;
@@ -37,6 +38,21 @@ for a in "$@"; do
     *) echo "未知参数: $a" >&2; exit 2 ;;
   esac
 done
+
+# 跑一次审计并解析 score：score<100（即存在 finding）则记失败，便于接 CI 门禁
+run_audit() {
+  local target="$1"
+  local out
+  out="$( cd "$SOUNDING_TMP" && PYTHONPATH=src "$PYTHON" -m sounding.cli audit "$target" 2>&1 )"
+  echo "$out"
+  local score
+  score="$(printf '%s' "$out" | grep -oE 'score[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)"
+  if [ -z "$score" ] || [ "$score" -lt 100 ]; then
+    echo "  !! 审计未通过（score=${score:-?}/100），见上方输出"
+    return 1
+  fi
+  return 0
+}
 
 # 克隆 sounding（缺失时）
 if [ ! -d "$SOUNDING_TMP/.git" ]; then
@@ -48,7 +64,7 @@ fi
 
 # 审计 SKILL.md
 echo "== sounding audit: SKILL.md =="
-( cd "$SOUNDING_TMP" && PYTHONPATH=src "$PYTHON" -m sounding.cli audit "$SKILL_DIR_WIN" )
+run_audit "$SKILL_DIR_WIN" || rc=1
 
 # 可选：导出并审计 flomo MCP 工具
 if [ "$DO_MCP" -eq 1 ]; then
@@ -72,7 +88,7 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
 print("导出 descriptor ->", sys.argv[2])
 PY
   echo "== sounding audit: flomo MCP tools =="
-  ( cd "$SOUNDING_TMP" && PYTHONPATH=src "$PYTHON" -m sounding.cli audit "$DESC_WIN" )
+  run_audit "$DESC_WIN" || rc=1
 fi
 
 # 清理临时克隆（默认用完即清，符合 SKILL 记忆维护纪律）
@@ -80,3 +96,6 @@ if [ "$KEEP" -eq 0 ]; then
   rm -rf "$SOUNDING_TMP"
   echo "已清理临时克隆 $SOUNDING_TMP"
 fi
+
+# 任一次审计 score<100 即返回非 0（CI 门禁）
+exit $rc
