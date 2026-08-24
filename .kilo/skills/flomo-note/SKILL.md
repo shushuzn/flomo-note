@@ -21,7 +21,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 
 ## 执行铁律
 
-1. 只读工具（memo_search/tag_tree/memo_batch_get/memo_recommended/get_* /memory_* /webfetch/websearch）直接做；写操作（memo_create/memo_update/tag_rename）先展示内容并等明确同意，绝不静默写云。
+1. 只读工具（memo_search/tag_tree/memo_batch_get/memo_recommended/get_* /memory_* /webfetch/websearch）直接做。**新建卡（memo_create）免确认**：抓取→查重→自检 EXIT=0 后直接写云，不展示等批。**改既有内容/标签（memo_update/tag_rename）先展示改动前后并等明确授权**，绝不静默覆盖或改名。
 2. 带来源 URL 的卡，写入前该 URL 必须已真实抓取并基于实际内容写作；抓取失败/空 SPA 壳且无外链可追，禁止写云（不得凭域名臆测）。
 3. 调 flomo 一律走 `python scripts/flomo_client.py <tool> --file <json路径>`（从文件读 JSON，避 PowerShell 引号转全角）；不写内联 JSON。
 4. 写云前必查重并显式报告结论（命中什么/无重复），不敷衍。
@@ -65,7 +65,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 3. **定标签**：`tag_tree` 现采完整树，命中既有簇；新建先现查近邻。
 4. **查重（阻塞）**：`memo_search` 关键词扫 + `tag_tree` 列该主标签细分逐条比对（主标签维度检索常返回 0，须退回关键词+逐条比对）。无命中→新建；完全重复→指原卡；部分重叠→更新原卡。
 5. **写作**：按卡片格式写 1 条。
-6. **写云前自检（阻塞）**：`python scripts/validate_memo.py --content "..."` 须 EXIT=0（0 ERR）才许写云；任一项 ERR 先改再写，禁止把云端当草稿反复 memo_update。
+6. **写云前自检（阻塞）**：`python scripts/validate_memo.py --content "..."` 须 EXIT=0（0 ERR）才许写云；任一项 ERR 先改再写，禁止把云端当草稿反复 memo_update。**自检通过即调 memo_create 写云，免确认**（判定以脚本 `[成功] 已写入 memo id=` 为准）。
 7. **复盘（写卡后必做，须现查）**：`memo_search` 关键词扫近邻 + `tag_tree` 列同主标签细分，逐一判断：
    - 标签归并（真可行）：两卡仅标签命名不同、本质同类 → 提议 `tag_rename`，需授权。
    - 内容聚合（只提议）：与既有卡实质重叠 → 提议"并入某卡，源卡留待你手动删"，绝不声明已合并。
