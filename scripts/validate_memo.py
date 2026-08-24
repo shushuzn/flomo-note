@@ -38,7 +38,9 @@ def check(content):
     if not first.startswith("#"):
         err("首行必须是标签段（以 # 开头）；无标签的卡片无法检索")
     else:
-        for t in first.split():
+        tags = first.split()
+        has_slash = any("/" in t for t in tags)
+        for t in tags:
             if not t.startswith("#"):
                 err(f"标签必须以 # 开头：{t}")
                 continue
@@ -50,6 +52,9 @@ def check(content):
                 err(f"标签含非法字符（仅允许中文/英文/数字/下划线/层级 /）：{t}")
             if not TAG_NO_BAD.search(name):
                 err(f"标签包含空格/< /# /& 等终止字符：{t}")
+            # 子标签前缀检查：存在带 / 的主标签时，裸二级（无 /）即疑似建错顶层
+            if has_slash and "/" not in name:
+                err(f"疑似裸子标签（无主标签前缀）：{t} —— 应写成 #主/子，否则会建出独立顶层标签")
 
     # 2) 标签段独占一行
     if len(lines) > 1 and lines[1].strip() != "":
@@ -83,13 +88,16 @@ def check(content):
         if re.search(r"\[[^\]]*\]\(https?://", s):
             warn(f"第 {i} 行 Markdown 链接 [text](url)（flomo 不渲染；来源用'来源: URL'纯文本行）")
 
-    # 5) 来源行
+    # 5) 来源行（兼容 flomo 渲染后的 [text](url) 形态）
     for ln in lines:
-        m = re.match(r"^\s*来源:\s*(\S+)\s*$", ln)
+        m = re.match(r"^\s*来源:\s*(.+?)\s*$", ln)
         if m:
             u = m.group(1)
-            if not u.startswith(("http://", "https://")):
-                err(f"来源不是合法 http(s)/https URL：{u}")
+            # 提取真实 URL：优先 Markdown 链接 [..](url)，否则直接 URL
+            mm = re.search(r"\((https?://[^)]+)\)", u)
+            url = mm.group(1) if mm else u
+            if not url.startswith(("http://", "https://")):
+                err(f"来源不是合法 http(s)/https URL：{url}")
             break
 
     # 6) 占位 / 生造来源风险
