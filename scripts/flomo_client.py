@@ -160,6 +160,19 @@ def main():
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
     result = client.tool(name, arguments)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    # 写操作后强制校验结构化 id，杜绝"看不到 id 就当成失败重发"导致的重复写。
+    # flomo 成功响应中 id 位于 result.structuredContent.id（嵌套结构），
+    # 取不到即视为失败，退出码非 0，下游自动化不会据此重试。
+    if name in ("memo_create", "memo_update"):
+        try:
+            created_id = result["structuredContent"]["id"]
+        except (TypeError, KeyError):
+            sys.stderr.write(
+                "[失败] 写操作响应中未取到 structuredContent.id，"
+                "按失败处理，禁止基于猜测重发写请求。\n"
+            )
+            return 1
+        sys.stderr.write(f"[成功] 已写入 memo id={created_id}\n")
     return 0
 
 
