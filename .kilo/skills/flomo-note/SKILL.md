@@ -7,9 +7,13 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 本文件是执行细则唯一来源；项目总则见 AGENTS.md，两者不重复。体系：flomo 极简卡片 + 标签聚合，笔记只存云端，本地不落任何卡片正文；本目录仅存本技能、AGENTS.md、.mcp.json。
 
+## 能力边界（一次讲清，之后不再提）
+
+flomo 提供的写操作只有三个：`memo_create`、`memo_update`、`tag_rename`。**没有 `memo_delete`**。因此任何"删卡"动作都只能由用户在 flomo App 里手动完成——技能侧既无命令也无接口，也绝不在流程里把"删除"列为步骤或待办。本 SKILL 不主动提示删卡、不把删卡当作收口事项。
+
 ## 执行铁律（动手前先对照，违背即事故）
 
-1. **授权分类**：memo_search、tag_tree、memo_batch_get、memo_recommended、get_format_guide、get_tag_guide、memory_context、memory_user、webfetch、websearch 可直接做；memo_create、memo_update、tag_rename 必须先展示内容并等明确同意，绝不静默写云端。无 memo_delete 能力，删除由用户在 App 手动做。
+1. **授权分类**：`memo_search`、`tag_tree`、`memo_batch_get`、`memo_recommended`、`get_format_guide`、`get_tag_guide`、`memory_context`、`memory_user`、`webfetch`、`websearch` 可直接做；`memo_create`、`memo_update`、`tag_rename` 必须先展示内容并等明确同意，绝不静默写云端。
 2. **写前必抓取**：带来源 URL 的 memo，写入前该 URL 必须已真实抓取并基于实际内容写作；未抓取/失败/凭链接猜一律禁止写云。纯想法无来源 memo 不受限但不得虚构来源，生造 URL 视同编造。
 3. **脚本传参**：调 flomo 一律走 `flomo_client.py --file <路径>` 从文件读 JSON（PowerShell 中文环境会把内联引号转全角致解析失败），绝不用内联 JSON。
 4. **查重阻塞**：写云前必须查重，并显式报告结论（命中什么/无重复），不得用"已查重"三字敷衍。
@@ -100,10 +104,10 @@ description: Use when the user sends a link, asks to save an article, clip a web
 5. **写作**：按卡片格式写成 1 条；可用 memo_recommended/memo_search 调旧记录衔接。
 6. **写云前格式自检（阻塞式，不靠写完拉回纠错）**：调 `python scripts/validate_memo.py --content "..."`（或 `--create 请求json`）跑脚本，须 EXIT=0（0 ERR）才许写云；脚本覆盖 ①标签段首行/每个带#/子标签带主前缀（裸#子报 ERR）②标签段后空行 ③flomo 不支持的 MD 语法 ④来源行合法 URL（兼容 flomo 渲染后的 [text](url)）⑤占位/生造。WARN 不阻塞但须人工确认。任一项 ERR 先改再写，禁止把云端当草稿反复 memo_update。
 7. **复盘建议（收口必做，两条缺一不可，每条极简给落点+执行+状态）**：
-   - 常规：用 memo_search/memo_recommended 找相关 memo，判是否更新/合并/删除/升级框架卡（复盘主责在 memo 网络，不在配置文件）。无操作项说"本轮无 memo 需更新"。
+   - 常规：用 memo_search/memo_recommended 找相关 memo，判是否更新/合并/升级框架卡（复盘主责在 memo 网络，不在配置文件）。无操作项说"本轮无 memo 需更新"。
    - 创新：当下可执行的增值动作——优先给 memo 层面建议，其次才是 SKILL 加规则；无创新说"本轮无强创新点"，不用触发条件式凑数。复盘提 SKILL 改动须是反复踩坑的共性规则，单次偶发不值得进 SKILL（避免膨胀）。
    - 落地状态标注：有 commit 附 hash；无需改文件标"已落地（无需改文件）"；未拍板标"待你决定"。禁止声明已落地而实际未执行。
-8. **更新云端 memo（常驻末步，需授权）**：查重判部分重叠、你点名改、或需合并标签时执行。先 memo_search+memo_batch_get 定位通读，展示改动前后，同意调 memo_update（保持首行标签段）。无需求明示"本轮无 memo 需更新"。memo_delete 不提供，由用户在 App 手动删（先展示拟删项征得同意，删完复盘明示含 memo id）。
+8. **更新云端 memo（常驻末步，需授权）**：查重判部分重叠、你点名改、或需合并标签时执行。先 memo_search+memo_batch_get 定位通读，展示改动前后，同意调 memo_update（保持首行标签段）。无需求明示"本轮无 memo 需更新"。
    - **创建后核验（防重复写）**：memo_create 调用后必须从响应的 `structuredContent.id` 字段取回 id 确认成功，**不得用正则硬扒外层 JSON**（嵌套结构会漏匹配，误判"失败"导致重试重复写）。取不到 id 即按失败处理，绝不基于猜测重发写请求。
 
 ## 正文防标签误识别
