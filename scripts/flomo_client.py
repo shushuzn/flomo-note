@@ -141,6 +141,9 @@ def usage():
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
         return usage()
