@@ -64,11 +64,7 @@ def check(content):
     body = "\n".join(lines[1:]).strip()
     if not body:
         err("正文为空")
-    wc = len(body)
-    if wc > 600:
-        err(f"正文 {wc} 字，超过 600 字应拆分为多条 memo")
-    elif wc > 400:
-        warn(f"正文 {wc} 字偏长（SKILL 建议 40-300 字，超约 400 建议拆分）")
+    # 不设字数上限（SKILL 第103行）：长度由内容定，够清楚即可，不检查。
 
     # 4) flomo 不渲染的 Markdown 语法检测
     for i, ln in enumerate(lines[1:], start=2):
