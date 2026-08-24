@@ -21,7 +21,7 @@ SKILL_DIR="$REPO_ROOT/.kilo/skills/flomo-note"
 FLOMO_CLIENT="$SCRIPT_DIR/flomo_client.py"
 
 PYTHON="${SOUNDING_PY:-/c/Users/35234/.workbuddy/binaries/python/versions/3.13.12/python.exe}"
-SOUNDING_TMP="${SOUNDING_TMP:-/c/Users/35234/AppData/Local/Temp/sounding_audit}"
+SOUNDING_TMP="${SOUNDING_TMP:-$(mktemp -d 2>/dev/null || echo /c/Users/35234/AppData/Local/Temp/sounding_audit_$$)}"
 
 # 传给 Windows Python 的路径需转成 Windows 形态（git-bash 的 /d/... 在 Windows Python 下会解析错）
 SKILL_DIR_WIN="$(cygpath -w "$SKILL_DIR")"
@@ -57,7 +57,6 @@ run_audit() {
 # 克隆 sounding（缺失时）
 if [ ! -d "$SOUNDING_TMP/.git" ]; then
   echo "克隆 sounding 到 $SOUNDING_TMP ..."
-  rm -rf "$SOUNDING_TMP"
   git clone --depth 1 https://github.com/alinotfoundbtw/sounding.git "$SOUNDING_TMP" \
     || { echo "sounding 克隆失败，请检查网络/路径"; exit 1; }
 fi
