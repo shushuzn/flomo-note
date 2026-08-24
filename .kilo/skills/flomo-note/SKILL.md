@@ -104,6 +104,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
    - 创新：当下可执行的增值动作——优先给 memo 层面建议，其次才是 SKILL 加规则；无创新说"本轮无强创新点"，不用触发条件式凑数。复盘提 SKILL 改动须是反复踩坑的共性规则，单次偶发不值得进 SKILL（避免膨胀）。
    - 落地状态标注：有 commit 附 hash；无需改文件标"已落地（无需改文件）"；未拍板标"待你决定"。禁止声明已落地而实际未执行。
 8. **更新云端 memo（常驻末步，需授权）**：查重判部分重叠、你点名改、或需合并标签时执行。先 memo_search+memo_batch_get 定位通读，展示改动前后，同意调 memo_update（保持首行标签段）。无需求明示"本轮无 memo 需更新"。memo_delete 不提供，由用户在 App 手动删（先展示拟删项征得同意，删完复盘明示含 memo id）。
+   - **创建后核验（防重复写）**：memo_create 调用后必须从响应的 `structuredContent.id` 字段取回 id 确认成功，**不得用正则硬扒外层 JSON**（嵌套结构会漏匹配，误判"失败"导致重试重复写）。取不到 id 即按失败处理，绝不基于猜测重发写请求。
 
 ## 正文防标签误识别
 
