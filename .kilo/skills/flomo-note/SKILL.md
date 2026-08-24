@@ -124,3 +124,4 @@ flomo 对接（本环境实测可用）
 - 云端状态/机制不进 project_memory：标签树/卡清单/总数/已写入 SKILL 的规则均不记忆，需时现查 tag_tree，机制唯一源为 SKILL.md。
 - 记忆只留 SKILL 与云端都重建不了的增量（项目特有经验），不罗列当前具体卡名单/卡数。
 - SKILL.md 自身治理纪律（视同生产配置）：改动前先通读全文定位落点、确认不重复/不冲突（今天分散编辑漏看落点、边写边踩坑的教训）；改动走 commit+自动 push（见 AGENTS 第7条）；绝不静默写入 SKILL，凡称"已提交/已推送"须附真实 commit hash。
+- 改动后本地自校（CI 化自测）：用 sounding（alinotfoundbtw/sounding，确定性 linter，无依赖）静态审计 SKILL.md，目标 0 high/medium、score 100/100。命令：把仓库克隆到临时目录后 `PYTHONPATH=src <managed python 3.13> -m sounding.cli audit <本技能目录>`；flomo_client.py 的 FLOMO_MCP_TOOLS 可导出 descriptor（顶层 name/version/tools）给 sounding 的 MCP 适配器审 flomo 工具（无参工具 inputSchema 用 {"type":"object"}、不带 properties 键，避免 MCP007）。审计不联网、不改文件、可复现；临时克隆与导出 json 用完即清，不进仓库。
