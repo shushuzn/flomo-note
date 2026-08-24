@@ -163,5 +163,119 @@ def main():
     return 0
 
 
+# 标准 MCP 工具契约（客户端侧镜像，供 sounding 等治理工具审计）。
+# flomo_client.py 透传任意工具名，此处只声明实际由 flomo MCP server 暴露、
+#本项目常用且有明确参数的工具；webfetch/websearch/memory_* 属环境级通用工具，
+#不在此 flomo 契约内。字段对齐 MCP spec：name / description / inputSchema / annotations。
+FLOMO_MCP_TOOLS = [
+    {
+        "name": "memo_create",
+        "description": "新建一张 flomo 云端 memo。content 为卡片正文（首行即标签段，空一行接正文）；format 可选 markdown/html，省略即纯文本。当要把网页、文章或想法沉淀成云端卡片、且已征得用户授权时使用。只读查询或更新已有 memo 不要用它，应改用 memo_search 或 memo_update。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "卡片正文，首行标签段加空行接正文"},
+                "format": {"type": "string", "description": "可选，markdown 或 html；省略即纯文本"},
+                "linked_memos": {"type": "array", "items": {"type": "string"}, "description": "可选，关联的其他 memo id 列表"}
+            },
+            "required": ["content"]
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
+    },
+    {
+        "name": "memo_update",
+        "description": "更新一张已有 flomo memo 的内容或标签。id 指定目标；content 为新正文（覆盖式），format 同 memo_create，local_updated_at 用于并发防覆盖。当要修改已落云卡片、且已授权时使用。新建卡片请用 memo_create，不要误用本工具。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "目标 memo 的 id（slug）"},
+                "content": {"type": "string", "description": "新正文，覆盖原内容"},
+                "format": {"type": "string", "description": "可选，markdown 或 html"},
+                "local_updated_at": {"type": "string", "description": "可选，本地更新时间戳用于并发控制"}
+            },
+            "required": ["id"]
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
+    },
+    {
+        "name": "memo_search",
+        "description": "按关键词或标签检索云端 memo。keywords 与 tag 二选一或并用；limit 限制返回条数。当要查重、找历史卡片、核对某主题是否已记录时使用。新建卡片前必须先调用本工具做查重。不需要全文抓取内容时不要用 tag_tree。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "keywords": {"type": "string", "description": "关键词，匹配正文与标签"},
+                "tag": {"type": "string", "description": "按顶层或子标签精确检索"},
+                "limit": {"type": "integer", "description": "返回条数上限，默认 10"}
+            },
+            "required": []
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "memo_batch_get",
+        "description": "按 id 或 slug 批量取 memo 完整内容，含正文、标签与时间戳。当要读某张卡全文、确认 linked_memos 或取 local_updated_at 以更新卡时使用。单卡概览可用 tag_tree，不必本工具。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}, "description": "memo id 列表"},
+                "slugs": {"type": "array", "items": {"type": "string"}, "description": "memo slug 列表"}
+            },
+            "required": []
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "memo_recommended",
+        "description": "获取 flomo 推荐的关联 memo，按时间或主题排序。当要发现可合并或相关的邻近卡片、做复盘查重时使用。不需要推荐、只想精确检索时用 memo_search。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "返回条数上限"}
+            },
+            "required": []
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "tag_tree",
+        "description": "返回云端全部标签的层级树，含顶层、子标签与计数。当要现采标签树、查重前核近义顶层、或维护顶层词表时使用。只想要某主题卡片请用 memo_search，不要本工具。",
+        "inputSchema": {
+            "type": "object"
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "tag_rename",
+        "description": "全库重命名一个标签，old_tag 改为 new_tag，会同步改所有引用该标签的 memo。写操作、不可逆，调用前必须授权。当要合并、规范化标签或修正拼写时使用。单卡改标签请用 memo_update，不要本工具。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "old_tag": {"type": "string", "description": "原标签名，含顶层斜杠"},
+                "new_tag": {"type": "string", "description": "新标签名"},
+                "max_memos": {"type": "integer", "description": "受影响 memo 上限，防误改范围过大"}
+            },
+            "required": ["old_tag", "new_tag"]
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}
+    },
+    {
+        "name": "get_format_guide",
+        "description": "返回 flomo 支持的卡片格式与富文本写法指南，含加粗、高亮、列表、下划线。当要确认某富文本语法是否被支持、写作前对齐格式时使用。不需要格式细节时不要用。",
+        "inputSchema": {
+            "type": "object"
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "get_tag_guide",
+        "description": "返回 flomo 标签规则与命名约定指南。当要定新标签、判断顶层与子标签边界、或核顶层词表时使用。格式细节请用 get_format_guide。",
+        "inputSchema": {
+            "type": "object"
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())
