@@ -84,10 +84,10 @@ flomo 对接（本环境实测可用）
 
 记录流程（每次经 MCP 写云端）
 
-1. 抓取（只读）：网页 webfetch；GitHub 优先 raw + websearch 补 stars；arXiv 取标题作者摘要；清单/SPA 站 curl -L -A "Mozilla/5.0" 抓内嵌；403/超时 websearch 多源交叉兜底。同名对象先按域名/作者/用途消歧，来源行写确定对象。含音视频口播先判断动作类别并征求同意。
+1. 抓取（只读）：网页 webfetch；GitHub 优先 raw + websearch 补 stars；arXiv 取标题作者摘要；清单/SPA 站 curl -L -A "Mozilla/5.0" 抓内嵌；403/超时 websearch 多源交叉兜底。同名对象先按域名/作者/用途消歧，来源行写确定对象。含音视频口播先判断动作类别并征求同意。SPA/动态站 curl 只拿到骨架时（无标题、正文为空、仅 __next_f 流式块），不得凭域名臆测内容；须从页面内联资源/外链（如唯一绝对 URL、GitHub 仓库、官方站）追到真实内容源并核验，来源行写真实核验路径而非表面域名（例：yami.yunfeihe.com 实为 DEEIX AI 产品页，写 deeix.com 与 github 仓库）。
 2. 提炼：滤营销话术，留事实/数据/因果链，压成十几到几百字；不编造，未抓细节标（待核实）。值得未来拾起的开放思考记为未竟思路卡。
 3. 定标签：先 tag_tree 采云端完整标签树（每次写卡前现采，不复用同会话早前结果）；命中既有簇；新建顶层先问用户、用 memo_search 用 tag 参数核对该领域无近邻卡、不与既有同义。
-4. 查重（阻塞式，写云前必做并显式报告）：memo_search 按关键词/标签/时间扫云端，命中即通读判实质重复；双保险——关键词检索 + 用 tag 参数或 tag_tree 按标签维度再查一次覆盖漏判。无命中→新建；完全重复→改指向原 memo；部分重叠→更新原 memo（计第 8 步）；清单类一行提及→可单独建并从原处回链。回复须写明结论，不得用"已查重"敷衍。
+4. 查重（阻塞式，写云前必做并显式报告）：memo_search 按关键词/标签/时间扫云端，命中即通读判实质重复；双保险——关键词检索 + 用 tag 参数或 tag_tree 按标签维度再查一次覆盖漏判。注意：云端 `memo_search --tag` 对主标签维度常返回 0 命中（即使存在该细分卡），不可据此判"无近邻"；主标签检索空时须退回关键词检索 + 用 tag_tree 列出该领域所有细分卡逐条比对，避免漏查重。无命中→新建；完全重复→改指向原 memo；部分重叠→更新原 memo（计第 8 步）；清单类一行提及→可单独建并从原处回链。回复须写明结论，不得用"已查重"敷衍。
 5. 写作：按卡片格式+写作规范写成 1 条；可用 memo_recommended/memo_search 调旧记录衔接。
 6. 写云（新建，需授权）：把最终正文+首行标签段完整展示并说明将写入，经同意调 memo_create（与展示一致）。硬校验：带来源的 memo 来源须已真实抓取；无来源纯想法不受限但不得虚构。除非已约定"写卡直接落云"须停下等同意；本次不写云须明示。部分重叠走第 8 步更新不新建。
 7. 复盘建议（收口必做，两条缺一不可，每条极简给落点+执行+状态）：
@@ -132,4 +132,4 @@ flomo 对接（本环境实测可用）
 - 云端状态/机制不进 project_memory：标签树/卡清单/总数/已写入 SKILL 的规则均不记忆，需时现查 tag_tree，机制唯一源为 SKILL.md。
 - 记忆只留 SKILL 与云端都重建不了的增量（项目特有经验），不罗列当前具体卡名单/卡数。
 - SKILL.md 自身治理纪律（视同生产配置）：改动前先通读全文定位落点、确认不重复/不冲突（今天分散编辑漏看落点、边写边踩坑的教训）；改动走 commit+自动 push（见 AGENTS 第7条）；绝不静默写入 SKILL，凡称"已提交/已推送"须附真实 commit hash。
-- 改动后本地自校（CI 化自测）：跑 `scripts/audit_skill.sh`（sounding 确定性 linter，不联网、不改文件、可复现）。默认审计本 SKILL.md，目标 score 100/100、0 high/medium/low，未达标脚本返回非 0（可接 CI 门禁）；`--mcp` 额外导出 flomo_client.py 的 FLOMO_MCP_TOOLS 为 descriptor 并审 flomo MCP 工具（无参工具 inputSchema 用 {"type":"object"}、不带 properties 键，避免 MCP007）；`--keep` 保留临时 sounding 克隆便于调试。临时克隆与导出 json 用完即清，不进仓库。
+- 改动后本地自校（CI 化自测）：跑 `scripts/audit_skill.sh`（sounding 确定性 linter，不联网、不改文件、可复现）。默认审计本 SKILL.md，目标 score 100/100、0 high/medium/low，未达标脚本返回非 0（可接 CI 门禁）；`--mcp` 额外导出 flomo_client.py 的 FLOMO_MCP_TOOLS 为 descriptor 并审 flomo MCP 工具（无参工具 inputSchema 用 {"type":"object"}、不带 properties 键，避免 MCP007）；`--keep` 保留临时 sounding 克隆便于调试。临时克隆与导出 json 用完即清，不进仓库。脚本首次跑会联网 `git clone` alinotfoundbtw/sounding 到临时目录；离线/受限环境须先手动 clone 到该临时路径或预置，否则克隆失败显式报错退出。
