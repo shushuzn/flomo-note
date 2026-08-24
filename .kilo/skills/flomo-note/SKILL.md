@@ -69,7 +69,7 @@ flomo 对接（本环境实测可用的连接方式）
 
 记录流程（每次经 MCP 写云端）
 
-1. 抓取（只读）：网页 webfetch；GitHub 优先 raw.githubusercontent.com/用户/仓库/main/README.md + websearch 补 stars；arXiv 取标题作者摘要；清单站与 SPA 站 curl.exe -L -A "Mozilla/5.0" 抓内嵌；403 或超时则 websearch 多源交叉兜底。同名对象必须先按域名/作者/用途消歧，来源行写消歧后的确定对象，不得混淆。内容含音/视频口播或需转写时先判断动作类别并征求同意。
+1. 抓取（只读）：网页 webfetch；GitHub 优先 raw.githubusercontent.com/用户/仓库/main/README.md + websearch 补 stars；arXiv 取标题作者摘要；清单站与 SPA 站 curl.exe -L -A "Mozilla/5.0" 抓内嵌；Hacker News 帖用 Firebase API 兜底（curl https://hacker-news.firebaseio.com/v0/item/<id>.json，直取标题/正文/评论）；403 或超时则 websearch 多源交叉兜底。同名对象必须先按域名/作者/用途消歧，来源行写消歧后的确定对象，不得混淆。内容含音/视频口播或需转写时先判断动作类别并征求同意。
 2. 提炼：滤营销话术，留事实/数据/因果链，压成十几到几百字；不编造，未抓细节标"（待核实）"。本轮若产生"还想弄/没想清/待验证"且值得未来拾起的念头，记为未竟思路卡（见写作规范）。
 3. 定标签：先 flomo.tag_tree 采云端完整标签树（不能用本地文件代偿），每次写卡前必须现采，不得复用同会话早前结果；命中既有簇；顶层新主标签先问用户避免碎片化，新建前先 memo_search 用 tag 参数核对该领域确无近邻卡、不与既有顶层同义。
 4. 查重（阻塞式，写云前必须完成并显式报告）：memo_search 按关键词/标签/时间（含语义）扫云端，命中候选即通读判实质重复。双保险：关键词检索 + 用 tag 参数或 tag_tree 按标签维度再查一次，覆盖"关键词没撞上但同标签已存在"的漏判。判定：无命中→新建；完全重复→不再写、改指向原 memo；部分重叠→更新原 memo 正文（计入第 8 步）；清单类一行提及→可单独建并从原处回链。回复必须写明结论（"查重：云端命中 X 篇（列名）或无重复"），不得用"已查重"三字敷衍。
