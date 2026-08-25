@@ -84,6 +84,17 @@ def check(content):
         if re.search(r"\[[^\]]*\]\(https?://", s):
             warn(f"第 {i} 行 Markdown 链接 [text](url)（flomo 不渲染；来源用'来源: URL'纯文本行）")
 
+    # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
+    #      约定：标签只写在首行；正文任何行内 #词/#数字 都是意外，必须改。
+    for i, ln in enumerate(lines[1:], start=2):
+        s = ln.strip()
+        if not s or "http" in s:
+            continue  # 跳过 URL 行（避免误报 #fragment）
+        for m in re.finditer(r"#([A-Za-z0-9_\u4e00-\u9fff]{1,40})", s):
+            if m.start() == 0:
+                continue  # 行首标题已在 4) 处理
+            err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；改作 'No.'/'号' 等写法")
+
     # 5) 来源行（兼容 flomo 渲染后的 [text](url) 形态）
     for ln in lines:
         m = re.match(r"^\s*来源:\s*(.+?)\s*$", ln)
