@@ -7,6 +7,7 @@
   python validate_memo.py --create create.json        校验 memo_create 请求 JSON 里的 content
 退出码：0=通过（可写云）；1=存在必须修复的错误；2=参数/用法错误。
 警告(WARN)不阻塞，错误(ERR)必须修复。
+标签须为两级 `#顶层/二级`（恰一个 /）；三级及以上或裸顶层均判 ERR（对应 SKILL「标签规则」硬限）。
 """
 import json
 import re
@@ -52,6 +53,13 @@ def check(content):
                 err(f"标签含非法字符（仅允许中文/英文/数字/下划线/层级 /）：{t}")
             if not TAG_NO_BAD.search(name):
                 err(f"标签包含空格/< /# /& 等终止字符：{t}")
+            # 层级严格两级（硬限，对应 SKILL「标签规则」）：只允许 #顶层/二级（恰一个 /）
+            # 零个 / = 裸顶层（也非法，须带二级）；≥2 个 / = 三级及以上（非法）
+            n_slash = name.count("/")
+            if n_slash == 0:
+                err(f"标签须为两级 `#顶层/二级` 形式（缺二级）：{t}")
+            elif n_slash >= 2:
+                err(f"标签层级超过两级（禁止三级及以上）：{t} —— 只允许 #顶层/二级，如 #科技/安全")
             # 子标签前缀检查：存在带 / 的主标签时，裸二级（无 /）即疑似建错顶层
             if has_slash and "/" not in name:
                 err(f"疑似裸子标签（无主标签前缀）：{t} —— 应写成 #主/子，否则会建出独立顶层标签")
