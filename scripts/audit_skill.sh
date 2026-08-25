@@ -43,7 +43,7 @@ done
 run_audit() {
   local target="$1"
   local out
-  out="$( cd "$SOUNDING_TMP" && PYTHONPATH=src "$PYTHON" -m sounding.cli audit "$target" 2>&1 )"
+  out="$( cd "$SOUNDING_TMP" && PYTHONPATH="$SOUNDING_TMP_WIN/src" "$PYTHON" -m sounding.cli audit "$target" 2>&1 )"
   echo "$out"
   local score
   score="$(printf '%s' "$out" | grep -oE 'score[[:space:]]+[0-9]+' | grep -oE '[0-9]+' | head -1)"
