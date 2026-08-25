@@ -108,7 +108,8 @@ def check(content):
             break
 
     # 6) 占位 / 生造来源风险
-    if re.search(r"example\.(com|org)|placeholder|待补|TODO|lorem", content, re.I):
+    # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
+    if re.search(r"example\.(com|org)|待补|\bplaceholder\b|\bTODO\b|\blorem\b", content, re.I):
         err("正文含 example/placeholder/TODO/lorem 占位，疑似未完成或生造内容")
 
 
