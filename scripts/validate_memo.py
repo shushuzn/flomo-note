@@ -72,7 +72,7 @@ def check(content):
     body = "\n".join(lines[1:]).strip()
     if not body:
         err("正文为空")
-    # 不设字数上限（SKILL 第103行）：长度由内容定，够清楚即可，不检查。
+    # 不设字数上限（见 SKILL「卡片格式」）：长度由内容定，够清楚即可，不检查。
 
     # 4) flomo 不渲染的 Markdown 语法检测
     for i, ln in enumerate(lines[1:], start=2):
