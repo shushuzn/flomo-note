@@ -123,7 +123,7 @@ def check(content):
         url = mm.group(1) if mm else u.strip()
         if url.startswith(("http://", "https://")):
             pass  # 合法 URL，OK
-        elif re.match(r"^(资料卡|内部|自用|原创|个人|访谈|口述)$", url):
+        elif re.match(r"^(资料卡|内部|自用|原创|个人|访谈|口述|社交帖|微博|推文|朋友圈|微信群)", url):
             pass  # 允许的纯文本出处标注
         else:
             warn(f"来源非 http(s) URL 也非已知纯文本标注（资料卡/原创等）：{url}；建议写成 '来源: https://...'")
