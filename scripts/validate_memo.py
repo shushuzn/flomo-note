@@ -103,17 +103,30 @@ def check(content):
                 continue  # 行首标题已在 4) 处理
             err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；改作 'No.'/'号' 等写法")
 
-    # 5) 来源行（兼容 flomo 渲染后的 [text](url) 形态）
-    for ln in lines:
-        m = re.match(r"^\s*来源:\s*(.+?)\s*$", ln)
-        if m:
-            u = m.group(1)
-            # 提取真实 URL：优先 Markdown 链接 [..](url)，否则直接 URL
-            mm = re.search(r"\((https?://[^)]+)\)", u)
-            url = mm.group(1) if mm else u
-            if not url.startswith(("http://", "https://")):
-                err(f"来源不是合法 http(s)/https URL：{url}")
-            break
+    # 5) 来源行（SKILL 硬规：必须存在、置于卡片最后一行、且尽量为 http(s) URL）
+    #    兼容半角/全角冒号；资料卡/原创卡可写纯文本标注（如"来源: 资料卡"），此时仅 WARN 不 ERR。
+    source_idx = [i for i, ln in enumerate(lines) if re.match(r"^\s*来源[:：]\s*(.+?)\s*$", ln)]
+    if not source_idx:
+        err("缺少来源行：卡片须以 '来源: https://...' 结尾标注出处（资料/原创卡可写 '来源: 资料卡'）")
+    else:
+        if len(source_idx) > 1:
+            err(f"来源行出现 {len(source_idx)} 次（应仅 1 次，且置于卡片末尾）")
+        sidx = source_idx[0]
+        # 位置硬规：来源行必须是最后的非空行（其后不得再有正文/要点）
+        tail = "\n".join(lines[sidx + 1:]).strip()
+        if tail:
+            err("来源行必须位于卡片最后（其后不应有正文/要点）；请把它移到卡片末尾")
+        # URL / 纯文本标注校验
+        m = re.match(r"^\s*来源[:：]\s*(.+?)\s*$", lines[sidx])
+        u = m.group(1)
+        mm = re.search(r"\((https?://[^)]+)\)", u)  # 兼容 [text](url) 形态
+        url = mm.group(1) if mm else u.strip()
+        if url.startswith(("http://", "https://")):
+            pass  # 合法 URL，OK
+        elif re.match(r"^(资料卡|内部|自用|原创|个人|访谈|口述)$", url):
+            pass  # 允许的纯文本出处标注
+        else:
+            warn(f"来源非 http(s) URL 也非已知纯文本标注（资料卡/原创等）：{url}；建议写成 '来源: https://...'")
 
     # 6) 占位 / 生造来源风险
     # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
