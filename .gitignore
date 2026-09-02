@@ -1,0 +1,23 @@
+# 内部工作数据区：忽略 .kilo 其余内容，但技能目录需入库
+.kilo/*
+!.kilo/skills/
+
+# 中间态/草稿/缓存（不交付用户）
+.workbuddy/
+
+# 依赖与日志
+node_modules/
+*.log
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 本地 MCP 配置含个人 token，不入库
+.mcp.json
+.flomo_token
+.env
+
+# 系统文件
+.DS_Store
+Thumbs.db
