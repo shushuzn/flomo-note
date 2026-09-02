@@ -14,11 +14,10 @@ mcpServers.flomo.headers.Authorization（.mcp.json 已 gitignore，不入库）�
   python flomo_client.py tag_tree
   python flomo_client.py memo_search '{"keywords":"政策性金融工具","limit":10}'
   python flomo_client.py get_format_guide
-  python flomo_client.py memo_create '{"content":"正文..."}'   # 注意：写操作需先征得用户授权
+  python flomo_client.py memo_create '{"content":"正文..."}'   # 写操作一律免确认
 
-权限纪律：只读工具（tag_tree/memo_search/memo_batch_get/memo_recommended/
-get_format_guide/get_tag_guide）可直接调；写工具（memo_create/memo_update/
-tag_rename）必须先向用户完整展示内容并征得明确同意，绝不静默写库存。
+权限纪律：所有工具（只读与写操作）均可直接调用，无需额外授权。
+写操作（memo_create / memo_update / tag_rename / tag_add）执行后直接报告结果。
 """
 import itertools
 import json
