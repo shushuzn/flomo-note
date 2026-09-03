@@ -34,6 +34,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 4. 写云前必查重并显式报告结论（命中什么/无重复），不敷衍。
 5. 复盘改动文档须附真实 commit hash，不口头虚称"已推送"。
 6. 单卡字数硬限：单卡正文（含标签段）不得超过 3 万字；超出须精简内容，禁止超 3 万字的卡写云。
+7. 禁止关联卡片（硬限）：卡片正文中不得提及、引用或关联其他 flomo 卡片（包括但不限于写"与已建卡的 XXX 形成..."、"关联卡片"段落、引用其他卡片 id/标题/内容等）；禁止使用 `linked_memos` 字段设置卡片间关联。每张卡独立成文，不依赖其他卡片的上下文，不跨卡串联归纳。
 
 ## 卡片格式
 
@@ -53,6 +54,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 - 结论先行：首段直接写结论句，**不要带"一句话核心结论："这类模板提示词前缀**（那是给模型看的格式说明，不是正文）。
 - "要点：" 是可保留的结构标记；其它如"一句话核心结论："等纯说明性文字不得写入。
 - 单卡正文（含标签段）不超过 3 万字（硬限，见执行铁律第 6 条）；超出须精简，禁止超 3 万字写云。压到够清楚即可。
+- 禁止关联卡片（硬限，见执行铁律第 7 条）：正文不得提及、引用或关联其他 flomo 卡片（id/标题/内容），不得写"与已建卡的 XXX 形成..."等跨卡串联表述；每张卡独立成文。
 - flomo 富文本实测：支持加粗 `**文字**`、高亮 `<mark>`、下划线 `<u>`、两级列表、空行分段；不渲染标题/引用/代码块/链接/表格/图片。
 - 公式用 Unicode（∑ μ →），不写 LaTeX 美元符。
 
@@ -127,7 +129,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 
 - 端点 `https://flomoapp.com/mcp`，Bearer 鉴权（token 在 .mcp.json）。本环境无 MCP 面板，统一走 flomo_client.py 直连。
 - `memo_create(content；format 可选 markdown/html，省略即纯文本)`；`memo_update(id/content)`；`tag_rename(old_tag/new_tag/max_memos)`。依赖 flomo Max 会员。
-- 结构化链接 `linked_memos` 仅 `memo_create` 可设；`memo_update` 拒绝该字段；正文 `((memo_id))` 不被解析为链接。给已有卡补链只能删旧建新或 App 手动。
+- 禁止使用 `linked_memos` 关联卡片（见执行铁律第 7 条）；`memo_create` 和 `memo_update` 均不得传入该字段；正文 `((memo_id))` 不被解析为链接。
 - 正文防标签误识别：flomo 扫全文 `#xxx`/`/xxx` 当标签。写前预判改写——`#8435`→"issue 8435"、`≤#150`→"第150位"、`C#/.NET`→空格或"与"连接。
 
 ## 本地与治理
