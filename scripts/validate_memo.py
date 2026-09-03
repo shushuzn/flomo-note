@@ -8,6 +8,7 @@
 退出码：0=通过（可写云）；1=存在必须修复的错误；2=参数/用法错误。
 警告(WARN)不阻塞，错误(ERR)必须修复。
 标签须为两级 `#顶层/二级`（恰一个 /）；三级及以上或裸顶层均判 ERR（对应 SKILL「标签规则」硬限）。
+卡片格式：首行标签段，第二行概念名称（即标题），空一行接正文；无来源行要求。
 """
 import json
 import re
@@ -64,9 +65,11 @@ def check(content):
             if has_slash and "/" not in name:
                 err(f"疑似裸子标签（无主标签前缀）：{t} —— 应写成 #主/子，否则会建出独立顶层标签")
 
-    # 2) 标签段独占一行
-    if len(lines) > 1 and lines[1].strip() != "":
-        warn("标签段后建议空一行再接正文（标签单独成段）")
+    # 2) 标签段后第二行应为概念名称标题（非空），第三行空行接正文
+    if len(lines) > 1 and lines[1].strip() == "":
+        warn("标签段后第二行应为概念名称（即标题），不应为空行")
+    elif len(lines) > 2 and lines[2].strip() != "":
+        warn("标题行后建议空一行再接正文（标题单独成段）")
 
     # 3) 正文
     body = "\n".join(lines[1:]).strip()
@@ -90,7 +93,7 @@ def check(content):
         if re.search(r"!\[[^\]]*\]\(", s):
             err(f"第 {i} 行图片语法 ![（flomo 不支持）")
         if re.search(r"\[[^\]]*\]\(https?://", s):
-            warn(f"第 {i} 行 Markdown 链接 [text](url)（flomo 不渲染；来源用'来源: URL'纯文本行）")
+            warn(f"第 {i} 行 Markdown 链接 [text](url)（flomo 不渲染，建议改为纯文本 URL）")
 
     # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
     #      约定：标签只写在首行；正文任何行内 #词/#数字 都是意外，必须改。
@@ -103,32 +106,7 @@ def check(content):
                 continue  # 行首标题已在 4) 处理
             err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；改作 'No.'/'号' 等写法")
 
-    # 5) 来源行（SKILL 硬规：必须存在、置于卡片最后一行、且尽量为 http(s) URL）
-    #    兼容半角/全角冒号；资料卡/原创卡可写纯文本标注（如"来源: 资料卡"），此时仅 WARN 不 ERR。
-    source_idx = [i for i, ln in enumerate(lines) if re.match(r"^\s*来源[:：]\s*(.+?)\s*$", ln)]
-    if not source_idx:
-        err("缺少来源行：卡片须以 '来源: https://...' 结尾标注出处（资料/原创卡可写 '来源: 资料卡'）")
-    else:
-        if len(source_idx) > 1:
-            err(f"来源行出现 {len(source_idx)} 次（应仅 1 次，且置于卡片末尾）")
-        sidx = source_idx[0]
-        # 位置硬规：来源行必须是最后的非空行（其后不得再有正文/要点）
-        tail = "\n".join(lines[sidx + 1:]).strip()
-        if tail:
-            err("来源行必须位于卡片最后（其后不应有正文/要点）；请把它移到卡片末尾")
-        # URL / 纯文本标注校验
-        m = re.match(r"^\s*来源[:：]\s*(.+?)\s*$", lines[sidx])
-        u = m.group(1)
-        mm = re.search(r"\((https?://[^)]+)\)", u)  # 兼容 [text](url) 形态
-        url = mm.group(1) if mm else u.strip()
-        if url.startswith(("http://", "https://")):
-            pass  # 合法 URL，OK
-        elif re.match(r"^(资料卡|内部|自用|原创|个人|访谈|口述|社交帖|微博|推文|朋友圈|微信群)", url):
-            pass  # 允许的纯文本出处标注
-        else:
-            warn(f"来源非 http(s) URL 也非已知纯文本标注（资料卡/原创等）：{url}；建议写成 '来源: https://...'")
-
-    # 6) 占位 / 生造来源风险
+    # 5) 占位 / 生造来源风险
     # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
     if re.search(r"example\.(com|org)|待补|\bplaceholder\b|\bTODO\b|\blorem\b", content, re.I):
         err("正文含 example/placeholder/TODO/lorem 占位，疑似未完成或生造内容")
