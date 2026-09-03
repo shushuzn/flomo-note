@@ -8,7 +8,7 @@
 退出码：0=通过（可写云）；1=存在必须修复的错误；2=参数/用法错误。
 警告(WARN)不阻塞，错误(ERR)必须修复。
 标签须为两级 `#顶层/二级`（恰一个 /）；三级及以上或裸顶层均判 ERR（对应 SKILL「标签规则」硬限）。
-卡片格式：首行标签段，第二行概念名称（即标题），空一行接正文；所有卡片均为追踪卡，正文首段须以"追踪卡。"开头标明定位。
+卡片格式：首行标签段，第二行概念名称（即标题），空一行接正文；所有卡片均为追踪卡，后续进展用 memo_update 更新。
 """
 import json
 import re
@@ -77,19 +77,6 @@ def check(content):
         err("正文为空")
     # 不设字数上限（见 SKILL「卡片格式」）：长度由内容定，够清楚即可，不检查。
 
-    # 3.5) 追踪卡格式检查（硬限）：正文首段须以"追踪卡。"开头标明定位
-    body_start = None
-    for idx, ln in enumerate(lines):
-        if idx == 0:
-            continue  # 跳过标签段
-        s = ln.strip()
-        if s:
-            body_start = idx
-            break
-    if body_start is not None:
-        first_body = lines[body_start].strip()
-        if not first_body.startswith("追踪卡。"):
-            err(f'正文首段须以"追踪卡。"开头标明追踪卡定位（当前首段：{first_body[:40]}）')
 
     # 4) flomo 不渲染的 Markdown 语法检测
     for i, ln in enumerate(lines[1:], start=2):
