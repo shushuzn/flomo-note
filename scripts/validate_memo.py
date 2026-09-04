@@ -112,6 +112,21 @@ def check(content):
     if re.search(r"example\.(com|org)|待补|\bplaceholder\b|\bTODO\b|\blorem\b", content, re.I):
         err("正文含 example/placeholder/TODO/lorem 占位，疑似未完成或生造内容")
 
+    # 5.5) 旧格式遗留检测：状态行 / 来源行（含巧设名目变体）
+    # 卡片格式硬限：无状态行、无来源行。检测行首 0-10 字符内出现"状态"或"来源"后接冒号（半角/全角），
+    # 覆盖"状态：""当前状态：""进展状态：""来源：""作者与来源：""信息来源：""数据来源：""参考来源："
+    # "资料来源：""内容来源：""新闻来源：""原文来源：""引用来源：""来源链接：""参考资料：""参考文献："等变体。
+    # 仅检测行首标记（独立段落/行的格式标记），不误伤正文中自然出现的"来源"一词（如"数据来源显示..."）。
+    status_source_pattern = re.compile(r"^[^\s：:]{0,10}(状态|来源)\s*[：:]")
+    for i, ln in enumerate(lines[2:], start=3):  # 跳过首行标签段、第二行概念名称
+        s = ln.strip()
+        if not s:
+            continue
+        if status_source_pattern.match(s):
+            m = status_source_pattern.match(s)
+            marker = m.group(0).split(m.group(1))[0] + m.group(1)
+            err(f"第 {i} 行含旧格式「{marker}」行（卡片格式硬限：无状态行、无来源行，含巧设名目变体均禁止）；删除该行，来源信息融入正文对应要点或直接省略")
+
 
 def load_content(argv):
     arg = argv[1]
