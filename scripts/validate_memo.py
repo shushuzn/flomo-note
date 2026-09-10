@@ -112,21 +112,36 @@ def check(content):
     if re.search(r"example\.(com|org)|待补|\bplaceholder\b|\bTODO\b|\blorem\b", content, re.I):
         err("正文含 example/placeholder/TODO/lorem 占位，疑似未完成或生造内容")
 
-    # 5.5) 旧格式遗留检测：状态行 / 来源行（含巧设名目变体）
-    # 卡片格式硬限：无状态行、无来源行。检测行首 0-10 字符内出现"状态"或"来源"后接冒号（半角/全角），
-    # 覆盖"状态：""当前状态：""进展状态：""来源：""作者与来源：""信息来源：""数据来源：""参考来源："
-    # "资料来源：""内容来源：""新闻来源：""原文来源：""引用来源：""来源链接：""参考资料：""参考文献："
-    # "报道：""报道信息：""报道来源："等变体。
-    # 仅检测行首标记（独立段落/行的格式标记），不误伤正文中自然出现的"来源"一词（如"数据来源显示..."）。
-    status_source_pattern = re.compile(r"^[-*~\s]{0,6}[^\s：:]{0,10}(状态|来源|报道)[^\s：:]{0,6}\s*[：:]")
+    # 5.5) 旧格式遗留检测：状态行 / 来源行（WARN 提示，不阻塞写云）
+    # 卡片格式硬限：无状态行、无来源行。为避免误伤正文要点（如「电力来源：火电为主」这类
+    # 主语+来源的正常论述句），仅在下列三个条件同时成立时才提示：
+    #   a) 行首（允许 -/*/~/• 列表标记与 1. 序号）后紧跟「白名单修饰词 + 状态/来源/报道/出处 + 冒号」；
+    #      修饰词不在白名单的一律不报（「电力来源：」是正文要点，不是卡片级来源行）。
+    #   b) 该行位于卡片最后两个非空行——卡片级元信息行只可能出现在末尾，正文中间一律不报。
+    #   c) 冒号后内容不超过 200 字（或含 http 链接）——冒号后是长论述的视为正文，不报。
+    # 命中只判 WARN：这类行多半是数据/参考类要点，交由人工判断，不阻塞写卡。
+    meta_source_re = re.compile(
+        r"^\s*(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
+        r"(?:当前|进展|最新|追踪|更新|既往|信息|内容|数据|新闻|原文|引用|参考|资料|文献|报道|消息|官方|文章|作者与|链接|网址)?"
+        r"(状态|来源|报道|出处|资料|文献|参考)"
+        r"(?:链接|资料|文献|信息|地址|网址|说明)?\s*[：:]"
+    )
+    nonempty = [i for i, ln in enumerate(lines) if ln.strip()]
+    last_line_no = (nonempty[-1] + 1) if nonempty else 0
     for i, ln in enumerate(lines[2:], start=3):  # 跳过首行标签段、第二行概念名称
         s = ln.strip()
         if not s:
             continue
-        if status_source_pattern.match(s):
-            m = status_source_pattern.match(s)
-            marker = m.group(0).split(m.group(1))[0] + m.group(1)
-            err(f"第 {i} 行含旧格式「{marker}」行（卡片格式硬限：无状态行、无来源行，含巧设名目变体均禁止）；删除该行，来源信息融入正文对应要点或直接省略")
+        m = meta_source_re.match(s)
+        if not m:
+            continue
+        if i < last_line_no - 1:
+            continue  # 非末尾行：视为正文要点，不报
+        tail = re.split(r"[：:]", s, maxsplit=1)[-1].strip()
+        if len(tail) > 200 and "http" not in tail:
+            continue  # 冒号后是长论述：视为正文，不报
+        warn(f"第 {i} 行疑似旧格式来源/状态行（卡片格式硬限：无来源行、无状态行）——匹配到「{m.group(0).strip()}」；"
+             f"若这是正文要点可忽略，若确为卡片级来源/状态行请删除该行，把信息融入正文对应要点或直接省略")
 
 
 def load_content(argv):
