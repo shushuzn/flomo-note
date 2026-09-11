@@ -185,6 +185,24 @@ def check(content):
         warn(f"第 {i} 行疑似旧格式来源/状态行（卡片格式硬限：无来源行、无状态行）——匹配到「{m.group(0).strip()}」；"
              f"若这是正文要点可忽略，若确为卡片级来源/状态行请删除该行，把信息融入正文对应要点或直接省略")
 
+    # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
+    # 预印本卡须基于正文写作（SKILL 流程第 1 步「预印本正文优先」）：只抓 arXiv /abs/ 之类摘要页，
+    # 要点会停留在摘要泛述。此处仅在正文出现"以摘要为唯一依据"的措辞时提示，回查是否漏抓正文；
+    # 正文级陈述不会命中，故不阻塞写卡。
+    abstract_dep = re.compile(
+        r"(?:据|根据|依据|按|援引)\s*摘\s*要"
+        r"|摘\s*要\s*(?:称|显示|指出|提到|中|里|仅|只|如下|表明|介绍)"
+    )
+    for i, ln in enumerate(lines[1:], start=2):
+        s = ln.strip()
+        if not s:
+            continue
+        hit = abstract_dep.search(s)
+        if hit:
+            warn(f"第 {i} 行出现以摘要为唯一依据的表述「{hit.group(0)}」——预印本卡须基于正文写作"
+                 f"（见 SKILL 流程第 1 步「预印本正文优先」），请回查是否漏抓 /html/ 或 PDF 正文；"
+                 f"若该句确为正文级陈述可忽略")
+
 
 def _content_from_json(obj):
     """从 JSON 对象抽取 content，兼容 flomo_client 请求体与 JSON-RPC 信封。"""
