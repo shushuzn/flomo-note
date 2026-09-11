@@ -80,6 +80,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 1. **抓取**：webfetch 为主，SPA/清单站补 `curl -L -A "Mozilla/5.0"`；同名对象按域名/作者/用途消歧。
    - **预印本正文优先（阻塞 · 硬限）**：预印本（arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview / ResearchGate 等）的**摘要页不得作为写作依据**——摘要只够判断"值不值得写卡"，不足以支撑要点，必须继续抓正文：
      - arXiv：把 `/abs/<id>` 换成 `/html/<id>v<N>` 抓 HTML 全文；该条无 HTML 时退到 `https://ar5iv.labs.arxiv.org/html/<id>`，再退到 `https://arxiv.org/pdf/<id>`；
+     - **SNI 被 RST 时走域名前置（硬限 · 2026-09-11 本机实测）**：若 TCP 能建连但 TLS 立即被重置（curl 报 `schannel: failed to receive handshake, SSL/TLS connection failed`、python 报 `ConnectionResetError [WinError 10054]`），**先做 SNI 变量对照**——同一边缘 IP 换 SNI（如 `www.bing.com`）能握手成功，即判定为 SNI 关键字阻断而非网络不通。确认后改走 `python scripts/sni_fetch.py <url> <out_path>`：该脚本把 SNI 换成无关域名、HTTP Host 头保留目标域（Fastly 按 Host 路由，故内容照常返回），可直接取回 arXiv 的 abs 页与 PDF，自动跟随重定向、去 chunked/gzip；取回的 PDF 用托管 venv 的 `pypdf` 提正文（`C:/Users/35234/.workbuddy/binaries/python/envs/default/Scripts/python.exe`，已装 6.x）。**不得因 curl/WebFetch 失败就下"正文拿不到"的结论并跳过写卡**——须先跑通此通道；仅当此通道也失败时，才进入下一条的补 search 与跳过判定。
      - 其它预印本：沿站内 Full text / PDF / HTML 入口抓全文，或退到作者主页、机构仓库（HAL、高校 repository）的全文版；
      - 要点须落在**正文层级**：定理/命题的编号与陈述、模型与方法名、关键参数与设定、实验条件与结果、附录结论等；只复述摘要的泛泛表述不算写作；
      - 正文抓不到（403 / 登录墙 / PDF 不可解析）时：先补 `search` 找正文级转述（作者博客、项目页、会议 slides、引用该文的综述）；仍无则跳过写卡并说明"仅摘要可得、不足以写卡"，**禁止拿摘要硬凑要点、禁止凭标题臆测结论**。
