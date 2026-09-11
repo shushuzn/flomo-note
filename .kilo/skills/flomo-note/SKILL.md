@@ -89,11 +89,11 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 
 **单卡单事件（汇总禁令）**：「同事件只留一张卡」不仅约束"同事件多视角不建平行卡"，也意味着**一张卡不得塞入多件独立事件/主题**，禁止跨条目汇总。
 5. **写作**：按卡片格式写 1 条。
-6. **写云前自检（阻塞）**：`python scripts/validate_memo.py memo_body.txt`（从文件读；也支持 `--content "..."` / `--create create.json`）须 EXIT=0（0 ERR）才许写云；任一项 ERR 先改再写，禁止把云端当草稿反复 memo_update。**自检通过即调 memo_create 写云，免确认**（判定以脚本 `[成功] 已写入 memo id=` 为准）。质检脚本强制检测项（标 ERR 者任一命中即阻塞写云；标 WARN 者只提示、不阻塞）：
+6. **写云前自检（阻塞）**：`python scripts/validate_memo.py memo_body.txt`（从文件读；也支持 `--file` 别名 `--content "..."` / `--create create.json`；传入 JSON 时自动抽取 content，兼容 flomo_client.py 实际发送的顶层 `{"content": ...}` 与 JSON-RPC 信封两种形态；读文件走 utf-8-sig 容忍 BOM）须 EXIT=0（0 ERR）才许写云；任一项 ERR 先改再写，禁止把云端当草稿反复 memo_update。**自检通过即调 memo_create 写云，免确认**（判定以脚本 `[成功] 已写入 memo id=` 为准）。质检脚本强制检测项（标 ERR 者任一命中即阻塞写云；标 WARN 者只提示、不阻塞）：
    - 标签严格两级（三级及以上/裸顶层直接判 ERR），与「标签规则」硬限同源；
    - 首行标签段、第二行概念名称非空、标题后空行、正文非空；
-   - flomo 不渲染语法检测（代码块 ```、图片语法直接判 ERR；标题/引用/表格/链接判 WARN）；
-   - 正文 accidental #tag 检测（flomo 会把任意 #xxx 当标签，造成脏标签）；
+   - flomo 不渲染语法检测（代码块 ```、图片语法直接判 ERR；标题/引用/表格/链接判 WARN）。**表格判定只认三种真形态**（分隔行 `|---|---|`、竖线包裹行 `| a | b |`、空格包围的竖线成组 `a | b | c`），紧贴文字的竖线（绝对值 `|p|≤r`、集合势 `|F(s)−F(t)|<2|s−t|`、条件概率 `P(A|B)`）一律放行，不误报；
+   - 正文 accidental tag 检测（flomo 会把任意 `#xxx` 与 `/xxx` 都当标签，造成脏标签）：`#词/#数字` 判 ERR；`/词`（斜杠后 ≥2 个中英文字母）判 WARN，数字语境（`1/2`、`2026/09`、`MSC 39B12/26E60`）与含 http 的行整行豁免；
    - 占位/生造来源检测（example.com、待补、placeholder、TODO、lorem 直接判 ERR）；
    - **旧格式遗留检测（WARN 提示，不阻塞写云）**：状态行 / 来源行仍是卡片格式硬限（禁止任何形式的独立来源/状态行），但质检改为 WARN——只提示、不阻塞写云。为防误伤正文要点，仅在三个条件同时成立时提示：① 行首（允许 -/*/~/• 列表标记与 1. 序号）匹配「白名单修饰词（当前/进展/信息/内容/数据/新闻/原文/引用/参考/资料/文献/报道/官方/文章/作者与/链接/网址等）＋ 状态|来源|报道|出处|资料|文献|参考 ＋ 可选后缀（链接/资料/文献/信息/地址/网址/说明）＋ 冒号（半角/全角）」；② 该行位于卡片最后两个非空行（卡片级元信息行只可能出现在末尾）；③ 冒号后内容 ≤200 字或含 http 链接（长论述句视为正文）。据此「电力来源：」「收入来源：」等主语式正文要点、以及正文中间的「状态：」一律不报。命中时人工判断：若是正文要点可忽略；若确为卡片级来源/状态行则删除该行，把信息融入正文对应要点或直接省略，禁止巧设名目保留。
 7. **复盘（写卡后必做，须现查）**：`memo_search` 关键词扫近邻 + `tag_tree` 列同主标签细分 + `memo_recommended`（**传本卡 id**、limit 建议 20，只读近邻校验：flomo 按本卡返回关联推荐，专补关键词搜不到的语义近重复；不写 `linked_memos`）。三路逐一判断：
@@ -139,4 +139,5 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 - 仓库只存技能/配置文档，不含卡片正文；`.mcp.json` 已 gitignore。
 - 改动走 commit + 自动 push，称"已提交/已推送"须附真实 hash。
 - 改动后跑 `scripts/audit_skill.sh`（sounding linter，目标 100/100、0 findings）自校。
+- 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（回归用例，退出码 0=全过），防止表格判定、标签规则等被改回误报。
 - 云端状态/机制不进 memory：标签树、卡清单、已写入规则均现查 SKILL.md 或 `tag_tree`，不记忆。
