@@ -12,7 +12,15 @@
 #
 # 环境变量（按需覆盖）:
 #   SOUNDING_PY   审计用 Python（默认托管 python 3.13）
-#   SOUNDING_TMP  sounding 临时克隆目录
+#   SOUNDING_TMP  sounding 目录：指向已存在的副本即复用、跳过克隆（可离线跑），
+#                 且本脚本不再删除该目录；不设时自动 mktemp 并在结束时清理。
+#
+# 离线用法（github.com 不可达时）:
+#   curl -sSL -o /tmp/sounding.tar.gz \
+#     https://codeload.github.com/alinotfoundbtw/sounding/tar.gz/refs/heads/main
+#   mkdir -p .workbuddy/cache/sounding
+#   tar xzf /tmp/sounding.tar.gz -C .workbuddy/cache/sounding --strip-components=1
+#   SOUNDING_TMP=.workbuddy/cache/sounding ./audit_skill.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +29,14 @@ SKILL_DIR="$REPO_ROOT/.kilo/skills/flomo-note"
 FLOMO_CLIENT="$SCRIPT_DIR/flomo_client.py"
 
 PYTHON="${SOUNDING_PY:-/c/Users/35234/.workbuddy/binaries/python/versions/3.13.12/python.exe}"
-SOUNDING_TMP="${SOUNDING_TMP:-$(mktemp -d 2>/dev/null || echo /c/Users/35234/AppData/Local/Temp/sounding_audit_$$)}"
+# SOUNDING_OWNED=1 表示本目录由本次运行创建，结束时可安全清理；
+# 用户通过环境变量传入的目录一律保留，避免误删其本地副本。
+if [ -z "${SOUNDING_TMP:-}" ]; then
+  SOUNDING_OWNED=1
+  SOUNDING_TMP="$(mktemp -d 2>/dev/null || echo /c/Users/35234/AppData/Local/Temp/sounding_audit_$$)"
+else
+  SOUNDING_OWNED=0
+fi
 
 # 传给 Windows Python 的路径需转成 Windows 形态（git-bash 的 /d/... 在 Windows Python 下会解析错）
 SKILL_DIR_WIN="$(cygpath -w "$SKILL_DIR")"
@@ -54,11 +69,18 @@ run_audit() {
   return 0
 }
 
-# 克隆 sounding（缺失时）
-if [ ! -d "$SOUNDING_TMP/.git" ]; then
+# 准备 sounding：已有可用副本则复用（可离线），否则克隆
+if [ -d "$SOUNDING_TMP/src/sounding" ]; then
+  echo "复用已有 sounding 副本 $SOUNDING_TMP（跳过克隆）"
+elif [ -d "$SOUNDING_TMP/.git" ]; then
+  echo "已有 git 仓库但缺 src/sounding，尝试更新 ..."
+  git -C "$SOUNDING_TMP" pull --depth 1 || echo "  !! 更新失败，按现有内容继续"
+else
   echo "克隆 sounding 到 $SOUNDING_TMP ..."
   git clone --depth 1 https://github.com/alinotfoundbtw/sounding.git "$SOUNDING_TMP" \
-    || { echo "sounding 克隆失败，请检查网络/路径"; exit 1; }
+    || { echo "sounding 克隆失败，请检查网络/路径"; \
+         echo "  github.com 不可达时可用 codeload 离线包（见脚本头部注释），"; \
+         echo "  再以 SOUNDING_TMP=<副本目录> 重跑本脚本。"; exit 1; }
 fi
 
 # 审计 SKILL.md
@@ -91,9 +113,12 @@ PY
 fi
 
 # 清理临时克隆（默认用完即清，符合 SKILL 记忆维护纪律）
-if [ "$KEEP" -eq 0 ]; then
+# 只清理本次运行创建的临时目录；SOUNDING_TMP 由用户传入时一律保留。
+if [ "$KEEP" -eq 0 ] && [ "$SOUNDING_OWNED" -eq 1 ]; then
   rm -rf "$SOUNDING_TMP"
   echo "已清理临时克隆 $SOUNDING_TMP"
+else
+  echo "保留 $SOUNDING_TMP（非本次创建或指定了 --keep）"
 fi
 
 # 任一次审计 score<100 即返回非 0（CI 门禁）
