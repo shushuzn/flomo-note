@@ -145,6 +145,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 
 - 仓库只存技能/配置文档，不含卡片正文；`.mcp.json` 已 gitignore。
 - 改动走 commit + 自动 push，称"已提交/已推送"须附真实 hash。
+- **推送通道（2026-09-11 实测，直连/代理皆不通时用）**：本机 DNS 把 `github.com` 解析到 20.205.243.166，该 IP 的 443 **TCP 超时**（换 SNI、不发 SNI 均超时 → 路由不通，与 arxiv.org 的 SNI 关键字阻断不是同一机制）；而 140.82.112.3 / 113.3 / 114.3 / 121.4 **可达且 SNI=github.com 的 TLSv1.3 握手正常**；沙箱注入的 `https_proxy=http://127.0.0.1:41264` 对 github 返 502。因此「push 失败」多为 DNS 指到坏 IP，**不等于 GitHub 不可用，禁止据此下"推不上去"的结论**。对策：先 `git ls-remote` 确认通道，再拉起 `python scripts/git_tunnel.py &`（本地 CONNECT 代理，把 `github.com:443` 在 TCP 层透传到可达 IP，SNI 与证书校验仍端到端保持 `github.com`），然后 `git -c http.proxy=http://127.0.0.1:18123 -c https.proxy=http://127.0.0.1:18123 push origin HEAD`。确实推不上去时，提交只在本地，必须如实告知并给 commit hash。
 - 改动后跑 `scripts/audit_skill.sh`（sounding linter，目标 100/100、0 findings）自校。
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（回归用例，退出码 0=全过），防止表格判定、标签规则等被改回误报。
 - 云端状态/机制不进 memory：标签树、卡清单、已写入规则均现查 SKILL.md 或 `tag_tree`，不记忆。
