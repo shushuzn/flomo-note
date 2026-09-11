@@ -5,6 +5,10 @@
 # 中间态/草稿/缓存（不交付用户）
 .workbuddy/
 
+# 写卡中间态：待校验正文与临时请求 JSON（SKILL 步骤 6 用，不交付）
+memo_body.txt
+tmp_*
+
 # 依赖与日志
 node_modules/
 *.log
