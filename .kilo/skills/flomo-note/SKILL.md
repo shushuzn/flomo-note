@@ -29,7 +29,7 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 ## 执行铁律
 
 1. 只读工具（memo_search/tag_tree/memo_batch_get/memo_recommended/get_* /memory_* /webfetch/websearch）直接做。**写操作（memo_create / memo_update / tag_rename）一律免确认**：抓取→查重→自检 EXIT=0 后直接写云，不展示等批。**禁止凭个人判断跳过写卡**：用户发链接即视为"需要写卡"，抓取成功且能提炼出任何事实/数据/观点就必须写云，不得以"内容单薄""不值得"为由跳过；仅在抓取完全失败且无替代来源时方可跳过并说明原因。
-2. 带来源 URL 的卡，写入前该 URL 必须已真实抓取并基于实际内容写作；抓取失败/空 SPA 壳且无外链可追，禁止写云（不得凭域名臆测）。**预印本须抓到正文**：arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview 等只抓到摘要页（如 arXiv `/abs/`）等同未抓取，必须按流程第 1 步「预印本正文优先」拿到 HTML/PDF 正文后再写卡。
+2. 带来源 URL 的卡，写入前该 URL 必须已真实抓取并基于实际内容写作；抓取失败/空 SPA 壳且无外链可追，禁止写云（不得凭域名臆测）。**预印本须抓到正文**：arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview 等只抓到摘要页（如 arXiv `/abs/`）等同未抓取，必须按流程第 1 步「预印本正文优先」拿到 HTML/PDF 正文后再写卡（正文通道穷尽仍不可得时的摘要写卡例外，见流程第 1 步末条）。
 3. 调 flomo 一律走 `python scripts/flomo_client.py <tool> --file <json路径>`（从文件读 JSON，避 PowerShell 引号转全角）；不写内联 JSON。
 4. 写云前必查重并显式报告结论（命中什么/无重复），不敷衍。
 5. 复盘改动文档须附真实 commit hash，不口头虚称"已推送"。
@@ -78,12 +78,12 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 ## 流程
 
 1. **抓取**：webfetch 为主，SPA/清单站补 `curl -L -A "Mozilla/5.0"`；同名对象按域名/作者/用途消歧。
-   - **预印本正文优先（阻塞 · 硬限）**：预印本（arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview / ResearchGate 等）的**摘要页不得作为写作依据**——摘要只够判断"值不值得写卡"，不足以支撑要点，必须继续抓正文：
+   - **预印本正文优先（阻塞）**：预印本（arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview / ResearchGate 等）的**摘要页不作首选写作依据**——摘要只够判断"值不值得写卡"，不足以支撑要点，必须先穷尽正文通道：
      - arXiv：把 `/abs/<id>` 换成 `/html/<id>v<N>` 抓 HTML 全文；该条无 HTML 时退到 `https://ar5iv.labs.arxiv.org/html/<id>`，再退到 `https://arxiv.org/pdf/<id>`；
      - **SNI 被 RST 时走域名前置（硬限 · 2026-09-11 本机实测）**：若 TCP 能建连但 TLS 立即被重置（curl 报 `schannel: failed to receive handshake, SSL/TLS connection failed`、python 报 `ConnectionResetError [WinError 10054]`），**先做 SNI 变量对照**——同一边缘 IP 换 SNI（如 `www.bing.com`）能握手成功，即判定为 SNI 关键字阻断而非网络不通。确认后改走 `python scripts/sni_fetch.py <url> <out_path>`：该脚本把 SNI 换成无关域名、HTTP Host 头保留目标域（Fastly 按 Host 路由，故内容照常返回），可直接取回 arXiv 的 abs 页与 PDF，自动跟随重定向、去 chunked/gzip；取回的 PDF 用托管 venv 的 `pypdf` 提正文（`C:/Users/35234/.workbuddy/binaries/python/envs/default/Scripts/python.exe`，已装 6.x）。**不得因 curl/WebFetch 失败就下"正文拿不到"的结论并跳过写卡**——须先跑通此通道；仅当此通道也失败时，才进入下一条的补 search 与跳过判定。
      - 其它预印本：沿站内 Full text / PDF / HTML 入口抓全文，或退到作者主页、机构仓库（HAL、高校 repository）的全文版；
-     - 要点须落在**正文层级**：定理/命题的编号与陈述、模型与方法名、关键参数与设定、实验条件与结果、附录结论等；只复述摘要的泛泛表述不算写作；
-     - 正文抓不到（403 / 登录墙 / PDF 不可解析）时：先补 `search` 找正文级转述（作者博客、项目页、会议 slides、引用该文的综述）；仍无则跳过写卡并说明"仅摘要可得、不足以写卡"，**禁止拿摘要硬凑要点、禁止凭标题臆测结论**。
+     - 正文得手时，要点须落在**正文层级**：定理/命题的编号与陈述、模型与方法名、关键参数与设定、实验条件与结果、附录结论等；只复述摘要的泛泛表述不算正文写作；
+     - 正文抓不到（超时 / 403 / 登录墙 / PDF 不可解析）时：先补 `search` 找正文级转述（作者博客、项目页、会议 slides、引用该文的综述）；仍无正文级来源时**可依据摘要写卡**（例外规则）——要点严格限于摘要明确陈述的事实与数据，禁止凭标题臆测、禁止推衍摘要未述的细节，且收尾必须显式注明"本卡基于摘要写作（正文不可得）"，待正文可得后应补抓并 `memo_update` 更新。
 1.5. **网络搜索验证（阻塞）**：抓取后若主体为**专业术语/数学概念/科学名词/机构简称/专有名词**（如分形名称、模型代号、定理名、产品系列、组织名），**必须用 `search` 工具现查标准名称与定义**，不得凭原文简称或图片特征臆测。查证项：
    - 标准术语（英文 + 中文）
    - 命名来源/发明者/首次提出时间
