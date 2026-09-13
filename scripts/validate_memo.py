@@ -27,9 +27,6 @@ ERR, WARN = [], []
 
 TAG_CHAR_OK = re.compile(r"^[\w\u4e00-\u9fff/]+$")
 
-# flomo 会把正文里任意 `#xxx` / `/xxx` 当标签，写成脏标签。斜杠形态要求
-# 斜杠后至少 2 个中文或英文字母，避开 1/2、km/h、2026/09、http:// 等正常写法。
-SLASH_TAG = re.compile(r"/([A-Za-z\u4e00-\u9fff]{2,})")
 # 表格：分隔行（|---|---|）、被竖线包裹的行（| a | b |）、空格包围的竖线成组（a | b | c）
 TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$")
 TABLE_WRAPPED = re.compile(r"^\s*\|.*\|\s*$")
@@ -130,9 +127,12 @@ def check(content):
         if re.search(r"\[[^\]]*\]\(https?://", s):
             warn(f"第 {i} 行 Markdown 链接 [text](url)（flomo 不渲染，建议改为纯文本 URL）")
 
-    # 4.5) 正文内 accidental #tag / /tag（flomo 会把任意 #xxx、/xxx 当标签，造成脏标签）
-    #      约定：标签只写在首行；正文任何行内 #词/#数字、/词 都是意外，必须改。
-    #      含 http 的行整行跳过（URL 里的 #fragment 与路径斜杠不构成脏标签）。
+
+    # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
+    #      约定：标签只写在首行；正文行内的 #词 / #数字 属意外，必须改。
+    #      含 http 的行整行跳过（URL 里的 #fragment 不构成脏标签）。
+    #      注意：正文里的 / 斜杠（如「Mori/Siu–Yau」「消失/刚性/估计」）是正常书写，
+    #      不当作脏标签扫描；脏标签认定只针对标签段本身与正文 # 形态。
     for i, ln in enumerate(lines[1:], start=2):
         s = ln.strip()
         if not s or "http" in s:
@@ -141,13 +141,6 @@ def check(content):
             if m.start() == 0:
                 continue  # 行首标题已在 4) 处理
             err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；改作 'No.'/'号' 等写法")
-        # 斜杠标签：仅当斜杠不在数字语境（1/2、2026/09、MSC 39B12/26E60）时才提示（WARN，不阻塞）
-        for m in SLASH_TAG.finditer(s):
-            prev = s[m.start() - 1] if m.start() > 0 else ""
-            if prev.isdigit():
-                continue
-            warn(f"第 {i} 行正文含 '/{m.group(1)}'（flomo 会把 /xxx 也当标签，造成脏标签）；"
-                 f"建议改为顿号或加空格断开")
 
     # 5) 占位 / 生造来源风险
     # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
