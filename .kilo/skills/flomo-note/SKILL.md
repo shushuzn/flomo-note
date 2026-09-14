@@ -134,6 +134,14 @@ flomo MCP 工具（实测）：`get_daily_review` `get_format_guide` `get_tag_gu
 
 `flomo_client.py` 写操作后强制从 `result.structuredContent.id` 取 id，stderr 打印 `[成功] 已写入 memo id=...`；取不到则 `[失败]` 且退出码非 0。**判定依据唯一**：脚本退出码 0 + stderr 出现 `[成功] 已写入 memo id=`。退出码非 0 一律按失败，绝不重发。
 
+**写前幂等（硬限，重复创建事故根因，2026-09-14 落定）**：`memo_create` 在 `flomo_client.py` 内已内置写前查重——用卡片签名（首行标签 + 第二行概念名）检索，若云端已存在同签名卡则**直接复用其 id、不再新建**（stderr 打印 `[幂等] 已存在正文相同的 memo id=...`，退出码 0）。因此无论 create 因何种原因被触发/重试多次，第二次起都会命中既有卡，从机制上杜绝重复建卡。此保护不依赖调用方自觉，属脚本层硬防护。
+
+**工具返回是包裹结构（关键坑位）**：flomo 所有工具返回均为 `{"content":[{"type":"text","text":"<内层JSON字符串>"}], "structuredContent":{...}}` 包裹形态，结构化数据在 `structuredContent`（如 `memos`、`id`）。**脚本代码内读取 memos/id 必须走 `structuredContent`（或解析 `content[].text`），禁止直接 `result.get("memos")`**——那永远取不到，会导致"查重看似通过、实际没查到"而误新建。`flomo_client.py` 已内置 `_result_memos(result)` 统一提取，供幂等查重用。**自查重/复盘时不得靠肉眼从 `print(json.dumps(result))` 的 `text` 字符串里"看到"结果来判断命中**——必须以脚本代码层解析结果为准。
+
+**云存储转义（幂等比对必须用签名而非全文）**：flomo 云端存储会对正文特殊字符（`>`、`|` 等）做转义（如存为 `\u003e`、`\|`），本地正文与云端正文**全文逐字比对必然不相等**，因此幂等判定采用稳定签名（首行标签行 + 第二行概念名行）——search 返回的 content 即使正文被截断（`content_truncated=true`），前两行也始终完整，是可靠的重复判定依据。**禁止用全文逐字相等判断卡片是否重复**。
+
+**检索关键词要短**：整行概念名含全角标点时 flomo 全文检索常匹配失败（返回 0），须用短核心词（概念名去标点的最长中文段 / 标签二级词 / 去标点全串前 8 字）逐一检索。`_dup_candidate_keywords(content)` 已内置生成候选集。
+
 ## 对接细节
 
 - 端点 `https://flomoapp.com/mcp`，Bearer 鉴权（token 在 .mcp.json）。本环境无 MCP 面板，统一走 flomo_client.py 直连。
