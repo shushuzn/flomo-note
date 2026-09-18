@@ -21,7 +21,7 @@ flomo-note 是一个 AI 辅助的云端笔记技能，用于将看到的好内�
 
 1. **笔记只在云端** — 卡片正文仅存于 flomo 账号；本地 `d:\OpenClaw\flomo-note` 不落盘任何笔记内容
 2. **本地只留工具** — 本目录仅存放技能文档（`SKILL.md`）、总则（`AGENTS.md`）与 MCP 配置（`.mcp.json`）
-3. **写云免确认** — 建 memo、更新、改标签一律免确认，抓取 → 查重 → 自检 EXIT=0 后直接写云（细则以 `SKILL.md` 执行铁律为准）；清空卡片（退役）才需明确授权
+3. **写云免确认** — 建 memo、更新正文、清空空白卡、改标签一律免确认，抓取 → 查重 → 自检 EXIT=0 后直接写云（细则以 `SKILL.md` 执行铁律为准）；只有物理删除须明确授权，而 flomo 无删除 API，只能用户在 App 手动删
 4. **来源实实在在** — 卡片引用的 URL 必须真实、可核、经过抓取或核验
 5. **细则听 SKILL** — 卡片格式、标签规则、流程执行铁律等以 `.kilo/skills/flomo-note/SKILL.md` 为准
 
@@ -164,7 +164,7 @@ graph LR
 
 - `.mcp.json` 含个人 Bearer token，已加入 `.gitignore`，**不会入库**
 - 云端无删除 API（`memo_delete` 不存在），删除卡片只能在 flomo App 手动完成
-- 清空卡片 = `memo_update(content=' ')`，会同时清空标签，需授权后再执行
+- 清空卡片 = `memo_update(content=' ')`，属常规写云动作、免确认执行；会连带置空该卡标签，只挂在它上面的独占标签会从标签树消失——引用标签簇名前须现采 `tag_tree`
 
 ---
 
