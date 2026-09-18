@@ -9,6 +9,9 @@
 memo_body.txt
 tmp_*
 
+# 标签树本地快照：每次现采刷新的中间缓存，不入库
+tag_tree.txt
+
 # 依赖与日志
 node_modules/
 *.log
