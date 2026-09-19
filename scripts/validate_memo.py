@@ -129,18 +129,23 @@ def check(content):
 
 
     # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
-    #      约定：标签只写在首行；正文行内的 #词 / #数字 属意外，必须改。
+    #      约定：标签只写在首行；正文行内的 #词 / #数字 / #( 等属意外，必须改。
     #      含 http 的行整行跳过（URL 里的 #fragment 不构成脏标签）。
     #      注意：正文里的 / 斜杠（如「Mori/Siu–Yau」「消失/刚性/估计」）是正常书写，
     #      不当作脏标签扫描；脏标签认定只针对标签段本身与正文 # 形态。
+    #      2026-09-19：判定放宽为「# 后紧跟任意非空白字符」（原实现漏掉 '#(' 形态）。
     for i, ln in enumerate(lines[1:], start=2):
         s = ln.strip()
         if not s or "http" in s:
             continue
-        for m in re.finditer(r"#([A-Za-z0-9_\u4e00-\u9fff]{1,40})", s):
+        # 2026-09-19 修复：原正则只认 # 后跟 [A-Za-z0-9_中文]，漏掉 '#(' 这类形态。
+        # 实测（arXiv:2609.19829 写卡）：正文里的 f#(z) 被 flomo 建出 '(z)'、'(k)(z)'、
+        # '(z)/φ(|z|)' 等 6 个脏标签。flomo 的判定只看 # 后是否紧跟非空白字符，故同步放宽为 \S。
+        for m in re.finditer(r"#(\S{1,40})", s):
             if m.start() == 0:
                 continue  # 行首标题已在 4) 处理
-            err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；改作 'No.'/'号' 等写法")
+            err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；"
+                f"数学里的球面导数等一并写作 ♯（U+266F）或改写成文字，勿用 ASCII 的 #")
 
     # 5) 占位 / 生造来源风险
     # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
