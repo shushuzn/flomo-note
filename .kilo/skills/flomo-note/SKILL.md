@@ -108,7 +108,7 @@ flomo MCP 工具（实测可用）：`get_daily_review` `get_format_guide` `get_
 
 ### 3. 定标签（含筐型判断，阻塞）
 
-1. 先取标签树：按「本地与治理 · 标签树本地留存」比对数量——`tag_tree` 现采云端数量（`limit` 传 500 拿全量）与本地 `tag_tree.txt` 一致即直接用本地 txt，不一致才现采云端并覆盖更新本地 txt。
+1. 先取标签树：按「本地与治理 · 标签树本地留存」比对数量——`tag_tree` 现采云端数量（`limit` 传 2000 拿全量）与本地 `tag_tree.txt` 一致即直接用本地 txt，不一致才现采云端并覆盖更新本地 txt。
 2. 命中既有簇优先复用，但**只在与主题精确匹配时复用**；不精确就必须新建更精准标签（见标签错配防御第 3 条「不合内容绝不硬塞」）。
 3. 避开纯概念筐：具体当期主题必须落到具体二级，无则新建。
 4. 新建二级先现查近邻确认无既有簇；标签深度严格两级，不得产生 `#顶层/二级/三级`。
@@ -195,7 +195,7 @@ flomo MCP 工具（实测可用）：`get_daily_review` `get_format_guide` `get_
 ## 本地与治理
 
 - 仓库只存技能与配置文档，不含卡片正文；`.mcp.json` 已 gitignore；`tag_tree.txt` 已 gitignore。
-- **标签树本地留存（2026-09-16 落定，2026-09-18 改不入库）**：云端标签树留存本地 `tag_tree.txt`（首行 total 与采集时间，按顶层分组列二级）。每次定标签与复盘前先比数量：`tag_tree` 现采必须传 `{"limit":500}` 拿全量（服务端默认 200 会截断使比对失效），以 `structuredContent.total` 为云端标签总数与本地首行 total 比对——数量一致即视为云端无增删，直接以本地 txt 为标签树依据，不再重复采云端；不一致才现采云端并覆盖更新本地 txt。云端数量是权威（tag_rename 与清空都会改变数量）。本地文件属现采中间缓存，**不入库、不得 commit**。
+- **标签树本地留存（2026-09-16 落定，2026-09-18 改不入库，2026-09-20 修 limit）**：云端标签树留存本地 `tag_tree.txt`（首行 total 与采集时间，按顶层分组列二级）。每次定标签与复盘前先比数量：`tag_tree` 现采必须传 `{"limit":2000}` 拿全量（服务端默认 200 会截断；且 `limit` 须 ≥ 云端 total——2026-09-20 实测 total 升到 502 后，旧的 `limit:500` 会把 `tags` 列表截到 500 条，`len(tags)≠total` 导致无法据以重建本地文件），以 `structuredContent.total` 为云端标签总数与本地首行 total 比对——数量一致即视为云端无增删，直接以本地 txt 为标签树依据，不再重复采云端；不一致才现采云端并覆盖更新本地 txt。云端数量是权威（tag_rename 与清空都会改变数量）。本地文件属现采中间缓存，**不入库、不得 commit**。
 - **推送通道（2026-09-18 复测更新）**：文档改动 commit 后自动 push 到 GitHub（远端 `shushuzn/flomo-note`，master 分支），不另等授权；称"已提交 / 已推送"必须附真实 hash 并以 `git ls-remote` 核对。推送失败多为代理或 DNS 指向坏 IP，不等于 GitHub 不可用，禁止据此下"推不上去"的结论。按序尝试：① 先清掉沙箱注入的代理直连——`env -u http_proxy -u https_proxy git -c http.proxy="" -c https.proxy="" ls-remote origin`，通了就用同样方式 push（2026-09-18 实测：注入的 `127.0.0.1:41264` 代理返 502，去代理后直连可用）；② 仍不通再拉起 `python scripts/git_tunnel.py &`（本地 CONNECT 代理，把 `github.com:443` 透传到可达 IP，SNI 与证书校验仍端到端保持 `github.com`），用 `git -c http.proxy=http://127.0.0.1:18123 -c https.proxy=http://127.0.0.1:18123 push origin HEAD`；③ 确实推不上去时提交只在本地，必须如实告知并给出 commit hash。
 - 技能文档改动后跑 `scripts/audit_skill.sh`（sounding linter，目标 100/100、0 findings）自校；改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（回归用例，退出码 0 为全过），防止表格判定与标签规则被改回误报。
 - 云端状态不进 memory：标签树、卡清单、已写入规则一律现查本文件或 `tag_tree`，不靠记忆。
