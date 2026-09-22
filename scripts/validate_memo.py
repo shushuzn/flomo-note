@@ -183,6 +183,66 @@ def check(content):
         warn(f"第 {i} 行疑似旧格式来源/状态行（卡片格式硬限：无来源行、无状态行）——匹配到「{m.group(0).strip()}」；"
              f"若这是正文要点可忽略，若确为卡片级来源/状态行请删除该行，把信息融入正文对应要点或直接省略")
 
+    # 5.6) 卡片载体元信息检测（ERR）——2026-09-22 重大事故加固
+    # 事故：把"B 站数学直播截图，UP 主…""2026-09-20 范畴论课程讲义，定义 3"这类
+    # **卡片取自什么载体**的信息写进概念卡正文（含首段括号与要点句内），与概念无关。
+    # 5.5) 只认"行首白名单词 + 冒号 + 位于末两行"，括号式 / 句中式载体标注全部漏检，故补本项。
+    #
+    # 分三层，防止误伤：
+    #   a) 行内强载体词（carrier_strong）：截图 / 讲义 / 课件 / 板书 / 字幕 / 批注 / 页码 / UP主 / B站 /
+    #      如图 等，几乎只可能用于交代取材方式，正文出现即 ERR。
+    #   b) 取材标注词（carrier_ctx）：公众号 / 视频号 / 哔哩哔哩 / 抖音 / 直播 / 课程 / 讲座 / 专栏 等，
+    #      本身可能是卡片主体（如"微信公众号"是产品概念），故只在**括号式注释**里出现才 ERR。
+    #   c) 歧义词（carrier_weak）：视频 / 音频 / 演讲 / 发布会 / 访谈 等，括号内出现只 WARN 人工判断。
+    # 不含"报道 / 消息 / 通报 / 官网 / 作者"——"据沈阳市纪委监委消息""新华社报道"属事件自身的
+    # 事实来源信息，事件卡合法保留，一律不碰。
+    carrier_strong = re.compile(
+        r"截图|截屏|录屏|屏摄|讲义|课件|幻灯片|(?<![A-Za-z/\.])[Pp][Pp][Tt](?![A-Za-z])"
+        r"|板书|字幕|批注|听课|课程记录|课程笔记|续页|原图|配图"
+        r"|[Uu][Pp]\s*主|[Bb]\s*站|bili\s*bili"
+        r"|第\s*\d+(?:\s*[-–—~]\s*\d+)?\s*页|\d+\s*[-–—~]?\s*\d+\s*/\s*\d+\s*页|\d+\s*[/／]\s*\d+\s*页"
+        r"|如图|见图|图中所?示|上图|下图|该图|这张图"
+    )
+    carrier_ctx = re.compile(
+        r"公众号|视频号|小程序|哔哩哔哩|抖音|快手|小红书|直播|录播|讲座|课堂|课程|订阅号|推文"
+    )
+    carrier_weak = re.compile(r"视频|音频|回放|演讲|发布会|访谈|播客|直播")
+    bracket_re = re.compile(r"[（(][^（()）]*[）)]")
+
+    def _carrier_scan(line_no, text, only_brackets):
+        """扫描一行，返回 (强/标注类命中列表, 歧义类命中列表)；only_brackets=True 时只查括号注释。"""
+        hard, soft = [], []
+        if not text.strip():
+            return hard, soft
+        if not only_brackets:
+            hard += [m.group(0).strip() for m in carrier_strong.finditer(text)]
+        for grp in bracket_re.findall(text):
+            hard += [m.group(0).strip() for m in carrier_ctx.finditer(grp)]
+            if not only_brackets:
+                hard += [m.group(0).strip() for m in carrier_strong.finditer(grp)]
+            soft += [m.group(0).strip() for m in carrier_weak.finditer(grp)]
+        return list(dict.fromkeys(hard)), [w for w in dict.fromkeys(soft) if w not in hard]
+
+    for i, ln in enumerate(lines[2:], start=3):  # 只扫正文：首行为标签段
+        hard, soft = _carrier_scan(i, ln, only_brackets=False)
+        if hard:
+            err(f"第 {i} 行含卡片载体/来源信息「{'、'.join(hard)}」——概念卡正文只写概念本身，"
+                f"禁止交代内容取自何种载体（截图 / 讲义 / 课件 / 字幕 / 板书 / 页码 / UP主 / 直播间 / 公众号 等），"
+                f"无论放在首段括号、要点句内还是行首都一律禁止；请删除这类表述，"
+                f"载体上没有的信息直接省略，禁止用「截图未展开」之类说法保留")
+            continue  # 已判错的行不再叠加同主题提示
+        for w in soft:
+            warn(f"第 {i} 行括号注释含载体词「{w}」——若这是交代卡片取材来源（而非概念自身内容），"
+                 f"按卡片格式硬限删除")
+
+    # 概念名称行（第二行）不得含强载体词；平台 / 企业名（哔哩哔哩、微信公众号）作概念名合法，
+    # 故此处只查 carrier_strong，且只提示不阻塞。
+    name_hit = [m.group(0).strip()
+                for m in carrier_strong.finditer(lines[1] if len(lines) > 1 else "")]
+    if name_hit:
+        warn(f"第 2 行概念名称含载体词「{'、'.join(name_hit)}」——概念名应只写概念本身，"
+             f"不要用取材方式（截图 / 讲义 / 课件 等）命名")
+
     # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
     # 预印本卡须基于正文写作（SKILL 流程第 1 步「预印本正文优先」）：只抓 arXiv /abs/ 之类摘要页，
     # 要点会停留在摘要泛述。此处仅在正文出现"以摘要为唯一依据"的措辞时提示，回查是否漏抓正文；
