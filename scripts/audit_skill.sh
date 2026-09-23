@@ -25,23 +25,45 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILL_DIR="$REPO_ROOT/.kilo/skills/flomo-note"
+# SKILL.md 位置：优先用仓库内路径（.kilo/skills/flomo-note），否则用技能安装根目录。
+# 必须取「带真实目录名」的绝对路径（cd + pwd 解析符号链接与 ..），sounding 按目录名校验 frontmatter.name。
+if [ -d "$REPO_ROOT/.kilo/skills/flomo-note" ]; then
+  SKILL_DIR="$(cd "$REPO_ROOT/.kilo/skills/flomo-note" && pwd)"
+else
+  SKILL_DIR="$REPO_ROOT"
+fi
 FLOMO_CLIENT="$SCRIPT_DIR/flomo_client.py"
 
-PYTHON="${SOUNDING_PY:-/c/Users/35234/.workbuddy/binaries/python/versions/3.13.12/python.exe}"
+# Python 解释器：优先 SOUNDING_PY，其次当前平台 python3/python（跨平台，不写死路径）
+if [ -n "${SOUNDING_PY:-}" ]; then
+  PYTHON="$SOUNDING_PY"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON="$(command -v python)"
+else
+  echo "未找到 Python 解释器，请设置 SOUNDING_PY" >&2; exit 2
+fi
+
 # SOUNDING_OWNED=1 表示本目录由本次运行创建，结束时可安全清理；
 # 用户通过环境变量传入的目录一律保留，避免误删其本地副本。
 if [ -z "${SOUNDING_TMP:-}" ]; then
   SOUNDING_OWNED=1
-  SOUNDING_TMP="$(mktemp -d 2>/dev/null || echo /c/Users/35234/AppData/Local/Temp/sounding_audit_$$)"
+  SOUNDING_TMP="$(mktemp -d)"
 else
   SOUNDING_OWNED=0
 fi
 
-# 传给 Windows Python 的路径需转成 Windows 形态（git-bash 的 /d/... 在 Windows Python 下会解析错）
-SKILL_DIR_WIN="$(cygpath -w "$SKILL_DIR")"
-FLOMO_CLIENT_WIN="$(cygpath -w "$FLOMO_CLIENT")"
-SOUNDING_TMP_WIN="$(cygpath -w "$SOUNDING_TMP")"
+# 路径形态：仅当 cygpath 可用（Windows git-bash）才转换，其它平台用原路径
+if command -v cygpath >/dev/null 2>&1; then
+  SKILL_DIR_WIN="$(cygpath -w "$SKILL_DIR")"
+  FLOMO_CLIENT_WIN="$(cygpath -w "$FLOMO_CLIENT")"
+  SOUNDING_TMP_WIN="$(cygpath -w "$SOUNDING_TMP")"
+else
+  SKILL_DIR_WIN="$SKILL_DIR"
+  FLOMO_CLIENT_WIN="$FLOMO_CLIENT"
+  SOUNDING_TMP_WIN="$SOUNDING_TMP"
+fi
 
 DO_MCP=0
 KEEP=0
