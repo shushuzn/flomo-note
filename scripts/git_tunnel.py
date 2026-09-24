@@ -26,6 +26,7 @@
 """
 import select
 import socket
+import ssl
 import sys
 import threading
 
@@ -50,19 +51,47 @@ def log(msg):
         print(f"[tunnel] {msg}", flush=True)
 
 
+def _tcp_tls_probe(ip, port, sni):
+    """TCP 连通 + TLS 握手探测；返回 True 表示可用（仅对路由域名启用）。
+
+    背景：GitHub 美国段 IP 在 TLS 层偶发 unexpected eof（曾导致 git push 直接失败）。
+    仅 TCP 连通不足以判定可用，故在选路时先做一次 TLS 握手，跳过握手失败的 IP。
+    """
+    s = socket.create_connection((ip, port), timeout=8)
+    try:
+        ctx = ssl.create_default_context()
+        ss = ctx.wrap_socket(s, server_hostname=sni)
+        ss.close()
+    except Exception:  # noqa: BLE001
+        try:
+            s.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+    return True
+
+
 def connect_target(host, port):
-    """连到目标。命中 ROUTES 则逐个试候选 IP，否则走系统 DNS。"""
+    """连到目标。命中 ROUTES 则逐个试候选 IP，优先选 TLS 握手成功的；否则走系统 DNS。"""
     ips = ROUTES.get(host)
     if ips:
         last = None
+        chosen = None
         for ip in ips:
             try:
-                s = socket.create_connection((ip, port), timeout=10)
-                return s, ip
+                if not _tcp_tls_probe(ip, port, host):
+                    last = OSError(f"{ip} TLS 探测失败")
+                    log(f"  {host} -> {ip} TLS 探测失败，跳过")
+                    continue
+                chosen = ip
+                break
             except Exception as e:  # noqa: BLE001
                 last = e
-                log(f"  {host} -> {ip} 失败: {type(e).__name__}")
-        raise last if last else OSError("no candidate ip")
+                log(f"  {host} -> {ip} 探测异常: {type(e).__name__}")
+        if chosen is None:
+            raise last if last else OSError("no candidate ip")
+        s = socket.create_connection((chosen, port), timeout=10)
+        return s, chosen
     s = socket.create_connection((host, port), timeout=15)
     return s, host
 
