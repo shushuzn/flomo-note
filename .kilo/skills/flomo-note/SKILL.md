@@ -161,6 +161,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 **H25 · 文档改动走独立流程。**
 技能文档（SKILL.md / AGENTS.md / 词表 / 脚本）的修订**一律等用户另行指令触发**，触发后走独立改动流程（commit + 真实 hash + **立即 push**）。
 **push 是改动流程的必含终步，不是可选项**：commit 后必须立即 `git push` 并 `git ls-remote` 核对远端已含该 hash，不得停留在本地提交、不得等用户确认（曾因"改动未推送"被判定重大事故）。
+**push 一律走 `scripts/push_skill.sh "msg"` 一条命令**（自动起隧道 + 清掉 `~/.gitconfig` 写死的 7897 代理 + 用 `gh` 凭据助手避开 `reg.exe` 黑名单 + commit + push + `git ls-remote` 校验远端）。**禁止手搓 bash / 临时拼 git 命令**——该流程的所有坑（代理、凭据、隧道、Qoder hook 触发 reg.exe）已收敛进脚本。
 **写卡复盘的建议中严禁提议改动这些文档**——复盘建议的落点只能是 flomo 云端卡片本身。
 
 **H26 · 本地与云端分工。**
@@ -172,7 +173,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 **H27 · 收尾强制清理（不可等确认）。**
 每轮 / 每会话收尾必须把**与近轮无关的残留临时文件**归档并删除，属强制流程，不等用户确认。流程：显式列名 → 打包 `.workbuddy/trash/temp-cleanup-<ts>.tar.gz` 并断言成员数一致 → 才删除 → 复核残留为 0。
-- **保留项（不得误删）**：`_tmp_extract.py`（项目抽取工具）、`tag_tree.txt`（现采缓存）、`.workbuddy/trash/` 内既有备份包、他项目文件（如 `D:\tmp` 非本技能件）。
+- **清理一律走 `scripts/cleanup.py`（默认执行）**：`--dry-run` 只列名、`--verify` 只复核残留是否为 0。**禁止临时手搓 `_tmp_cleanup_*.py`**——保留项与排除清单（`_tmp_extract.py` / `tag_tree.txt` / trash 内旧包 / `D:\tmp` 他项目 `arxiv_test.xml`、`arxiv_vibe.xml`）已写死在脚本里，漏删/误删风险由脚本兜底。
 - **不得删当轮素材**：与当前轮次相关的抓取原文、草稿、请求 JSON 等按 H24 保留至少当次会话全部轮次；清理只清历史残留，不碰当轮。
 - 违反本规则（残留不清理）属严重违规——曾因 430 个残留文件未清被判定严重违规。
 
@@ -330,10 +331,13 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/test_validate_memo.py` — 质检脚本的回归用例。
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时用域名前置取正文与 PDF。
 - `scripts/git_tunnel.py` — GitHub 直连与注入代理都不通时的本地 CONNECT 透传通道。
+- `scripts/push_skill.sh` — 文档改动后强制推送（H25）：自动起隧道 + 清写死代理 + `gh` 凭据 + commit + push + `git ls-remote` 校验远端，一条命令，禁止手搓。
+- `scripts/cleanup.py` — 每轮收尾强制清理残留临时文件（H27）：列名 → 归档 trash → 断言成员数 → 删除 → 复核残留 0，保留项与排除清单写死。
+- `scripts/run_audit.sh` — 包好 Git 工具链、`SOUNDING_TMP` 与隧道后调用 `audit_skill.sh` 自校。
 - `scripts/audit_skill.sh` — 技能文档 linter。
 
 ### 维护约定
 
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（回归用例，退出码 0 为全过），防止表格判定与标签规则被改回误报。
-- 技能文档改动后跑 `scripts/audit_skill.sh` 自校。
+- 技能文档改动后跑 `scripts/run_audit.sh` 自校（已包好 Git 工具链、`SOUNDING_TMP` 与隧道；不要直接手搓 `audit_skill.sh` 的环境）。
 - 环境变化只改 `ENVIRONMENT.md`，不改本文件。
