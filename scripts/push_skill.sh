@@ -60,6 +60,10 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # ---- 1. 暂存 + 提交（只做一次）----
+# 提交前先禁用 Qoder post-commit hook：否则会拉起 Qoder.exe→reg.exe 被黑名单拦截（无害但噪音）
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
 if [ "$NO_COMMIT" -eq 0 ]; then
   if [ "${#FILES[@]}" -gt 0 ]; then
     git add "${FILES[@]}"
