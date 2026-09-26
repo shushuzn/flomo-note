@@ -36,9 +36,8 @@ _IDS = itertools.count(1)
 def load_token():
     """返回 (token, 来源) 元组。
 
-    优先级：项目 .mcp.json（当前配置事实源，含正确 token）优先，
-    环境变量 FLOMO_TOKEN 仅在不存 .mcp.json 时作后备。
-    注意：本机 FLOMO_TOKEN 曾被写入一个过期 token，故不以 env 为准。
+    优先级：项目 .mcp.json（配置事实源）优先，环境变量 FLOMO_TOKEN 仅在不存 .mcp.json 时作后备。
+    env 中的 token 可能过期，故不作权威来源。
     """
     mcp = PROJECT_ROOT / ".mcp.json"
     if mcp.exists():

@@ -177,6 +177,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 **H28 · 技能文档禁写日期与事件。**
 本文件及同目录其他技能文档（`AGENTS.md`、词表、脚本注释）只承载规则与流程，严禁写入具体日期与具体事件经过；说明理由只作抽象陈述，不得附带时间、地点、当事人、数量等细节。一次性实测记录与环境事实一律写 `ENVIRONMENT.md`。
+本条已落到执行层：`scripts/check_skill_docs.py` 扫描本文件、同目录文档与 `scripts/` 全量脚本，命中具体日期判 ERR 阻断，命中历史事件叙事词判 WARN；`ENVIRONMENT.md` 与协议/版本常量行豁免，豁免项逐条打印 SKIP 以保持可见。技能文档改动后必须先跑该脚本（见「维护约定」）。
 
 ---
 
@@ -290,14 +291,17 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口；内置写前幂等查重、`structuredContent` 提取、成功/失败判定。
 - `scripts/validate_memo.py` — 写云前质检（H14–H17 等），EXIT=0 才可写云。
 - `scripts/test_validate_memo.py` — 质检脚本回归用例。
+- `scripts/check_skill_docs.py` — 技能文档内容纪律自检（H28）：扫具体日期与历史事件叙事，离线、只读。
+- `scripts/test_check_skill_docs.py` — 上述自检脚本回归用例。
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF。
 - `scripts/git_tunnel.py` — GitHub 直连与注入代理都不通时的本地 CONNECT 透传通道（含 TLS 健康选路）。
 - `scripts/push_skill.sh` — 文档改动后强制推送（H25）：起隧道 + 清写死代理 + `gh` 凭据 + commit + push + `git ls-remote` 校验，一条命令，禁手搓。
 - `scripts/cleanup.py` — 每轮收尾强制清理残留（H27）：列名 → 归档 trash → 断言成员数 → 删除 → 复核残留 0，保留项与排除清单写死。
-- `scripts/run_audit.sh` — 包好 Git 工具链、`SOUNDING_TMP` 与隧道后调 `audit_skill.sh` 自校。
-- `scripts/audit_skill.sh` — 技能文档 linter。
+- `scripts/run_audit.sh` — 技能文档自校入口：先跑离线内容自检（`check_skill_docs.py`），再包好 Git 工具链、`SOUNDING_TMP` 与隧道调 `audit_skill.sh` 做结构审计。
+- `scripts/audit_skill.sh` — 技能文档结构审计（第三方 sounding linter），不检查内容纪律。
 
 ### 维护约定
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
-- 技能文档改动后跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
+- 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
+- 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。
 - 环境变化只改 `ENVIRONMENT.md`，不改本文件。
