@@ -11,7 +11,7 @@
 #   明文缓存凭据位于 git 自己的 store helper（非 Windows 凭据管理器），读取不依赖 reg.exe。
 #   若 ~/.git-credentials 无 github 条目，脚本直接报错退出，不回落到 gh。
 #
-# 遇 GitHub 美国段 IP 的 TLS unexpected eof（曾判定重大事故）：自动重启干净隧道重试，
+# 遇 GitHub 美国段 IP 的 TLS unexpected eof：自动重启干净隧道重试，
 #   最多 4 次（SOP：推送遇 EOF 先重启隧道，勿沿用经历波动的旧进程）。
 #
 # 用法：

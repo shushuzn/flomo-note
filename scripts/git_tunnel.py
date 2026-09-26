@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """git_tunnel.py — 本地 TCP 隧道代理：把指定主机的连接重定向到可达 IP。
 
-背景（2026-09-11 实测）
+背景
     本机 DNS 把 github.com 解析到 20.205.243.166（新加坡 Azure 段），
     该 IP 的 443 端口 TCP 超时（换 SNI、不发 SNI 均超时 → 是路由不通，
     不是 SNI 关键字阻断，与 arxiv.org 那次的机制不同）。
@@ -92,9 +92,8 @@ def connect_target(host, port):
     """连到目标。命中 ROUTES 则**并行**探测候选 IP，取最快握手成功者；
     否则走系统 DNS。
 
-    2026-09-25 改：原先逐个串行探测，死 IP 每个要耗满 8 秒超时，
-    而 git 的 CONNECT 只等约 2 秒 → 稳定 502。改为并行后，任一可达 IP
-    在亚秒级返回，死 IP 不再阻塞。
+    串行探测时死 IP 每个要耗满 8 秒超时，而 git 的 CONNECT 只等约 2 秒 →
+    稳定 502；改为并行后，任一可达 IP 在亚秒级返回，死 IP 不再阻塞。
     """
     ips = ROUTES.get(host)
     if ips:

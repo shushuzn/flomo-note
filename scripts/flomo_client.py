@@ -264,7 +264,7 @@ def main():
         arguments = json.loads(argv[1]) if len(argv) > 1 else {}
     if name in ("memo_create", "memo_update", "tag_rename"):
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
-    # 幂等保护（重复创建事故根因）：memo_create 写前先查重，若云端已存在
+    # 幂等保护：memo_create 写前先查重，若云端已存在
     # 正文逐字相同的卡片则直接复用其 id、不再新建。无论 create 被触发几次，
     # 第二次起都会命中既有卡，杜绝重复建卡。
     if name == "memo_create":

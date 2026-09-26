@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """域名前置（domain fronting）取件器：SNI 与 Host 分离，绕过按 SNI 关键字的 TLS RST 阻断。
 
-背景（2026-09-11 实测 arXiv:2609.09226）：
+背景：
 本机网络对 SNI 中出现 `arxiv.org` 的 TLS ClientHello 直接回 RST（TCP 能建连、0.08s 后
 ConnectionResetError）；换 SNI 为 `www.bing.com` 或去 SNI 即握手成功，说明是 SNI 关键字
 过滤而非"TLS 整段阻断"。arXiv 走 Fastly，Fastly 按 HTTP Host 头路由，因此把 SNI 换成
