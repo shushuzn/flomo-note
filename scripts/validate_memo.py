@@ -19,12 +19,18 @@
   - --create/--file 同时兼容两种 JSON 形态：flomo_client.py 实际发送的
     `{"content": ...}`（顶层），以及 JSON-RPC 信封 `params.arguments.content`。
 """
+import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 ERR, WARN = [], []
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+GATE_DIR = PROJECT_ROOT / ".sop_gate"
 
 TAG_CHAR_OK = re.compile(r"^[\w\u4e00-\u9fff/]+$")
 
@@ -434,6 +440,65 @@ def check(content):
                  f"若该句确为正文级陈述可忽略")
 
 
+def _signature_of(content):
+    """与 sop_gate.py / flomo_client.py 同口径：前两个非空行（标签行 + 概念名行）。
+
+    返回 dict（与 sop_gate._signature 一致），便于凭证签名直接比对。
+    """
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    tagline, concept = lines[0], lines[1]
+    if not tagline.startswith("#") or not concept:
+        return None
+    return {"tagline": tagline, "concept": concept}
+
+
+def check_gate(content):
+    """流程闸门校验：确认 ②验证 / ④tag_tree 核对 / ⑤查重两路 / ⑧复盘三路 都已执行。
+
+    这是"漏做 SOP 步骤"事故（卡写对了但流程没走）的机械兜底——
+    此前 validate_memo.py 只查文本格式，对"步骤没做"完全无感。
+    凭证由 scripts/sop_gate.py 生成，落在 .sop_gate/<sig_key>.json。
+    无凭证 / 凭证过期 / 签名不匹配 / 术语验证缺失，一律判 ERR 阻断写云。
+    """
+    sig = _signature_of(content)
+    if not sig:
+        return  # 结构本身不合规，已由 H14 那节报错，此处不重复
+    sig_key = hashlib.sha256(
+        (sig["tagline"] + "\n" + sig["concept"]).encode("utf-8")
+    ).hexdigest()[:16]
+    gate_path = GATE_DIR / f"{sig_key}.json"
+    if not gate_path.exists():
+        err(f"缺少 SOP 流程闸门凭证（{GATE_DIR.name}/{sig_key}.json）——"
+            f"说明第 ②验证 / ④标签树核对 / ⑤查重两路 / ⑧复盘三路 至少一步没跑。"
+            f"先执行 scripts/sop_gate.py 再写云（见 SKILL「流程」各阻塞项）")
+        return
+    try:
+        gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as e:
+        err(f"SOP 闸门凭证非法 JSON（{gate_path.name}）：{e}")
+        return
+    if gate.get("signature") is not None:
+        gs = gate["signature"]
+        if (gs.get("tagline"), gs.get("concept")) != (sig["tagline"], sig["concept"]):
+            err(f"SOP 闸门凭证签名与当前卡片不符（凭证针对「{gs.get('concept')}」，"
+                f"当前卡是「{sig['concept']}」）——凭证被复用或卡已改动，须重跑 sop_gate.py")
+    # 正文指纹：杜绝"先跑闸门、后改正文"绕过（签名只锚卡片标识，锚不住正文改动）
+    if gate.get("body_hash"):
+        if gate["body_hash"] != hashlib.sha256(content.encode("utf-8")).hexdigest():
+            err("SOP 闸门凭证的正文指纹与当前卡片不符——闸门跑完后正文又被改过，"
+                "须重跑 scripts/sop_gate.py 再写云")
+    else:
+        err("SOP 闸门凭证缺少正文指纹（body_hash）——凭证格式过旧，须重跑 sop_gate.py")
+    exp = gate.get("expires_at")
+    if isinstance(exp, int) and exp < int(time.time()):
+        err("SOP 闸门凭证已过期——须重新执行 scripts/sop_gate.py 现查")
+    web = gate.get("web") or {}
+    if not web.get("web_skipped") and not web.get("searched"):
+        err("SOP 闸门凭证显示第 ② 步验证（网络搜索）未执行——术语卡必须现查后再写云")
+
+
 def _content_from_json(obj):
     """从 JSON 对象抽取 content，兼容 flomo_client 请求体与 JSON-RPC 信封。"""
     if not isinstance(obj, dict):
@@ -469,13 +534,23 @@ def read_text(path):
 
 
 def load_content(argv):
-    arg = argv[1]
-    if arg == "--create":
-        return read_text(argv[2])
+    """从参数列表取卡片正文。
+
+    兼容两种入参：`main()` 传的是已剥掉脚本名的参数（`["--file", p]`），
+    回归测试传的是完整 `sys.argv`（`["validate_memo.py", "--file", p]`）。
+    判据：首元素若既不是选项、也不是可读文件，即视为脚本名并跳过。
+    """
+    if not argv:
+        raise IndexError("缺少输入路径")
+    if not argv[0].startswith("-") and not Path(argv[0]).exists():
+        argv = argv[1:]
+    if not argv:
+        raise IndexError("缺少输入路径")
+    arg = argv[0]
+    if arg in ("--create", "--file"):
+        return read_text(argv[1])
     if arg == "--content":
-        return argv[2]
-    if arg == "--file":
-        return read_text(argv[2])
+        return argv[1]
     return read_text(arg)
 
 
@@ -483,12 +558,28 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         return 2
+    argv = sys.argv[1:]
+    no_gate = False
+    if "--no-gate" in argv:
+        no_gate = True
+        argv = [a for a in argv if a != "--no-gate"]
     try:
-        content = load_content(sys.argv)
+        content = load_content(argv)
     except (IndexError, FileNotFoundError, json.JSONDecodeError) as e:
         sys.stderr.write(f"读取输入失败：{e}\n")
         return 2
     check(content)
+    # 流程闸门（可 --no-gate 降级为 WARN，仅供回归测试/历史卡批处理）
+    if no_gate:
+        _gate_err, _gate_warn = ERR[:], WARN[:]
+        ERR.clear(); WARN.clear()
+        check_gate(content)
+        for m in ERR:
+            warn(f"（闸门·未阻断）{m}")
+        ERR[:] = _gate_err
+        WARN[:] = _gate_warn + WARN
+    else:
+        check_gate(content)
     # 去重：同一问题可能被多条规则命中，重复提示无信息增量（dict 保序）
     for m in dict.fromkeys(ERR):
         print("ERR :", m)

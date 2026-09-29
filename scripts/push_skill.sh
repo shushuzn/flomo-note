@@ -26,7 +26,19 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-PY="${PYTHON_BIN:-C:/Users/35234/.workbuddy/binaries/python/versions/3.13.12/python.exe}"
+# ---- 探测 Python：显式 env > python3 > python（跨 Linux/macOS/Windows Git Bash）----
+detect_python() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then echo "$PYTHON_BIN"; return; fi
+  for c in python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then echo "$c"; return; fi
+  done
+  echo ""
+}
+PY="$(detect_python)"
+if [[ -z "$PY" ]]; then
+  echo "[push] 未找到 Python 解释器：请安装 python3 或设 PYTHON_BIN" >&2
+  exit 1
+fi
 
 # 解析参数
 NO_COMMIT=0
