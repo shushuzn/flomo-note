@@ -232,21 +232,16 @@ def _exact_content_dup(client, content):
 
 
 def _norm_body(text):
-    """回读比对用归一化：只压缩**空白差异**（CRLF、行尾空格、连续空行、首尾空行）。
+    """回读比对用归一化：**空行不参与比对**（CRLF、行尾空格一并不计）。
 
-    连续空行压成一行、首尾空行去掉——两侧走同一套归一化，故段落结构不受影响；
-    非空白字符一律不宽容，那些差异意味着云端存的不是这份正文。
+    空行的有无与数量由 flomo 渲染层决定，不是内容差异——云端会在**标签段后**
+    与**列表引导行（如「要点：」）后**自动补空行，而本地写的是紧邻单换行，
+    按行逐一比必然不等。故比对单位取「去空行后的行序列」：任何一行文字的
+    增删改动、行序变化都会判失败，空行差异则不影响结论（卡片的分段结构由
+    写前质检 `validate_memo.py` 按 H14 守住，不由回读承担）。
     """
     lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    out = []
-    for ln in lines:
-        ln = ln.rstrip()
-        if ln == "" and (not out or out[-1] == ""):
-            continue
-        out.append(ln)
-    while out and out[-1] == "":
-        out.pop()
-    return "\n".join(out)
+    return "\n".join(ln.rstrip() for ln in lines if ln.strip())
 
 
 def readback_check(client, memo_id, written):
