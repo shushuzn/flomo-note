@@ -32,7 +32,6 @@
 退出码：0 = 闸门全过并已出凭证；1 = 有阻塞项未过（凭证不出）。
 """
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -43,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, load_token, _result_memos  # noqa: E402
 from memo_util import (  # noqa: E402
     body_hash,
-    concept_keywords,
+    keywords_of_concept,
     memo_signature,
     signature_key,
     tag_leaves,
@@ -55,27 +54,6 @@ GATE_DIR = PROJECT_ROOT / ".sop_gate"
 # 凭证有效期（秒）。同一张卡的闸门凭证在此时限内可反复用于自检，
 # 超期须重跑，避免"昨天的凭证给今天的卡用"。
 GATE_TTL = 6 * 3600
-
-
-def _signature(content):
-    """签名（委托 memo_util.memo_signature，返回 dict）。"""
-    return memo_signature(content)
-
-
-def _body_hash(content):
-    """正文整体指纹（委托 memo_util.body_hash）。"""
-    return body_hash(content)
-
-
-def _concept_keywords(concept):
-    """从概念名派生检索词（与 flomo_client 同源，见 memo_util.concept_keywords）。"""
-    # 概念名并非完整卡片，用一行标签占位使其通过 memo_signature 的结构校验
-    return concept_keywords(f"#_/_\n{concept}\n", limit=2)
-
-
-def _tag_leaves(tagline):
-    """取标签行里的二级词（如 #科技/机器人 → 机器人）。"""
-    return tag_leaves(tagline)
 
 
 def _tag_tree_total_and_count(client):
@@ -169,7 +147,7 @@ def _check_dedup(client, sig, blockers, notes):
     正文自检时判断（闸门不做语义合并决策）。命中候选会写进凭证供人工复核。
     """
     concept = sig["concept"]
-    kws = _concept_keywords(concept)
+    kws = keywords_of_concept(concept, limit=2)
     if not kws:
         blockers.append("无法从概念名派生查重关键词")
         return {}
@@ -184,7 +162,7 @@ def _check_dedup(client, sig, blockers, notes):
         notes.append(f"查重·关键词「{kw}」命中 {len(memos)} 条")
     # 第二路：tag_tree 列同主标签细分
     total, tags = _tag_tree_total_and_count(client)
-    leaves = _tag_leaves(sig["tagline"])
+    leaves = tag_leaves(sig["tagline"])
     near = []
     for top, leaf in leaves:
         hit = 0
@@ -209,7 +187,7 @@ def _check_review(client, sig, blockers, notes, anchor_id=None):
     """
     anchor, anchor_src = anchor_id, "调用方提供"
     if not anchor:
-        for kw in _concept_keywords(sig["concept"]):
+        for kw in keywords_of_concept(sig["concept"], limit=2):
             res = client.tool("memo_search", {"keywords": kw, "limit": 1})
             memos = _result_memos(res)
             if memos:
@@ -266,7 +244,7 @@ def main():
     args = ap.parse_args()
 
     content = Path(args.memo).read_text(encoding="utf-8-sig")
-    sig = _signature(content)
+    sig = memo_signature(content)
     if not sig:
         print("[阻塞] 卡片正文不足两行非空内容，无法生成签名——先按 H14 补齐结构", file=sys.stderr)
         return 1

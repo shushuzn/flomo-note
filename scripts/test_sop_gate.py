@@ -76,14 +76,14 @@ def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None):
 
 
 def run_signature_cases():
-    """签名提取：与 flomo_client 同口径（前两个非空行）。"""
-    sig = GATE._signature(BODY)
+    """签名提取：直达 memo_util 单一实现（前两个非空行）。"""
+    sig = GATE.memo_signature(BODY)
     check("签名取标签行+概念名行",
           sig == {"tagline": "#科技/机器人", "concept": "某测试概念名"})
-    check("不足两行返回 None", GATE._signature("#标签\n") is None)
-    check("首行非标签返回 None", GATE._signature("普通行\n概念\n") is None)
+    check("不足两行返回 None", GATE.memo_signature("#标签\n") is None)
+    check("首行非标签返回 None", GATE.memo_signature("普通行\n概念\n") is None)
     check("首行标签、第二行空（H14 变体）仍取到概念名",
-          GATE._signature("#科技/机器人\n\n概念名\n正文\n")
+          GATE.memo_signature("#科技/机器人\n\n概念名\n正文\n")
           == {"tagline": "#科技/机器人", "concept": "概念名"})
 
 
@@ -231,10 +231,10 @@ def run_check_web_cases():
 
 
 def run_concept_keyword_cases():
-    """_concept_keywords 边界（经 memo_util 委托）。"""
-    kw = GATE._concept_keywords("德塔智能 Delta 0 双足人形机器人基础模型")
-    check("_concept_keywords 派生非空", len(kw) >= 1 and all(kw))
-    check("_concept_keywords 限长 2", len(GATE._concept_keywords("某概念名称")) <= 2)
+    """keywords_of_concept 边界（概念名直接派生，不经卡片结构）。"""
+    kw = GATE.keywords_of_concept("德塔智能 Delta 0 双足人形机器人基础模型")
+    check("keywords_of_concept 派生非空", len(kw) >= 1 and all(kw))
+    check("keywords_of_concept 限长 2", len(GATE.keywords_of_concept("某概念名称")) <= 2)
 
 
 class FakeClient:
@@ -326,7 +326,7 @@ def run_tag_tree_net_cases():
 
 def run_dedup_net_cases():
     """_check_dedup 两路查重（假 client，不联网）。"""
-    sig = GATE._signature(BODY)
+    sig = GATE.memo_signature(BODY)
     # 1) 关键词无法派生 → 判阻塞
     b, n = [], []
     got = GATE._check_dedup(FakeClient(), {"concept": "#", "tagline": "#A/b"}, b, n)
@@ -359,7 +359,7 @@ def run_dedup_net_cases():
         search={},
     )
     b, n = [], []
-    GATE._check_dedup(c, GATE._signature("#科技/机器人 #投资/一级市场\n某概念\n\n正文\n"), b, n)
+    GATE._check_dedup(c, GATE.memo_signature("#科技/机器人 #投资/一级市场\n某概念\n\n正文\n"), b, n)
     per_leaf = [x for x in n if "查重·标签路" in x]
     check("_check_dedup 两个标签各出一条计数", len(per_leaf) == 2)
     check("_check_dedup 近邻计数不跨标签累积",
@@ -371,7 +371,7 @@ def run_dedup_net_cases():
         search={},
     )
     b, n = [], []
-    got = GATE._check_dedup(c, GATE._signature("#科技/机器人\n某概念\n\n正文\n"), b, n)
+    got = GATE._check_dedup(c, GATE.memo_signature("#科技/机器人\n某概念\n\n正文\n"), b, n)
     check("_check_dedup 子串不误命中无关簇",
           "其他/机器人架构" not in got.get("tag_neighbors", []))
     check("_check_dedup 精确与子路径均命中",
@@ -382,7 +382,7 @@ def run_dedup_net_cases():
 
 def run_review_net_cases():
     """_check_review 三路复盘补 memo_recommended（假 client，不联网）。"""
-    sig = GATE._signature(BODY)
+    sig = GATE.memo_signature(BODY)
 
     # 1) 显式给 anchor → 直接调 memo_recommended，且 id 必填
     c = FakeClient(recommended={"structuredContent": {"memos": [{"id": "R1"}, {"id": "R2"}]}})

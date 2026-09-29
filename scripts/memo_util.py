@@ -56,19 +56,19 @@ def body_hash(content):
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def concept_keywords(content, limit=2):
-    """从卡片正文派生检索用短关键词。
+def keywords_of_concept(concept, limit=2):
+    """从**概念名本身**派生检索用短关键词（不经卡片结构解析）。
 
     背景：整行概念名含全角标点时 flomo 全文检索常返回 0，必须退到短核心词。
     产出（去重保序，截断到 limit 个）：
       1. 概念名内最长的连续中文段（≥4 字）
       2. 概念名去除标点后的前 8 个字符
-    content 无效时返回 []。
+
+    调用方常只握有概念名（如闸门拿到的是 `sig["concept"]`），故本函数直接
+    接受概念名；`concept_keywords` 只负责从完整卡片里取概念名再转发。
     """
-    sig = memo_signature(content)
-    if not sig:
+    if not isinstance(concept, str) or not concept.strip():
         return []
-    concept = sig["concept"]
     kws = []
     zh = re.findall(r"[\u4e00-\u9fff]{4,}", concept)
     if zh:
@@ -81,6 +81,17 @@ def concept_keywords(content, limit=2):
         if k and k not in out:
             out.append(k)
     return out[:limit]
+
+
+def concept_keywords(content, limit=2):
+    """从卡片正文派生检索用短关键词（先取签名，再委托 keywords_of_concept）。
+
+    content 不是合法卡片（签名取不到）时返回 []。
+    """
+    sig = memo_signature(content)
+    if not sig:
+        return []
+    return keywords_of_concept(sig["concept"], limit=limit)
 
 
 _TAIL_PUNCT = "，。、；：！？,.;:!?"

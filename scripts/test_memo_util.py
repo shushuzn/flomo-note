@@ -73,6 +73,21 @@ def run_keywords():
     check("括号不进关键词", all("（" not in k and "）" not in k for k in kw2))
 
 
+def run_keywords_of_concept():
+    """概念名直接派生：闸门/客户端只握有概念名时的入口（不经卡片结构）。"""
+    c = "德塔智能 Delta 0 双足人形机器人基础模型"
+    check("概念名直接派生", MU.keywords_of_concept(c) == MU.concept_keywords(f"#_/_\n{c}\n"))
+    check("概念名派生非空", len(MU.keywords_of_concept(c)) >= 1)
+    check("概念名 limit 生效", len(MU.keywords_of_concept(c, limit=1)) == 1)
+    check("概念名空值返回空表",
+          MU.keywords_of_concept(None) == [] and MU.keywords_of_concept("") == []
+          and MU.keywords_of_concept("   ") == [])
+    check("概念名非字符串返回空表", MU.keywords_of_concept(123) == [])
+    # 去重保序：同一关键词不重复出现
+    kw = MU.keywords_of_concept("某概念名称")
+    check("概念名派生结果无重复", len(kw) == len(set(kw)))
+
+
 def run_tag_leaves():
     check("拆出两级标签",
           MU.tag_leaves("#科技/机器人 #AI/物理AI")
@@ -108,6 +123,7 @@ if __name__ == "__main__":
     run_key()
     run_body_hash()
     run_keywords()
+    run_keywords_of_concept()
     run_tag_leaves()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
