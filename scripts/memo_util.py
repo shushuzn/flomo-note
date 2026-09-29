@@ -83,18 +83,53 @@ def concept_keywords(content, limit=2):
     return out[:limit]
 
 
+_TAIL_PUNCT = "，。、；：！？,.;:!?"
+# 成对括号：出现在二级名**末尾**时，若左侧有配对的开括号，则该括号属名字本身；
+# 若无配对开括号，则是标签串里的收尾括号，须剔除。
+_PAIRS = {"）": "（", ")": "(", "】": "【", "》": "《", "」": "「", "』": "『"}
+
+
+def _strip_tail_punct(name: str) -> str:
+    """剔除二级名末尾的**句读标点**与**无配对收尾括号**。
+
+    `#科技/机器人。`      → `科技/机器人`（句号是标点）
+    `#科技/机器人（人形）` → 原样保留（右括号有配对左括号，属名字）
+    `#科技/机器人）`      → `科技/机器人`（右括号无配对，是收尾符）
+    一刀切 rstrip 会把 `（人形）` 剥成残缺的 `（人形`——语法不成立的名字，
+    用于近邻比对必然指向不存在的簇。
+    """
+    s = name
+    while s:
+        c = s[-1]
+        if c in _TAIL_PUNCT:
+            s = s[:-1]
+            continue
+        opener = _PAIRS.get(c)
+        if opener is not None:
+            # 该右括号在本串内是否有配对左括号？有则属名字，停止；无则剔除。
+            if opener in s[:-1]:
+                break
+            s = s[:-1]
+            continue
+        break
+    return s
+
+
 def tag_leaves(tagline):
     """取标签行里**合法两级**的 (顶层, 二级) 对。
 
     如 `#科技/机器人 #AI/物理AI` → [(科技,机器人),(AI,物理AI)]。
     严格两级：二级部分不得再含 `/`，且**必须以空白或行尾收束**——
     否则 `#科技/安全/邮件` 会被误当成合法的 `(科技, 安全)`。
-    二级名收尾的句读标点须剔除：`#科技/机器人。` 显然是 `科技/机器人`
-    被句号收尾，若把句号吃进二级名，近邻比对会指向不存在的簇。
-    **只剔行尾句读，不剔成对括号**——`#科技/机器人（人形）` 的括号属名字本身。
+    二级名收尾的句读标点须剔除（`#科技/机器人。` 的句号不是名字的一部分），
+    否则近邻比对会指向不存在的簇；成对括号则原样保留（见 `_strip_tail_punct`）。
     """
     if not tagline:
         return []
     raw = re.findall(r"#([^/\s#]+)/([^\s#/]+)(?=\s|$)", tagline)
-    tail = "，。、；：！？,.;:!?）】》」』"
-    return [(top, leaf.rstrip(tail)) for top, leaf in raw if leaf.rstrip(tail)]
+    out = []
+    for top, leaf in raw:
+        cleaned = _strip_tail_punct(leaf)
+        if cleaned:
+            out.append((top, cleaned))
+    return out

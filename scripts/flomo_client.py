@@ -331,13 +331,14 @@ FLOMO_MCP_TOOLS = [
     },
     {
         "name": "memo_recommended",
-        "description": "获取 flomo 推荐的关联 memo，按时间或主题排序。当要发现可合并或相关的邻近卡片、做复盘查重时使用。不需要推荐、只想精确检索时用 memo_search。",
+        "description": "获取指定 memo 的关联推荐，按时间或主题排序。当要发现可合并或相关的邻近卡片、做复盘查重时使用。不需要推荐、只想精确检索时用 memo_search。",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "id": {"type": "string", "description": "锚定 memo 的 id（必填；服务端按此卡返回相关推荐）"},
                 "limit": {"type": "integer", "description": "返回条数上限"}
             },
-            "required": []
+            "required": ["id"]
         },
         "annotations": {"readOnlyHint": True}
     },
