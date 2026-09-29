@@ -3,14 +3,16 @@
 
 控制台的前端是纯静态三件套（`web/index.html` / `styles.css` / `app.js`），
 与服务的路由表之间没有任何编译期约束——最容易出的错是「拆了一边忘了另一边」：
-导航留了项但没有视图、前端还在请求已被删掉的接口、服务里悄悄多出执行入口。
+导航留了项但没有视图、前端还在请求已被删掉的接口、按钮没有事件处理。
 本用例把这些约束写成断言，改完两边任一侧都能立刻发现失配：
 
   - 导航项 ↔ 视图注册表 ↔ 视图元信息三者一一对应（默认视图也须一致）；
-  - 前端请求的每一个 `/api/...` 都必须存在于服务的路由表；
+  - 前端请求的每一个 `/api/...` 都必须存在于服务的路由表，且服务路由都被用到；
+  - 改动云端一律经本地 POST；读工具的执行入口也走 POST（只因为它要带参数体），
+    但写工具名不得挂在可执行按钮上、也不得被直接送去执行入口；
+  - 编辑器与重命名区的按钮都必须有事件处理；
   - 前端不得引入任何外部资源（零依赖、离线可用）；
-  - 前端不得出现写云工具名或非 GET 请求；
-  - 服务不得出现命令执行入口（无 POST 处理、不引 subprocess/shutil）。
+  - 服务不得出现命令执行入口（不引 subprocess/shutil）。
 
 用法：python scripts/test_console_web.py     退出码 0=全过，1=有失败。
 """
@@ -96,14 +98,53 @@ def main() -> int:
     check("样式表不引远程资源", "@import" not in css and "url(http" not in css, "含 @import 或远程 url()")
     check("脚本不直连外部地址", not re.search(r'fetch\(\s*["`]https?://', js), "存在外部 fetch")
 
-    # ---- 5. 前端不做写操作 ------------------------------------------------ #
-    write_tools = [t for t in ("memo_create", "memo_update", "tag_rename") if t in js]
-    check("前端不出现写云工具名", not write_tools, ", ".join(write_tools))
-    check("前端不发非 GET 请求", 'method: "POST"' not in js and "method: 'POST'" not in js)
+    # ---- 5. 写通道：一律走本地 POST，不直连云端 --------------------------- #
+    cloudpost = set(re.findall(r'cloudPost\(\s*"(/api/[^"]+)"', js))
+    cloudget = {
+        re.split(r"[?`]|\$\{", raw)[0].rstrip("/")
+        for raw in re.findall(r'cloudApi\(\s*["`](/api/[^"`]*)', js)
+    }
+    check("写调用一律走 cloudPost（抽取非空）", bool(cloudpost), str(sorted(cloudpost)))
+    check("写路径不出现在只读调用里", not (cloudpost & cloudget), f"重合 {sorted(cloudpost & cloudget)}")
+    # 写工具名可以出现在界面上——但只作「指路牌」，把用户引到过闸门的专属入口；
+    # 它们绝不能被挂到可执行按钮上，也不得作为参数发给通用执行入口。
+    write_body = re.search(r"function writePanel\(t\)\s*\{(.*?)\n\}", js, re.S)
+    check("写工具面板不含执行按钮（改写只能经专属入口过闸门）",
+          bool(write_body) and "data-run" not in write_body.group(1) and "data-goto" in write_body.group(1),
+          "writePanel 里出现 data-run 或缺 data-goto")
+    check("只读面板挂执行按钮、写面板只指路",
+          "reads.map(toolPanel)" in js and "writes.map(writePanel)" in js,
+          "工具台未按读写分组渲染")
+    check("写工具名不进入通用执行入口",
+          not re.search(r'cloudPost\(\s*"/api/cloud/tool"\s*,\s*\{\s*name:\s*"(?:memo_create|memo_update|tag_rename)"', js),
+          "写工具名被直接送去执行")
+    check("前端不直连外部地址", not re.search(r'fetch\(\s*["`]https?://', js), "存在外部 fetch")
 
-    # ---- 6. 服务端不得有执行入口 ------------------------------------------ #
-    check("服务无 POST 处理", "do_POST" not in server)
-    check("服务不引 subprocess / shutil", not re.search(r"^\s*import (subprocess|shutil)", server, re.M))
+    # ---- 6. 交互完整性：按钮必须有事件处理 -------------------------------- #
+    btns = set(re.findall(r'id="(btn-ed-[a-z-]+|btn-tag-rename|btn-new-memo)"', html))
+    handled = set(re.findall(r'closest\("#(btn-ed-[a-z-]+|btn-tag-rename|btn-new-memo)"\)', js))
+    check("按钮都有事件处理（渲染了但点不动是最难查的失配）",
+          btns <= handled, f"无处理 {sorted(btns - handled)}")
+
+    # ---- 7. 服务端：POST = 写接口 + 通用读工具执行入口，无命令执行位置 ------- #
+    # 只取 do_POST 方法体——do_GET 里的云端只读路由写法相同，不圈定范围会误收
+    m = re.search(r"def do_POST\(self\):(.*?)\n    def ", server, re.S)
+    post_body = m.group(1) if m else ""
+    post_routes = set(re.findall(r'"(/api/[A-Za-z0-9_/]+)":\s*lambda r:', post_body))
+    # POST 上只有两类：改动云端的写接口，与「带参数去跑一个读工具」的通用执行入口。
+    # 除执行入口外，其余一律是写接口——不给「执行命令」「跑脚本」留任何位置。
+    exec_entry = "/api/cloud/tool"
+    post_write = post_routes - {exec_entry}
+    check("服务有 POST 入口", "def do_POST" in server)
+    check("POST 写路由都是云端写接口",
+          bool(post_write) and all(p.startswith("/api/cloud/") for p in post_write),
+          str(sorted(post_write)))
+    check("POST 上唯一的只读执行入口是通用工具入口",
+          post_routes - post_write == {exec_entry}, str(sorted(post_routes - post_write)))
+    check("前端写调用与服务 POST 路由一致", cloudpost == post_routes,
+          f"服务独有 {sorted(post_routes - cloudpost)} / 前端独有 {sorted(cloudpost - post_routes)}")
+    check("服务不引 subprocess / shutil（执行外部程序不在服务层）",
+          not re.search(r"^\s*import (subprocess|shutil)", server, re.M))
 
     total = len(_RESULTS)
     failed = sum(1 for r in _RESULTS if not r)

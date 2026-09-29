@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """serve_console.py — 项目控制台的本地服务（零第三方依赖）。
 
-控制台把云端 MCP 的**只读能力全部接出来**，分四个视图呈现：
+控制台把云端 MCP 的能力接出来，分四个视图呈现：
   - 云端笔记（主视图）：搜索 / 按标签 / 起止日期 / 来源 / 是否含标签 / 今日回顾，
-    点开读全文，抽屉里带「相关笔记」与多选取全文；
-  - 标签：本地快照分组速览 + 云端实时标签树（可前缀 / 深度 / 条数）+ 标签名搜索；
+    点开读全文，抽屉里带「相关笔记」与多选取全文，另有新建与编辑；
+  - 标签：本地快照分组速览 + 云端实时标签树（可前缀 / 深度 / 条数）+ 标签名搜索
+    + 标签重命名；
   - 参考：记忆文档 / 用户画像 / 格式规范 / 标签规范四份云端文本；
-  - 能力：云端 MCP 工具清单（读工具已接出，写工具如实标注未接入及原因）。
+  - 能力：云端 MCP 工具清单（读写工具分别标注是否接出）。
 
 浏览器侧的数据全部来自本服务的 JSON 接口：云端侧委托 `console_cloud`，
-本地侧委托 `console_data`；本脚本只做静态文件与 JSON 接口，
-**不含任何执行命令或写数据的入口**（连 POST 处理都不存在）。
+本地侧委托 `console_data`；本脚本只做静态文件与 JSON 接口的转发。
 
-**只读边界**（与项目铁律一致）：
-  - 云端只走 `console_cloud` 的只读工具白名单，任何写操作在那一层就被拒；
-  - 卡片内容不落盘（H26）：只在内存与 HTTP 响应之间传递，不写文件、不写日志；
+**写路径不是直通**：`POST` 是唯一会改动云端的入口，且写请求在 `console_cloud`
+那层强制过两道闸门（格式 ERR、流程凭证）并在写入后回读全文验收；
+本脚本不替它们做判断，也不提供绕过开关。
+
+**边界**（与项目铁律一致）：
+  - 云端工具只走 `console_cloud` 的读 / 写白名单，白名单外的工具名一律拒调用；
+  - 正文不落盘（H26）：只在内存与 HTTP 响应之间传递，不写日志、不写缓存；
+    唯一落盘是流程闸门要求的当轮草稿（`memo_body*.txt`），由收尾清理回收；
   - token 只在服务进程内用于建连，绝不进入任何响应体；
-  - `.sop_gate/`（闸门凭证）不读；仅监听回环地址，静态文件服务做路径逃逸防护。
+  - `.sop_gate/`（闸门凭证）不由本脚本读取；仅监听回环地址，静态文件服务做路径逃逸防护。
 
 用法：
   python scripts/serve_console.py                 # 默认 127.0.0.1:8787
@@ -106,13 +111,16 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), ctype)
 
     # ---- 云端代理 ------------------------------------------------------- #
-    def _cloud(self, fn):
-        """云端请求统一出口：只读白名单在 `console_cloud` 内强制，本层只做降级。"""
+    def _cloud(self, fn, err_code: int = 502):
+        """云端请求统一出口：白名单与两道写闸门在 `console_cloud` 内强制，本层只做降级。
+
+        写路径的「闸门未过」用 422——请求内容不合规，与「云端连不上」（502）区分开，
+        前端据此把待修项直接摆到编辑器里，而不是笼统报一句网络错。
+        """
         try:
             self._send_json(fn(CLOUD))
         except CloudError as e:
-            # 凭证缺失、网络失败、越权调用——都降级为可读的 JSON，不让页面崩掉
-            self._send_json({"error": str(e), "kind": "cloud"}, 502)
+            self._send_json({"error": str(e), "kind": "cloud"}, err_code)
         except Exception as e:  # noqa: BLE001
             self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
@@ -177,6 +185,58 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._serve_static("index.html")
             return
         self._serve_static(path)
+
+    def _read_json(self) -> dict:
+        """读请求体并解析为对象。空体视作空字典，非法 JSON 抛 ValueError。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length > 0 else b""
+        if not raw:
+            return {}
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("请求体顶层须是 JSON 对象")
+        return data
+
+    # ---- 写入入口（本服务唯一会改动云端的地方） -------------------------- #
+    def do_POST(self):
+        path = urlparse(self.path).path
+        try:
+            body = self._read_json()
+        except ValueError as e:
+            self._send_json({"error": f"请求体不是合法 JSON：{e}", "kind": "request"}, 400)
+            return
+
+        # 全部写操作：闸门与回读验收都在 console_cloud 内强制，本层不提供跳过开关。
+        routes = {
+            "/api/cloud/validate": lambda r: r.check_card(body.get("content") or ""),
+            "/api/cloud/gate": lambda r: r.run_gate(
+                body.get("content") or "",
+                skip_web=bool(body.get("skip_web")),
+                anchor_id=body.get("anchor_id") or None,
+                verify=body.get("verify"),
+            ),
+            "/api/cloud/memo/create": lambda r: r.create_memo(
+                body.get("content") or "", fmt=body.get("format") or None
+            ),
+            "/api/cloud/memo/update": lambda r: r.update_memo(
+                body.get("id") or "", body.get("content") or "", fmt=body.get("format") or None
+            ),
+            "/api/cloud/tag/rename": lambda r: r.rename_tag(
+                body.get("old_tag") or "", body.get("new_tag") or "", max_memos=body.get("max_memos")
+            ),
+            # 通用只读执行：界面「能力」页按工具清单生成的表单打到这里；
+            # 写工具在 console_cloud 里被显式挡在门外，不走此入口。
+            "/api/cloud/tool": lambda r: r.run_read_tool(
+                body.get("name") or "", body.get("arguments") or {}
+            ),
+        }
+        if path not in routes:
+            self._send_json({"error": f"未知写入接口：{path}", "kind": "request"}, 404)
+            return
+        self._cloud(routes[path], err_code=422)
 
     def do_HEAD(self):
         self.do_GET()

@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 """console_cloud.py 回归用例（离线，全部走桩客户端，不联网、不读 token）。
 
-覆盖控制台读云的三条边界与全部只读能力：
-  - **只读白名单**：写工具与白名单外工具一律拒调用（控制台在结构上无法写云）；
-    白名单**恰等于**源码实际调用的工具（扫描锁定，不留无人使用的权限空位）；
+覆盖控制台读云与写云的边界与全部已接能力：
+  - **白名单**：读写两套白名单互不相交；读路径上写工具一律拒（不带 `write=True`
+    就放不出写请求），写路径上读工具同样拒；两个集合**分别恰等于**源码实际调用的
+    工具（扫描锁定，不留无人使用的权限空位）；
+  - **写闸门**：格式未过或流程凭证缺失时，`create_memo` / `update_memo` 直接抛错，
+    且**一个字节都不会发到云端**（断言桩客户端零调用）；
+  - **写入与验收**：闸门放行后的调用参数、`memo_create` 回执里 id 的三种承载位置、
+    回执缺 id 时按签名回搜的兜底（标注 `id_inferred`）、写入后回读全文验收；
+    更新路径必须**先回读原文**再写，回执里带出更新前的实测字数；
+  - **标签重命名**：`#` 前缀清洗、同名拒绝、规模上限钳制与空参报错；
   - **检索条件**：`memo_search` 的全部入参（关键词 / 标签 / 起止日期 / 来源 / 是否含标签）
     透传与省略（未指定即不塞键），三态开关的取值判定；
   - **批量与相关**：批量全文的 10 条上限、空 id 丢弃与报错、相关笔记的排除同标签开关；
-  - **标签**：标签树的条数上限与「前缀 / 深度」收窄、截断与提示的转达、标签名搜索；
-  - **参考文本**：记忆 / 画像 / 指南四份的正文提取，含 `content[].text` 内层 JSON 兜底；
-  - **能力清单**：工具清单走协议发现（不计入工具调用）、读写分组、写工具标注未接入及原因；
+  - **标签与文本**：标签树的条数上限与「前缀 / 深度」收窄、截断与提示的转达、
+    标签名搜索、记忆 / 画像 / 指南四份正文的提取（含 `content[].text` 内层 JSON 兜底）；
+  - **能力清单**：工具清单走协议发现（不计入工具调用）、读写分组与接出标记、
+    按云端声明的参数规格带出表单所需字段；
+  - **通用只读执行**：任一读工具都能带参直接跑（`run_read_tool`），空值被丢弃、
+    参数原样透传、结果按形态归为 memos / tags / text / json；写工具与白名单外工具
+    **在发请求之前**就被拒（断言桩客户端零调用）；
   - **字段精简**：标签段 / 概念名 / 正文的拆解、摘要截断、云端截断标记、
-    「此处省略」标记的压缩；
+    「此处省略」标记的压缩、换行归一化；
   - **连接与失败**：首次调用才建连、连接复用、失败即重置以便重连、
     异常统一转 `CloudError`；
   - **脱敏**：可用性状态只含布尔与理由，任何返回值里都不出现 token。
@@ -79,8 +90,18 @@ def nested_text_reply(value):
 
 TOOL_LIST = {
     "tools": [
+        # 参数形态照抄真实云端：联合类型（has_tag）、数组（ids）、整数（limit）都在
         {"name": "memo_search", "description": "搜索笔记。返回匹配的笔记列表。",
-         "inputSchema": {"properties": {"keywords": {}, "tag": {}, "limit": {}}}},
+         "inputSchema": {
+             "properties": {
+                 "keywords": {"type": "string", "description": "关键词。"},
+                 "tag": {"type": "string"},
+                 "has_tag": {"type": ["null", "boolean"], "description": "是否只返回带标签的。"},
+                 "ids": {"type": "array", "items": {"type": "string"}},
+                 "limit": {"type": "integer", "description": "返回条数上限。默认 20。"},
+             },
+             "required": ["keywords"],
+         }},
         {"name": "tag_tree", "description": "获取标签树。", "inputSchema": {"properties": {"prefix": {}}}},
         {"name": "memo_create", "description": "创建一条新笔记。",
          "inputSchema": {"properties": {"content": {}, "format": {}}}},
@@ -202,10 +223,17 @@ def run_whitelist():
 
     # 白名单与「源码里真正调用的工具」必须一一对应：
     # 多一个 = 留了没人用的权限空位；少一个 = 方法一调就抛「白名单外工具」。
+    # 读 / 写分开核：`write=True` 的调用点归写白名单，其余归读白名单——
+    # 这样「读方法里混进一次写」也会被读白名单的对等断言立刻发现。
     src = (Path(__file__).resolve().parent / "console_cloud.py").read_text(encoding="utf-8")
-    used = set(re.findall(r'self\.call\("(\w+)"', src))
-    check("白名单恰好等于实际调用的工具", C.READONLY_TOOLS == used,
-          f"permitted {sorted(C.READONLY_TOOLS)} / used {sorted(used)}")
+    used_all = set(re.findall(r'self\.call\("(\w+)"', src))
+    used_write = set(re.findall(r'self\.call\("(\w+)"[^)]*write=True\)', src))
+    used_read = used_all - used_write
+    check("只读白名单恰好等于实际调用的读工具", C.READONLY_TOOLS == used_read,
+          f"permitted {sorted(C.READONLY_TOOLS)} / used {sorted(used_read)}")
+    check("写白名单恰好等于实际调用的写工具", C.WRITE_TOOLS == used_write,
+          f"permitted {sorted(C.WRITE_TOOLS)} / used {sorted(used_write)}")
+    check("读写调用点不混用", not (used_read & used_write), str(sorted(used_read & used_write)))
 
     fake = FakeClient()
     r, made = reader_for(fake)
@@ -431,11 +459,35 @@ def run_catalog():
     check("读工具标已接出且无未接入理由",
           by["memo_search"]["wired"] is True and by["memo_search"]["reason"] == "",
           str(by.get("memo_search")))
-    check("写工具标未接入并给出原因",
-          by["memo_create"]["wired"] is False and "管线" in by["memo_create"]["reason"],
-          str(by["memo_create"]))
+    # 写工具同样已接出，但必须带出「写入前须过什么」——接出 ≠ 直通
+    check("写工具标已接出并带写入门槛",
+          by["memo_create"]["wired"] is True
+          and by["memo_create"]["kind"] == "write"
+          and "闸门" in by["memo_create"]["reason"]
+          and by["memo_create"]["reason"] == C.WRITE_TOOLS_REASON,
+          str(by.get("memo_create")))
+    check("写工具清单不给出共用的写门槛文案",
+          by["tag_rename"]["reason"] == C.WRITE_TOOLS_REASON, str(by.get("tag_rename")))
+    check("清单带参数规格（名 / 类型 / 必填）",
+          all(set(s) == {"name", "type", "required", "desc"}
+              for t in cat["tools"] for s in t["arg_specs"])
+          and all(t["args"] == [s["name"] for s in t["arg_specs"]] for t in cat["tools"]),
+          str([t.get("arg_specs") for t in cat["tools"] if t["arg_specs"]][:1]))
     check("清单带参数名", by["tag_rename"]["args"] == ["old_tag", "new_tag"],
           str(by["tag_rename"]["args"]))
+    # 类型归一化：联合类型挑出非 null 项，数组保持 array，缺声明按 string——
+    # 界面据这一个 token 就能挑对控件，不必理解 JSON Schema。
+    search_specs = {s["name"]: s for s in by["memo_search"]["arg_specs"]}
+    check("联合类型归一化为单个 token",
+          search_specs["has_tag"]["type"] == "boolean", str(search_specs.get("has_tag")))
+    check("数组与整数类型如实转达",
+          search_specs["ids"]["type"] == "array" and search_specs["limit"]["type"] == "integer",
+          f"{search_specs.get('ids')} {search_specs.get('limit')}")
+    check("缺 type 声明按 string 兜底",
+          by["tag_tree"]["arg_specs"][0]["type"] == "string", str(by["tag_tree"]["arg_specs"][0]))
+    check("必填标记来自 schema.required",
+          search_specs["keywords"]["required"] is True and search_specs["tag"]["required"] is False,
+          f"{search_specs.get('keywords')} {search_specs.get('tag')}")
     check("摘要取首句", by["memo_search"]["summary"] == "搜索笔记", by["memo_search"]["summary"])
     check("读工具排在写工具前",
           [t["kind"] for t in cat["tools"]] == ["read", "read", "write", "write"],
@@ -452,6 +504,69 @@ def run_catalog():
     except C.CloudError as e:
         got = "CloudError" if "取工具清单失败" in str(e) else str(e)
     check("清单失败转 CloudError", got == "CloudError", got)
+
+
+# --------------------------------------------------------------------------- #
+# 通用只读执行（「能力能在网页上直接用」的落点）
+# --------------------------------------------------------------------------- #
+def run_read_tool_entry():
+    # 读工具：参数透传给云端、空值被丢掉，结果按形态归类
+    fake = FakeClient({
+        "memo_search": wrap([MEMO]),
+        "tag_tree": {"structuredContent": {"tags": ["AI/RAG", "AI/决策模型"], "total": 2,
+                                           "returned": 2, "limit": 200, "truncated": False}},
+        "memory_context": text_reply("# 记忆\n当前关注：标签体系"),
+        "tag_search": {"structuredContent": {"tags": [{"name": "AI/RAG"}]}},
+        "get_daily_review": {"structuredContent": {"memos": []}},
+    })
+    r, _ = reader_for(fake)
+
+    out = r.run_read_tool("memo_search", {"keywords": "召回", "tag": "", "limit": 5})
+    check("通用入口回显工具名", out["tool"] == "memo_search", str(out.get("tool")))
+    check("通用入口丢弃空参数",
+          out["arguments"] == {"keywords": "召回", "limit": 5}, str(out.get("arguments")))
+    check("通用入口把参数透传给云端",
+          fake.calls[-1] == ("memo_search", {"keywords": "召回", "limit": 5}), str(fake.calls[-1]))
+    check("卡片结果归为 memos", out["kind"] == "memos" and out["memos"][0]["id"] == MEMO["id"],
+          str(out.get("kind")))
+
+    tags_out = r.run_read_tool("tag_tree", {"prefix": "AI"})
+    check("标签串结果归为 tags", tags_out["kind"] == "tags" and tags_out["tags"] == ["AI/RAG", "AI/决策模型"],
+          f"{tags_out.get('kind')} {tags_out.get('tags')}")
+    check("标签项带 name 字段也能取到名", r.run_read_tool("tag_search", {"keywords": "AI"})["tags"] == ["AI/RAG"])
+
+    text_out = r.run_read_tool("memory_context", {})
+    check("纯文本结果归为 text", text_out["kind"] == "text" and "标签体系" in text_out["text"],
+          str(text_out.get("kind")))
+
+    json_out = r.run_read_tool("get_daily_review", {})
+    check("无 memos / tags / text 时归为 json 且带回原始结果",
+          json_out["kind"] == "json" and isinstance(json_out["raw"], dict), str(json_out.get("kind")))
+
+    # 写工具与非白名单工具都不走这个入口
+    for name in ("memo_create", "memo_update", "tag_rename"):
+        try:
+            r.run_read_tool(name, {"content": "x"})
+            got = "未拦下"
+        except C.CloudError as e:
+            got = "写工具" if "写工具不走通用入口" in str(e) else str(e)
+        check(f"通用入口拒绝写工具 {name}", got == "写工具", got)
+
+    before = len(fake.calls)
+    try:
+        r.run_read_tool("delete_everything", {})
+        got = "未拦下"
+    except C.CloudError as e:
+        got = "白名单" if "白名单" in str(e) else str(e)
+    check("通用入口对白名单外工具一律拒", got == "白名单", got)
+    check("被拒的调用一个字节都没发到云端", len(fake.calls) == before, str(len(fake.calls)))
+
+    try:
+        r.run_read_tool("", {})
+        got = "未拦下"
+    except C.CloudError as e:
+        got = "缺工具名" if "缺少工具名" in str(e) else str(e)
+    check("通用入口拒绝空工具名", got == "缺工具名", got)
 
 
 # --------------------------------------------------------------------------- #
@@ -506,6 +621,7 @@ def main():
     run_batch_and_related()
     run_tags_and_texts()
     run_catalog()
+    run_read_tool_entry()
     run_failure_and_secrecy()
     print("---")
     ok = all(_RESULTS)
