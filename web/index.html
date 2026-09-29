@@ -43,7 +43,7 @@
       <div class="badge badge-quiet" id="conn-badge">
         <span class="badge-dot"></span><span id="conn-text">连接中…</span>
       </div>
-      <p class="foot-note">只读：不写云端<br>笔记内容不落盘</p>
+      <p class="foot-note">读：随时现采<br>写：过闸门 + 回读验收</p>
     </div>
   </aside>
 
@@ -51,7 +51,7 @@
     <header class="topbar">
       <div>
         <h1 class="page-title" id="page-title">云端笔记</h1>
-        <p class="page-sub" id="page-sub">只读浏览 flomo 云端卡片：搜索、按标签筛、读全文</p>
+        <p class="page-sub" id="page-sub">列 / 搜卡片：关键词 · 标签 · 起止日期 · 来源 · 是否含标签；点开读全文与相关笔记</p>
       </div>
       <div class="topbar-actions">
         <button class="btn btn-ghost" id="btn-refresh" title="重新读取云端与本地快照">
@@ -81,6 +81,79 @@
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
 <div class="scrim" id="scrim" hidden></div>
+
+<aside class="editor" id="editor" aria-hidden="true">
+  <div class="editor-head">
+    <div class="editor-head-left">
+      <span class="editor-kind" id="editor-kind">新建笔记</span>
+      <span class="badge badge-quiet" id="editor-sub">写入前须过格式与流程闸门</span>
+    </div>
+    <div class="editor-head-right">
+      <button class="btn btn-ghost" id="btn-ed-raw" type="button">原始文本</button>
+      <button class="drawer-close" id="editor-close" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="editor-body">
+    <div class="editor-grid">
+      <div class="editor-form" id="editor-form">
+        <label class="field">
+          <span class="field-label">标签段<em>首行。两级如 <code>#AI/RAG</code>，多个用空格分隔，每个都带 #</em></span>
+          <input class="input" id="ed-tags" placeholder="#AI/RAG #思想/协调博弈" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field-label">概念名<em>第二行。简明概括主题的名词，不以 # 开头</em></span>
+          <input class="input" id="ed-concept" placeholder="马尔科夫链" autocomplete="off">
+        </label>
+        <label class="field field-grow">
+          <span class="field-label">正文<em>首句直接写结论，不加「结论先行：」之类前缀</em></span>
+          <textarea class="input textarea" id="ed-body" rows="12" spellcheck="false"></textarea>
+        </label>
+      </div>
+
+      <div class="editor-raw" id="editor-raw-wrap" hidden>
+        <label class="field field-grow">
+          <span class="field-label">完整卡片文本<em>首行标签段 → 空行 → 概念名 → 空行 → 正文</em></span>
+          <textarea class="input textarea" id="ed-raw" rows="18" spellcheck="false"></textarea>
+        </label>
+      </div>
+    </div>
+
+    <div class="editor-side">
+      <div class="editor-preview">
+        <div class="editor-preview-head">
+          <span>卡片预览</span>
+          <span class="count" id="ed-chars">0 字</span>
+        </div>
+        <div class="editor-preview-body" id="ed-preview"></div>
+      </div>
+
+      <div class="editor-actions">
+        <div class="editor-gate-opts">
+          <label class="editor-opt">
+            <input type="checkbox" id="ed-skip-web" checked>
+            非术语卡（跳过网络验证）
+          </label>
+          <label class="field field-verify" id="ed-verify-wrap" hidden>
+            <span class="field-label">第 ② 步验证记录<em>JSON：<code>{"searched":true,"terms":[{"term":"…","query":"…","conclusion":"…"}]}</code></em></span>
+            <textarea class="input textarea textarea-sm" id="ed-verify" rows="3" spellcheck="false"></textarea>
+          </label>
+        </div>
+        <div class="editor-buttons">
+          <button class="btn" id="btn-ed-check" type="button">校验</button>
+          <button class="btn" id="btn-ed-gate" type="button">跑闸门</button>
+          <button class="btn btn-primary" id="btn-ed-save" type="button">写入</button>
+        </div>
+      </div>
+
+      <div class="editor-result" id="editor-result" hidden></div>
+    </div>
+  </div>
+</aside>
+<div class="scrim" id="scrim-editor" hidden></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

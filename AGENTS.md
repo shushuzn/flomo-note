@@ -28,7 +28,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - `AGENTS.md` —— 项目总则（本文件）
 - `SKILL.md` —— 执行细则（唯一细则源）
 - `ENVIRONMENT.md` —— 环境备忘（路径、代理、端口、推送通道等随环境变化的细节）
-- `scripts/` —— 工具脚本（控制台三件套在内：`serve_console.py` 服务、`console_cloud.py` 云端只读访问、`console_data.py` 本地数据抽取）
+- `scripts/` —— 工具脚本（控制台三件套在内：`serve_console.py` 服务、`console_cloud.py` 云端访问、`console_data.py` 本地数据抽取）
 - `web/` —— 项目控制台前端（静态资源；配 `scripts/serve_console.py` 起本地服务）
 - `.mcp.json` —— flomo MCP 配置（含 Bearer token，已忽略）
 - 笔记实体 —— 只在云端 flomo，本地不存在
@@ -44,9 +44,10 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，且是标签树快照渲染/计数的唯一实现，改动影响面最大）。
 - 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python scripts/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
 - 改 `scripts/console_data.py`（控制台本地侧数据抽取：标签树分组解析与统计字段）→ 跑 `python scripts/test_console_data.py`（临时目录内离线验证解析口径，含标签树计数与 `memo_util` 同源断言）。
-- 改 `scripts/console_cloud.py`（控制台云端访问：白名单、全部只读能力、字段精简、连接与失败处理）→ 跑 `python scripts/test_console_cloud.py`（全桩离线，不联网、不读 token；覆盖检索条件、批量与相关、标签树与标签名、参考文本、能力清单，以及「写工具与白名单外工具一律拒调用」与「返回值不含 token」）。两条硬约束：**只读白名单恰等于各读方法实际调用的工具**（用例按源码扫描锁定，不能留无人使用的权限空位）；**写工具不得接入**——写卡须走九步管线与闸门，控制台只在能力清单里如实列出并标注未接入。
+- 改 `scripts/console_cloud.py`（控制台云端访问：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收）→ 跑 `python scripts/test_console_cloud.py`（全桩离线，不联网、不读 token；覆盖检索条件、批量与相关、标签树与标签名、参考文本、能力清单与参数规格归一化、通用只读执行，以及写闸门放行/拦截、回读验收、重命名边界与「返回值不含 token」）。三条硬约束：**读白名单恰等于实际调用的读工具、写白名单恰等于带 `write=True` 调用的写工具**（用例按源码扫描 + `write=True` 标记分别锁定，不能留无人使用的权限空位、也不能读写混用）；**写工具不得走通用执行入口**——写要过格式与流程闸门、写完回读验收，只能在 `create_memo` / `update_memo` / `rename_tag` 里发生；**闸门不过时一个字节都不发云端**（用例断言桩客户端零调用）。
 - 改 `scripts/flomo_client.py`（通道、握手、工具调用与协议发现）→ 无独立用例，改动后须跑一次只读调用实测（`python scripts/flomo_client.py <tool>` 或起服务点一遍）；它是 H3 的唯一入口，写侧的幂等查重与成功判定不得削弱。
-- 改 `scripts/serve_console.py` 的接口路由或 `web/` 前端（导航项、视图、样式）→ 跑 `python scripts/test_console_web.py`（离线锁定前后端对齐：导航项必须有对应视图、前端调用的接口必须存在于服务路由表、前端不得引入外部资源、服务不得出现命令执行入口），再起服务实测一轮；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
+- 改 `scripts/serve_console.py` 的接口路由或 `web/` 前端（导航项、视图、样式）→ 跑 `python scripts/test_console_web.py`（离线锁定前后端对齐：导航项必须有对应视图、前端调用的接口必须存在于服务路由表、写工具名不得挂在可执行按钮上、前端不得引入外部资源、服务不得出现命令执行入口），再起服务实测一轮；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
+- `POST` 上只允许两类接口：**改动云端的写接口**与 **`/api/cloud/tool` 这个带参数跑读工具的通用执行入口**。新增任何「执行命令 / 跑脚本」型入口都属越界，`test_console_web.py` 会拦下。
 - 改 `scripts/check_skill_docs.py` → 跑 `python scripts/test_check_skill_docs.py`。
 - **一键跑全部离线用例：`bash scripts/run_tests.sh`**（各配套用例与内容纪律自检一并跑；改动脚本后首选，避免逐个手跑漏项）。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
