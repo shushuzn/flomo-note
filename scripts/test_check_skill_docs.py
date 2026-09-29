@@ -39,8 +39,10 @@ CASES = [
     ("中文年月判错", {SKILL: f"# 规则\n\n{CJK} 起生效。\n"}, 1, 0),
     ("脚本注释里的日期也判错",
      {"scripts/x.py": f"# 修复：{DASH} 那次改动\n"}, 1, 0),
-    ("ENVIRONMENT.md 日期豁免",
-     {ENV_DOC: f"# 环境\n\n- {DASH} 实测：代理经隧道可用\n"}, 0, 0),
+    ("ENVIRONMENT.md 日期同样判错（H28 无例外）",
+     {ENV_DOC: f"# 环境\n\n- 代理经隧道可达（{DASH} 实测）\n"}, 1, 0),
+    ("ENVIRONMENT.md 叙事词同样受检",
+     {ENV_DOC: "# 环境\n\n当时判断为代理问题。\n"}, 0, 1),
     ("协议版本常量行豁免",
      {"scripts/y.py": '        "protocolVersion": "' + DASH + '",\n'}, 0, 0),
     ("事件叙事词只提示", {SKILL: "# 规则\n\n当时判断为网络问题，遂改走直连。\n"}, 0, 1),
@@ -134,10 +136,38 @@ def run_external_root_case():
     return ok
 
 
+def run_env_doc_case():
+    """防回归：ENVIRONMENT.md 与其它技能文档一视同仁，**不豁免日期**。
+
+    历史缺陷一：它曾整体放入 EXEMPT_NAMES，连 n_files 都不计入——H28 最该
+    受约束的归档文件反而成了完全盲区（可无限堆日期与事件经过而自检报 0 错）。
+    历史缺陷二：曾按「归档处」名义为它单独开日期豁免——这等于把违规正当化。
+    H28 是严格禁止，无例外。
+    """
+    ok = True
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / ENV_DOC).write_text(f"# 环境\n\n- 隧道可用（{DASH} 实测）\n", encoding="utf-8")
+        names = {p.name for p in CD.iter_targets(root)}
+        hit = ENV_DOC in names
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  ENVIRONMENT.md 纳入扫描范围")
+        errs, warns = [], []
+        for p in CD.iter_targets(root):
+            e, w, _ = CD.scan_file(p, root)
+            errs += e
+            warns += w
+        has = any(ENV_DOC in m for m in errs)
+        ok &= has
+        print(f"{'PASS' if has else 'FAIL'}  ENVIRONMENT.md 的日期被判错（无豁免）")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
     results.append(run_external_root_case())
+    results.append(run_env_doc_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

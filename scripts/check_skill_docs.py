@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """技能文档内容纪律自检（H28 落地；离线、只读、无第三方依赖）。
 
-扫描技能文档（技能目录下的 SKILL.md / AGENTS.md 与全部 .py/.sh，以及仓库根
-与 scripts 目录下的脚本），检测规则文本里混入的「具体日期」与「历史事件叙事」
-——二者只应作抽象陈述，一次性实测记录与环境事实归 ENVIRONMENT.md。
+扫描技能文档（技能目录下的 SKILL.md / AGENTS.md / ENVIRONMENT.md / README.md
+与全部 .py/.sh，以及 --root 下的文档与 scripts/），检测规则文本里混入的
+「具体日期」与「历史事件叙事」——二者一律只作抽象陈述。
 
   ERR  具体日期：YYYY-MM-DD、YYYY/M/D、YYYY.M.D、YYYY年M月[D日]
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-豁免：
-  - ENVIRONMENT.md：环境事实与一次性实测记录的归档处，其中日期属允许内容。
+**任何技能文档都不豁免日期**（H28 是严格禁止，无例外）：ENVIRONMENT.md 记录
+环境事实时只写「是什么」——IP、端口、路径、命令，不写「哪天发生的」。
+
+唯一豁免：
   - 技术常量行：命中日期的那一行含 version / protocol 键名时，该日期属协议或
     版本常量（如 MCP protocolVersion），非文档叙事日期，跳过并打印 SKIP。
 
@@ -49,7 +51,10 @@ NARRATIVE_SELF_EXEMPT = {"check_skill_docs.py", "test_check_skill_docs.py"}
 
 DOC_SUFFIXES = {".md", ".py", ".sh"}
 SCRIPT_SUFFIXES = {".py", ".sh"}
-EXEMPT_NAMES = {"ENVIRONMENT.md"}
+# 任何技能文档都不豁免日期扫描——H28 是严格禁止，无例外。
+# ENVIRONMENT.md 同样受日期（ERR）与叙事词（WARN）双重约束：
+# 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的」。
+EXEMPT_NAMES: set[str] = set()
 
 
 def iter_targets(root: Path):
@@ -122,7 +127,7 @@ def scan_file(path: Path, root: Path):
                 continue
             errs.append(
                 f"{relp}:{i}: 具体日期「{hit}」——技能文档禁写日期（H28）；"
-                f"理由只作抽象陈述，一次性实测记录与环境事实写 ENVIRONMENT.md"
+                f"理由只作抽象陈述，环境事实只写「是什么」不写「哪天」"
             )
         if not scan_narrative:
             continue

@@ -95,11 +95,30 @@ def verify():
     return collect()
 
 
+def list_rules():
+    """打印当前生效的扫描/保留规则，供文档指向本脚本自描述（勿在文档里复述清单）。"""
+    print("[cleanup] 扫描规则（基准目录 → glob 模式）：")
+    for base, pats in SCAN:
+        print(f"  {base}")
+        for pat in pats:
+            print(f"    {pat}")
+    print("[cleanup] 显式保留（命中 glob 也不删）：")
+    for base, names in KEEP.items():
+        if names:
+            print(f"  {base}: {', '.join(sorted(names))}")
+    print("[cleanup] 归档目录:", TRASH_DIR)
+
+
 def main():
     ap = argparse.ArgumentParser(description="每轮收尾强制清理残留临时文件 (H27)")
     ap.add_argument("--dry-run", action="store_true", help="只列名不删")
     ap.add_argument("--verify", action="store_true", help="只复核残留是否为 0")
+    ap.add_argument("--list-rules", action="store_true", help="打印生效的扫描与保留规则后退出")
     args = ap.parse_args()
+
+    if args.list_rules:
+        list_rules()
+        return
 
     if args.verify:
         left = verify()

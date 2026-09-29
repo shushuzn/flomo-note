@@ -1,4 +1,4 @@
-#!/usr/env bash
+#!/usr/bin/env bash
 # push_skill.sh — 文档改动后强制推送（H25 / 根本纪律#3）。
 #
 # 把"清掉 ~/.gitconfig 写死的 7897 代理 + 起干净隧道 + 认证 + commit + push +
