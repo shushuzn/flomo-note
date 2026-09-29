@@ -54,14 +54,20 @@ BODY = "#科技/机器人\n某测试概念名\n\n结论句。\n\n要点：\n- �
 
 
 def run_norm_cases():
-    """_norm_body 只压缩空白差异，非空白字符一律不宽容。"""
-    check("_norm_body 行尾空格忽略、连续空行压成一行",
-          FC._norm_body("A  \n\n\nB\n") == "A\n\nB",
+    """_norm_body 只忽略空白差异，非空白字符与行序一律不宽容。"""
+    check("_norm_body 空行不参与比对（连续空行与首尾空行一并不计）",
+          FC._norm_body("A  \n\n\nB\n") == "A\nB",
           repr(FC._norm_body("A  \n\n\nB\n")))
     check("_norm_body 统一 CRLF",
           FC._norm_body("A\r\nB") == FC._norm_body("A\nB"))
-    check("_norm_body 去掉首尾空行",
-          FC._norm_body("\n\nA\nB\n\n") == "A\nB")
+    check("_norm_body 无空行与有空行等价（云端会自行补空行）",
+          FC._norm_body("A\nB") == FC._norm_body("A\n\nB"),
+          repr(FC._norm_body("A\n\nB")))
+    check("_norm_body 统一行尾空格",
+          FC._norm_body("A  \nB\t") == FC._norm_body("A\nB"))
+    check("_norm_body 合并成一行必须暴露（行序/行界变化是内容差异）",
+          FC._norm_body("A\nB") != FC._norm_body("AB"),
+          repr(FC._norm_body("AB")))
     check("_norm_body 不改动非空白字符（错别字必须暴露）",
           FC._norm_body("续航 430 公里") != FC._norm_body("续航 450 公里"))
 
@@ -74,6 +80,12 @@ def run_readback_cases():
     check("回读一致（仅空白差异）判过", ok and "回读一致" in detail, detail)
     check("回读按 id 拉全文（调 memo_batch_get）",
           c.calls == [("memo_batch_get", {"ids": ["M1"]})], str(c.calls))
+
+    # 1b) 云端在标签段后与列表引导行后自行补空行 → 仍判过（否则每张新卡都误报失败）
+    cloud_style = BODY.replace("#科技/机器人\n", "#科技/机器人\n\n").replace("要点：\n", "要点：\n\n")
+    check("云端补出的空行（标签段后 / 要点后）不影响判定",
+          FC.readback_check(FakeClient([{"id": "M1", "content": cloud_style}]), "M1", BODY)[0],
+          cloud_style.replace("\n", "\\n"))
 
     # 2) 内容不一致 → 判失败，且给出字数与首个差异位置（可定位）
     c = FakeClient([{"id": "M1", "content": BODY.replace("要点一", "要点二")}])
