@@ -70,6 +70,12 @@ def run_norm_cases():
           repr(FC._norm_body("AB")))
     check("_norm_body 不改动非空白字符（错别字必须暴露）",
           FC._norm_body("续航 430 公里") != FC._norm_body("续航 450 公里"))
+    check("_norm_body 行内水平空白不参与比对（云端在全角标点后插空格）",
+          FC._norm_body("定义入口：`web` 监听 80")
+          == FC._norm_body("定义入口： `web` 监听 80"),
+          repr(FC._norm_body("定义入口： `web` 监听 80")))
+    check("_norm_body 行内空白差异不得掩盖非空白差异",
+          FC._norm_body("容器端口 3000") != FC._norm_body("容器端口 3001"))
 
 
 def run_readback_cases():
@@ -86,6 +92,17 @@ def run_readback_cases():
     check("云端补出的空行（标签段后 / 要点后）不影响判定",
           FC.readback_check(FakeClient([{"id": "M1", "content": cloud_style}]), "M1", BODY)[0],
           cloud_style.replace("\n", "\\n"))
+
+    # 1c) 云端在全角标点与行内代码之间补空格 → 仍判过（同属渲染层空白，否则用了行内代码的卡全误报）
+    local_code = BODY.replace("要点一", "：`code` 一")
+    cloud_code = local_code.replace("：`", "： `")
+    check("云端补出的行内空格（全角标点 + 行内代码）不影响判定",
+          FC.readback_check(FakeClient([{"id": "M1", "content": cloud_code}]), "M1", local_code)[0],
+          cloud_code.replace("\n", "\\n"))
+    check("行内空格宽容不得掩盖行内代码内容被改",
+          not FC.readback_check(
+              FakeClient([{"id": "M1", "content": cloud_code.replace("`code`", "`coda`")}]),
+              "M1", local_code)[0])
 
     # 2) 内容不一致 → 判失败，且给出字数与首个差异位置（可定位）
     c = FakeClient([{"id": "M1", "content": BODY.replace("要点一", "要点二")}])
