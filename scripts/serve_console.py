@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""serve_console.py — 项目控制台的本地只读服务（零第三方依赖）。
+"""serve_console.py — 项目控制台的本地服务（零第三方依赖）。
 
-把仓库自身的可视图景（九步管线、硬限清单、脚本清单与回归状态、标签树概览）
-通过一个本地 HTTP 服务提供给浏览器控制台。数据抽取全部委托 `console_data`，
-本脚本只做三件事：静态文件、JSON 接口、按需跑离线回归。
+控制台是**看笔记**的：主视图直接呈现 flomo 云端的卡片（搜索、按标签筛、读全文、
+今日回顾），辅以仓库自身的可视图景（九步管线、硬限清单、脚本与回归、标签树、文档规模）。
+浏览器侧的数据全部来自本服务的 JSON 接口：仓库侧委托 `console_data`，
+云端侧委托 `console_cloud`——本脚本只做静态文件、JSON 接口与按需跑离线回归。
 
 **只读边界**（与项目铁律一致）：
-  - 不读 `.mcp.json`（含 token）、`.sop_gate/`（凭证）、任何笔记正文文件；
-  - 不调用 flomo 云端接口，不发起任何写操作——控制台不接触云端；
-  - 仅监听回环地址，不对外暴露；静态文件服务做路径逃逸防护。
+  - 云端只走 `console_cloud` 的只读工具白名单，任何写操作在那一层就被拒；
+  - 卡片内容不落盘（H26）：只在内存与 HTTP 响应之间传递，不写文件、不写日志；
+  - token 只在服务进程内用于建连，绝不进入任何响应体；
+  - `.sop_gate/`（闸门凭证）不读；仅监听回环地址，静态文件服务做路径逃逸防护。
 
 用法：
   python scripts/serve_console.py                 # 默认 127.0.0.1:8787
@@ -22,19 +24,25 @@ import json
 import mimetypes
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from console_cloud import CloudError, CloudReader, cloud_status  # noqa: E402
 from console_data import collect_all, load_limits, load_pipeline, load_scripts, load_tagtree  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
 DEFAULT_PORT = 8787
+
+# 进程级单例：复用与云端的会话，避免每请求重握手。
+CLOUD = CloudReader()
 
 # 静态资源白名单后缀（避免误发任意文件）
 STATIC_SUFFIXES = {".html", ".css", ".js", ".svg", ".ico", ".png", ".webp", ".woff2"}
@@ -42,6 +50,18 @@ STATIC_SUFFIXES = {".html", ".css", ".js", ".svg", ".ico", ".png", ".webp", ".wo
 
 def _json_bytes(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
+
+
+def port_in_use(host: str, port: int, timeout: float = 0.4) -> bool:
+    """探测端口是否已有服务在监听。
+
+    必须显式探测：`ThreadingHTTPServer` 默认带地址复用，同一端口上第二个实例
+    能「绑成功」而不报错，于是两个版本的服务同时接客——请求落到哪个实例全看运气，
+    页面会时新时旧，极难排查。宁可在这里明确拦下，让用户换端口或先停旧实例。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex((host, port)) == 0
 
 
 def run_regression() -> dict:
@@ -103,16 +123,51 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, target.read_bytes(), ctype)
 
+    # ---- 云端代理 ------------------------------------------------------- #
+    def _cloud(self, fn):
+        """云端请求统一出口：只读白名单在 `console_cloud` 内强制，本层只做降级。"""
+        try:
+            self._send_json(fn(CLOUD))
+        except CloudError as e:
+            # 凭证缺失、网络失败、越权调用——都降级为可读的 JSON，不让页面崩掉
+            self._send_json({"error": str(e), "kind": "cloud"}, 502)
+        except Exception as e:  # noqa: BLE001
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    @staticmethod
+    def _q(query, key, default=None):
+        vals = query.get(key) or []
+        return vals[0] if vals else default
+
     # ---- 路由 ----------------------------------------------------------- #
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        u = urlparse(self.path)
+        path = u.path
+        q = parse_qs(u.query)
+
         routes = {
-            "/api/overview": lambda: collect_all(REPO_ROOT),
+            "/api/overview": lambda: {**collect_all(REPO_ROOT), "cloud": cloud_status()},
             "/api/pipeline": lambda: load_pipeline(REPO_ROOT),
             "/api/limits": lambda: load_limits(REPO_ROOT),
             "/api/scripts": lambda: load_scripts(REPO_ROOT),
             "/api/tagtree": lambda: load_tagtree(REPO_ROOT),
         }
+        cloud_routes = {
+            "/api/cloud/memos": lambda r: r.list_memos(
+                keywords=self._q(q, "keywords"),
+                tag=self._q(q, "tag"),
+                limit=self._q(q, "limit", 20),
+            ),
+            "/api/cloud/memo": lambda r: r.memo_detail(self._q(q, "id", "")),
+            "/api/cloud/review": lambda r: r.daily_review(),
+            "/api/cloud/tags": lambda r: r.tag_names(
+                self._q(q, "keywords", ""), self._q(q, "limit", 20)
+            ),
+        }
+
+        if path in cloud_routes:
+            self._cloud(cloud_routes[path])
+            return
         if path in routes:
             try:
                 self._send_json(routes[path]())
@@ -146,6 +201,14 @@ def main(argv=None):
 
     if not WEB_ROOT.is_dir():
         sys.stderr.write(f"未找到前端目录：{WEB_ROOT}\n")
+        return 2
+
+    if port_in_use(args.host, args.port):
+        sys.stderr.write(
+            f"端口 {args.host}:{args.port} 已有服务在监听——\n"
+            f"  先停掉它（或改用 --port 指定其他端口）再启动，\n"
+            f"  否则两个实例会同时接客，页面内容时新时旧。\n"
+        )
         return 2
 
     httpd = ThreadingHTTPServer((args.host, args.port), ConsoleHandler)

@@ -340,6 +340,93 @@ mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px;
 }
 .toast.is-on { opacity: 1; transform: translate(-50%, 0); }
 
+/* ---------------- 云端笔记 ---------------- */
+.memo-bar { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.memo-bar .input { flex: 1 1 210px; min-width: 0; }
+.input-sel { flex: 0 0 auto; min-width: 94px; }
+.btn.is-on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+
+.memo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(302px, 1fr));
+  gap: 12px;
+}
+.memo {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 15px 17px 13px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  min-height: 168px;
+  transition: border-color .16s, transform .16s;
+}
+.memo:hover { border-color: var(--accent-line); transform: translateY(-1px); }
+.memo:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.memo-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.memo-time { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); }
+.memo-title {
+  margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 600;
+  line-height: 1.4; letter-spacing: .1px;
+}
+.memo-excerpt {
+  margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.62;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.memo-foot {
+  margin-top: auto; padding-top: 9px; border-top: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--ink-faint);
+}
+.chip-sm { font-size: 11.5px; padding: 2px 8px; }
+.hint { margin-top: 8px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+.hint-foot { margin: 14px 2px 0; }
+
+/* 详情抽屉 */
+/* 遮罩只盖内容区，侧栏保持可点：切视图与关抽屉一步到位 */
+.scrim { position: fixed; top: 0; right: 0; bottom: 0; left: 244px; background: rgba(31,30,27,.26); z-index: 20; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(620px, 92vw);
+  display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 46px -24px rgba(31,30,27,.4);
+  z-index: 21;
+  transform: translateX(101%);
+  transition: transform .26s cubic-bezier(.4, 0, .2, 1);
+}
+.drawer.is-on { transform: none; }
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 18px; border-bottom: 1px solid var(--line-soft);
+}
+.drawer-kind { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); letter-spacing: .5px; }
+.drawer-close {
+  display: flex; padding: 4px; border: 0; border-radius: 8px;
+  background: none; color: var(--ink-faint); cursor: pointer;
+}
+.drawer-close:hover { background: var(--surface-sunk); color: var(--ink); }
+.drawer-close svg { width: 16px; height: 16px; }
+.drawer-body { padding: 18px 22px 36px; overflow: auto; }
+.drawer-title { margin: 10px 0 6px; font-family: var(--serif); font-size: 22px; font-weight: 600; line-height: 1.34; }
+.memo-meta { margin-bottom: 16px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+.memo-meta code { font-size: 11.5px; }
+.memo-body { font-size: 14px; line-height: 1.78; }
+.memo-body p { margin: 0 0 12px; }
+.memo-body ul { margin: 0 0 14px; padding-left: 20px; }
+.memo-body li { margin-bottom: 6px; }
+.memo-body a { color: var(--accent); text-decoration-color: var(--accent-line); }
+.memo-tagline {
+  display: inline-block; margin-bottom: 12px; padding: 3px 10px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-line); border-radius: 999px;
+}
+.memo-link {
+  display: inline-block; margin-top: 16px; font-size: 13px;
+  color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-line);
+}
+
 /* 响应式 */
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
@@ -348,4 +435,6 @@ mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px;
   .foot-note { display: none; }
   .main { padding: 20px 18px 50px; }
   .row { grid-template-columns: 1fr; gap: 5px; }
+  .scrim { left: 0; }
+  .drawer { width: 100vw; }
 }
