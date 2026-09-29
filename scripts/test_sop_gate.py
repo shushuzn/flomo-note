@@ -168,9 +168,72 @@ def run_local_tag_tree_cases():
     check("快照计数=二级行+裸顶层", (leaves, bare) == (2, 1))
 
 
+def run_check_web_cases():
+    """_check_web 的四类判定（离线，只读文件）。"""
+    import json as _json
+
+    def _verify_file(payload):
+        tmp = Path(tempfile.mkdtemp()) / "verify.json"
+        tmp.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return tmp
+
+    # 1) 未提供验证记录 → blocker
+    b, n = [], []
+    GATE._check_web(None, b, n)
+    check("_check_web 未提供记录判阻塞", any("未提供第 2 步验证记录" in x for x in b))
+
+    # 2) 文件不存在 → blocker
+    b, n = [], []
+    GATE._check_web("/nonexistent/verify.json", b, n)
+    check("_check_web 文件不存在判阻塞", any("不存在" in x for x in b))
+
+    # 3) searched=false → blocker
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": False, "terms": []}), b, n)
+    check("_check_web searched=false 判阻塞",
+          any("未真正执行网络搜索" in x for x in b))
+
+    # 4) terms 为空 → blocker
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": []}), b, n)
+    check("_check_web terms 为空判阻塞", any("terms 为空" in x for x in b))
+
+    # 5) 条目缺 conclusion → blocker
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True,
+                                  "terms": [{"term": "某术语", "query": "q"}]}), b, n)
+    check("_check_web 条目缺 conclusion 判阻塞",
+          any("缺 term/conclusion" in x for x in b))
+
+    # 6) 合法记录 → 通过且计数正确
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "A", "query": "qa", "conclusion": "ca"},
+        {"term": "B", "query": "qb", "conclusion": "cb"},
+    ]}), b, n)
+    check("_check_web 合法记录通过",
+          b == [] and got == {"searched": True, "term_count": 2})
+
+    # 7) 非法 JSON → blocker
+    tmp = Path(tempfile.mkdtemp()) / "bad.json"
+    tmp.write_text("{不是 JSON", encoding="utf-8")
+    b, n = [], []
+    GATE._check_web(tmp, b, n)
+    check("_check_web 非法 JSON 判阻塞", any("非法 JSON" in x for x in b))
+
+
+def run_concept_keyword_cases():
+    """_concept_keywords 边界（经 memo_util 委托）。"""
+    kw = GATE._concept_keywords("德塔智能 Delta 0 双足人形机器人基础模型")
+    check("_concept_keywords 派生非空", len(kw) >= 1 and all(kw))
+    check("_concept_keywords 限长 2", len(GATE._concept_keywords("某概念名称")) <= 2)
+
+
 if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
+    run_check_web_cases()
+    run_concept_keyword_cases()
     run_no_gate_cases()
     run_local_tag_tree_cases()
     print("---")

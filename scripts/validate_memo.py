@@ -19,14 +19,19 @@
   - --create/--file 同时兼容两种 JSON 形态：flomo_client.py 实际发送的
     `{"content": ...}`（顶层），以及 JSON-RPC 信封 `params.arguments.content`。
 """
-import hashlib
 import json
 import re
 import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from memo_util import body_hash, memo_signature, signature_key  # noqa: E402
+
 ERR, WARN = [], []
+
+# 单卡正文（含标签段）字数上限，与 SKILL「卡片格式」承诺的硬限一致。
+MAX_MEMO_CHARS = 20000
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -114,7 +119,12 @@ def check(content):
     body = "\n".join(lines[1:]).strip()
     if not body:
         err("正文为空")
-    # 不设字数上限（见 SKILL「卡片格式」）：长度由内容定，够清楚即可，不检查。
+    # 字数上限：与 SKILL「卡片格式」承诺的硬限一致（含标签段，按字符数计）。
+    # 上限存在的意义是防膨胀——超限往往是该拆卡或多事件混装（见 H7）的信号。
+    total_len = len(content)
+    if total_len > MAX_MEMO_CHARS:
+        err(f"卡片正文含标签段共 {total_len} 字，超过上限 {MAX_MEMO_CHARS} 字"
+            f"——超出须精简，或按 H7 拆分多事件")
 
 
     # 4) flomo 不渲染的 Markdown 语法检测
@@ -441,17 +451,8 @@ def check(content):
 
 
 def _signature_of(content):
-    """与 sop_gate.py / flomo_client.py 同口径：前两个非空行（标签行 + 概念名行）。
-
-    返回 dict（与 sop_gate._signature 一致），便于凭证签名直接比对。
-    """
-    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    if len(lines) < 2:
-        return None
-    tagline, concept = lines[0], lines[1]
-    if not tagline.startswith("#") or not concept:
-        return None
-    return {"tagline": tagline, "concept": concept}
+    """签名（委托 memo_util.memo_signature，返回 dict，与 sop_gate 同源）。"""
+    return memo_signature(content)
 
 
 def check_gate(content):
@@ -465,9 +466,7 @@ def check_gate(content):
     sig = _signature_of(content)
     if not sig:
         return  # 结构本身不合规，已由 H14 那节报错，此处不重复
-    sig_key = hashlib.sha256(
-        (sig["tagline"] + "\n" + sig["concept"]).encode("utf-8")
-    ).hexdigest()[:16]
+    sig_key = signature_key(sig)
     gate_path = GATE_DIR / f"{sig_key}.json"
     if not gate_path.exists():
         err(f"缺少 SOP 流程闸门凭证（{GATE_DIR.name}/{sig_key}.json）——"
@@ -486,7 +485,7 @@ def check_gate(content):
                 f"当前卡是「{sig['concept']}」）——凭证被复用或卡已改动，须重跑 sop_gate.py")
     # 正文指纹：杜绝"先跑闸门、后改正文"绕过（签名只锚卡片标识，锚不住正文改动）
     if gate.get("body_hash"):
-        if gate["body_hash"] != hashlib.sha256(content.encode("utf-8")).hexdigest():
+        if gate["body_hash"] != body_hash(content):
             err("SOP 闸门凭证的正文指纹与当前卡片不符——闸门跑完后正文又被改过，"
                 "须重跑 scripts/sop_gate.py 再写云")
     else:
@@ -547,10 +546,10 @@ def load_content(argv):
     if not argv:
         raise IndexError("缺少输入路径")
     arg = argv[0]
-    if arg in ("--create", "--file"):
-        return read_text(argv[1])
-    if arg == "--content":
-        return argv[1]
+    if arg in ("--create", "--file", "--content"):
+        if len(argv) < 2:
+            raise IndexError(f"{arg} 需要一个参数（文件路径或正文内容）")
+        return read_text(argv[1]) if arg != "--content" else argv[1]
     return read_text(arg)
 
 

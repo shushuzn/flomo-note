@@ -6,6 +6,8 @@
 覆盖：日期命中（多种形态，含短横线/斜杠/中文年月）、ENVIRONMENT.md 与协议/版本常量行豁免、
 历史事件叙事 WARN、流程时序词（当轮 / 本轮）与「实测」不被误伤、
 检测器自身与其回归测试只免于叙事扫描（日期扫描照常生效）。
+另含**真实目录防回归**用例：直接对本项目真实技能根断言 SKILL.md 等文档被纳入扫描
+（历史事故：扫描路径曾硬编码目录名，导致技能文档全部漏检而自检假通过）。
 
 注意：样本日期一律由片段拼接构造，避免本文件自身被内容自检判定为违规。
 """
@@ -24,7 +26,10 @@ Y = "20" + "26"
 DASH = Y + "-09-26"
 SLASH = Y + "/9/26"
 CJK = Y + "年9月"
-SKILL = ".kilo/skills/flomo-note/SKILL.md"
+
+# 夹具：技能根下的文档（扫描逻辑按"技能根"识别人工维护的文档）
+SKILL = "SKILL.md"
+ENV_DOC = "ENVIRONMENT.md"
 
 CASES = [
     # (用例名, 文件名->内容, 期望错数, 期望警数)
@@ -35,7 +40,7 @@ CASES = [
     ("脚本注释里的日期也判错",
      {"scripts/x.py": f"# 修复：{DASH} 那次改动\n"}, 1, 0),
     ("ENVIRONMENT.md 日期豁免",
-     {".kilo/skills/flomo-note/ENVIRONMENT.md": f"# 环境\n\n- {DASH} 实测：代理经隧道可用\n"}, 0, 0),
+     {ENV_DOC: f"# 环境\n\n- {DASH} 实测：代理经隧道可用\n"}, 0, 0),
     ("协议版本常量行豁免",
      {"scripts/y.py": '        "protocolVersion": "' + DASH + '",\n'}, 0, 0),
     ("事件叙事词只提示", {SKILL: "# 规则\n\n当时判断为网络问题，遂改走直连。\n"}, 0, 1),
@@ -50,10 +55,15 @@ CASES = [
      {"scripts/check_skill_docs.py": "# 当时判断；曾因如此。\n"}, 0, 0),
     ("检测器自身日期仍判错",
      {"scripts/check_skill_docs.py": f"# {DASH} 曾因如此。\n"}, 1, 0),
+    ("技能根下的 AGENTS.md 也纳入扫描",
+     {"AGENTS.md": f"# 总则\n\n{DASH} 定稿。\n"}, 1, 0),
+    ("技能根下的 README.md 也纳入扫描",
+     {"README.md": f"# 说明\n\n{DASH} 发布。\n"}, 1, 0),
 ]
 
 
 def run_case(name, files, want_err, want_warn):
+    """夹具：临时目录即"技能根"，内含 scripts/ 子目录（与真实布局一致）。"""
     ok = True
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
@@ -78,8 +88,27 @@ def run_case(name, files, want_err, want_warn):
     return ok
 
 
+def run_real_tree_case():
+    """防回归：直接对**真实技能根**断言维护类文档被纳入扫描。
+
+    历史事故：扫描路径曾硬编码某个仓库目录名，而实际技能目录名不同，
+    导致 SKILL.md / AGENTS.md / README.md 全部漏检、H28 自检"0 错"是假通过。
+    本用例不依赖夹具，直击真实目录，任何路径推导回归都会在此暴露。
+    """
+    real_root = HERE.parent
+    names = {p.name for p in CD.iter_targets(real_root)}
+    want = {"SKILL.md", "AGENTS.md", "README.md"}
+    missing = want - names
+    ok = not missing
+    print(f"{'PASS' if ok else 'FAIL'}  真实技能根扫描覆盖维护文档"
+          f"（缺 {sorted(missing)}）" if missing
+          else "PASS  真实技能根扫描覆盖维护文档")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
+    results.append(run_real_tree_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

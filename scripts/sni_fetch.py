@@ -25,7 +25,7 @@ import socket
 import ssl
 import sys
 import zlib
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 DEFAULT_SNI = "www.bing.com"   # 不在阻断名单内、且与目标同为 Fastly 边缘
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -111,7 +111,10 @@ def sni_fetch(url: str, out_path: str, sni: str = DEFAULT_SNI, ip: str | None = 
                 print("[fail] 重定向缺少 Location", file=sys.stderr)
                 return 1
             seen += 1
-            url = loc if loc.startswith("http") else f"https://{host}{loc}"
+            # 用 urljoin 而非手工拼接：正确解析相对路径（/a/b）、协议相对（//host/x）
+            # 与绝对 URL；手工拼 `https://{host}{loc}` 会把 `//host/x` 拼成
+            # `https://原host//host/x`，且跨域跳转后 host 仍是上一跳的旧值。
+            url = urljoin(url, loc)
             print(f"[redirect {seen}] -> {url}", file=sys.stderr)
             continue
         if code != 200 or not body:

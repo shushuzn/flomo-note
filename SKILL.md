@@ -297,11 +297,13 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 本核对已由流程闸门**代跑并阻塞**（见流程第 7 步）：云端 total、首行 total、实际列出数三者不一致即判阻塞，凭证不出。
 
 ### 脚本
+- `scripts/memo_util.py` — **卡片签名/指纹/关键词/标签拆分的唯一实现**，被下面三个脚本共用（避免口径漂移）。
 - `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口；内置写前幂等查重、`structuredContent` 提取、成功/失败判定。
 - `scripts/sop_gate.py` — **SOP 流程闸门**：代跑第 ④标签树核对 / ⑤查重两路 / ⑧复盘三路，校验第 ②步验证留痕，全过后落带正文指纹的凭证（第 7 步阻塞项）。
-- `scripts/validate_memo.py` — 写云前质检（H14–H17 等）+ 校验 SOP 闸门凭证，EXIT=0 才可写云。
+- `scripts/validate_memo.py` — 写云前质检（H14–H17 等，含字数上限）+ 校验 SOP 闸门凭证，EXIT=0 才可写云。
 - `scripts/test_validate_memo.py` — 质检脚本回归用例。
 - `scripts/test_sop_gate.py` — 闸门逻辑与凭证校验的离线回归用例。
+- `scripts/test_memo_util.py` — 签名/指纹/关键词公共实现的回归用例。
 - `scripts/check_skill_docs.py` — 技能文档内容纪律自检（H28）：扫具体日期与历史事件叙事，离线、只读。
 - `scripts/test_check_skill_docs.py` — 上述自检脚本回归用例。
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF。
@@ -314,6 +316,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 ### 维护约定
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
 - 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）。
+- 改动 `scripts/memo_util.py` 后必须跑 `python scripts/test_memo_util.py`（退出码 0 为全过）——它是三处共用的签名口径，改动影响面最大。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。
 - 环境变化只改 `ENVIRONMENT.md`，不改本文件。
