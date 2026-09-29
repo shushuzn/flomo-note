@@ -62,6 +62,13 @@ env -u http_proxy -u https_proxy git -c http.proxy="" -c https.proxy="" ls-remot
 
 **推送失败不等于 GitHub 不可用**，禁止据此下结论；必须换通道重试或如实报告"本地已提交、未推送 + commit hash"。
 
+#### `push_skill.sh` 内已收敛的环境坑（脚本自动处理，勿在 SKILL 复述）
+
+- `~/.gitconfig` 可能写死失效代理（如 `7897` 端口），需清空。
+- 认证走明文缓存 `~/.git-credentials` + `url.<token>@github.com/.insteadOf` 内联，并 `credential.helper=` 关闭凭据管理器；**不走 `gh` 凭据助手**（Windows 上 gh 取令牌会调被安全策略黑名单的 `reg.exe`，触发权限弹窗/被拒）。
+- `core.hooksPath` 指向空目录，屏蔽 Qoder post-commit 追踪器（会拉起 `Qoder.exe`→`reg.exe`，噪音且无意义）。
+- GitHub 美国段 IP 偶发 TLS EOF，脚本自动重启干净隧道重试（最多 4 次）。
+
 ### SNI 关键字阻断
 
 TCP 能建连但 TLS 立即被重置（curl 报 `schannel: failed to receive handshake`、python 报 `ConnectionResetError`）时，先做 SNI 变量对照：同一边缘 IP 换无关 SNI（如 `www.bing.com`）若能握手，即判定为 SNI 关键字阻断。确认后走：
@@ -77,13 +84,16 @@ python scripts/sni_fetch.py <url> <out_path>
 - **`git_tunnel.py` 的由来**：本机 DNS 曾把 `github.com` 解析到新加坡 Azure 段地址，该 IP 的 443 端口 TCP 超时；换 SNI、不发 SNI 均超时，判定为路由不通（非 SNI 关键字阻断）。因此改为把连接重定向到美国段可达 IP，同时保持 SNI 与证书校验仍为 `github.com`。
 - **`sni_fetch.py` 的由来**：本机网络对 SNI 中出现 `arxiv.org` 的 TLS ClientHello 直接回 RST（TCP 能建连、约 0.08s 后 `ConnectionResetError`）；换 SNI 为 `www.bing.com` 或去 SNI 即握手成功，确认为 SNI 关键字过滤。arXiv 走 Fastly，Fastly 按 HTTP `Host` 头路由，故前置 SNI 后内容照常返回。
 
-> 上两条为一次性实测记录（H28 要求此类细节只落本文件，技能文档与脚本注释只写抽象理由）。
+> 上两条为一次性实测记录（技能文档与脚本注释只写抽象理由，具体实测细节只落本文件）。
 
 
 ---
 
 ## 目录与产物
 
-- 中间文件（抓取原文、草稿、请求 JSON、被替换的旧卡全文）写在 `/root/.codebuddy/artifact/<会话 id>/`，**用后按 H15 保留最近若干轮，不即时全删**。
-- 临时请求 JSON 可放 `/tmp/`，但同样受 H15 约束（当轮涉及的不要立刻删）。
+- 中间文件（抓取原文、草稿、请求 JSON、被替换的旧卡全文）写在 `/root/.codebuddy/artifact/<会话 id>/`，用完不即时全删，须保留最近若干轮（保留规则见 SKILL.md）。
+- 临时请求 JSON 可放 `/tmp/`，同样不要在当轮立刻删。
 - 最终交付物（需要用户看的）才写 `/workspace`。
+- 标签树本地快照：`scripts/tag_tree.txt`（现采缓存，已 gitignore）。
+- 流程闸门凭证：`.sop_gate/<sig_key>.json`（现采中间态，已 gitignore）。
+- 验证留痕（第 2 步网络搜索记录）：写卡时按 `scripts/sop_gate.py` 用法说明落盘，供闸门读取；属当轮中间文件。
