@@ -5,9 +5,9 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 # flomo 卡片笔记（云端）
 
-> **本文件是唯一细则源。** 阅读顺序：先读「根本纪律」（三条）→ 遇到具体动作查「硬限清单」（编号 H1–Hn）→ 按「流程」执行 → 参考项查末尾「附录」。
+> **本文件是唯一细则源。** 阅读顺序：先读「根本纪律」（三条）→ 遇到具体动作查「硬限清单」（H1–H24，写卡执行全部规则）→ 按「流程」执行 → 参考项查末尾「附录」。
 > **硬限只在「硬限清单」定义一次**，全文其他地方一律只写编号（如「见 H7」），不重复表述。改动规则只改清单。
-> 环境相关（路径、代理、端口、一次性实测记录）不在本文件，见 `ENVIRONMENT.md`。
+> 环境相关（路径、代理、端口、一次性实测记录）不在本文件，见 `ENVIRONMENT.md`；**技能文档自身的治理规则（H25/H26 仓库分工/H27/H28）见文末附录**，写卡时不必读。
 
 ---
 
@@ -28,6 +28,8 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ## 二、硬限清单（唯一细则源，编号即引用点）
 
+写卡执行的全部硬限在此定义（H1–H24）。技能文档治理条目（H25/H27/H28 等）见文末附录同名节。
+
 ### A. 读写工具
 
 **H1 · 读卡必须取全文，禁用截断内容。**
@@ -41,7 +43,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 统一 `python scripts/flomo_client.py <tool> --file <json路径>`（从文件读 JSON，避免引号被转全角）。每次查重、查树、写云、复盘的**每个关键词都单独调用一次并读该次原始返回**；禁止用内联脚本、`for` 循环、`&` 拼接等批处理把多次调用串成一次（批处理会掩盖单次结果、偏离逐次现查流程）。
 
 **H4 · 返回值是包裹结构。**
-所有工具返回 `{"content":[{"type":"text","text":"<内层JSON字符串>"}],"structuredContent":{...}}`，结构化数据在 `structuredContent`（如 `memos`、`id`）。**必须走 `structuredContent` 或解析 `content[].text`**，禁止直接 `result.get("memos")`（永远取不到，会造成"查重看似通过、实际没查到"而误新建）。`flomo_client.py` 已内置 `_result_memos(result)`。
+所有工具返回 `{"content":[{"type":"text","text":"<内层JSON字符串>"}],"structuredContent":{...}}`，结构化数据在 `structuredContent`（如 `memos`、`id`）。**必须走 `structuredContent` 或解析 `content[].text`**，禁止直接 `result.get("memos")`（永远取不到，会造成"查重看似通过、实际没查到"而误新建）。
 人工查重与复盘**不得靠肉眼从打印文本里"看到"结果判断命中**，必须以程序解析结果为准。
 
 **H5 · memo id 必须程序化取用。**
@@ -158,34 +160,12 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 清空前必须 `memo_batch_get` 确认是哪一张或哪几张（H1），避免误清本就合规的卡。
 清空 = `memo_update(id, content=' ')`（必须**单空格**，空串被忽略）；卡片仍在云端，只内容被抹除，日后可重新写入。
 清空会把该卡标签一并置空，**只挂在它上面的独占标签随之从标签树消失**——因此引用任何标签簇名前必须重新 `tag_tree` 现采，不得凭历史记录或旧日志引用。
+**云端状态一律现查，不进记忆**：标签树、卡清单、已写入的规则，每次现查本文件或 `tag_tree` 现采，不靠记忆、不凭上一轮印象。云端数量权威（`tag_rename` / 清空都会改变）。
 
 **H24 · 素材保留。**
 抓取原文、草稿、被替换的旧卡全文、请求 JSON 等中间文件，须保留**最近若干轮**（至少当次会话的全部轮次），**不得在同一轮收尾时即刻全删**；清理只清与近轮无关的历史文件。
 
-### E. 治理
-
-**H25 · 文档改动走独立流程。**
-技能文档（SKILL.md / AGENTS.md / 词表 / 脚本）的修订**一律等用户另行指令触发**，触发后走独立改动流程（commit + 真实 hash + **立即 push**）。
-**push 是改动流程的必含终步，不是可选项**：commit 后必须立即 `git push` 并 `git ls-remote` 核对远端已含该 hash，不得停留在本地提交、不得等用户确认。
-**push 一律走 `scripts/push_skill.sh "msg"` 一条命令**（认证、代理清理、隧道、commit、push、远端校验全部收敛在脚本内；具体机制与环境坑见 `ENVIRONMENT.md`）。**禁止手搓 bash / 临时拼 git 命令**。
-**写卡复盘的建议中严禁提议改动这些文档**——复盘建议的落点只能是 flomo 云端卡片本身。
-
-**H26 · 本地与云端分工。**
-笔记只在云端：卡片正文只存在于 flomo 账号，本地不落盘任何笔记内容。本地只留技能文档、配置与脚本。
-不随仓库提交：`.mcp.json`（含 token）、`tag_tree.txt`（现采缓存）。
-云端状态不进 memory：标签树、卡清单、已写入规则一律现查本文件或 `tag_tree`，不靠记忆。
-
-### F. 收尾
-
-**H27 · 收尾强制清理（不可等确认）。**
-每轮 / 每会话收尾必须把**与近轮无关的残留临时文件**归档并删除，属强制流程，不等用户确认。流程：显式列名 → 打包 `.workbuddy/trash/temp-cleanup-<ts>.tar.gz` 并断言成员数一致 → 才删除 → 复核残留为 0。
-- **清理一律走 `scripts/cleanup.py`（默认执行）**：`--dry-run` 只列名、`--verify` 只复核残留是否为 0、`--list-rules` 打印当前生效的扫描与保留规则。**禁止临时手搓清理脚本**——保留项与排除清单已写死在脚本里，漏删/误删风险由脚本兜底。**清单以 `cleanup.py` 自身为唯一事实源**：需要核对时跑 `--list-rules`，本文件与 `ENVIRONMENT.md` 均不复述清单内容（清单随环境变化，复述必然漂移）。
-- **不得删当轮素材**：与当前轮次相关的抓取原文、草稿、请求 JSON 等按 H24 保留至少当次会话全部轮次；清理只清历史残留，不碰当轮。
-- 违反本规则（残留不清理）属严重违规。
-
-**H28 · 技能文档禁写日期与事件。**
-本文件及同目录其他技能文档（`AGENTS.md`、`ENVIRONMENT.md`、`README.md`、词表、脚本注释）只承载规则与流程，严禁写入具体日期与具体事件经过；说明理由只作抽象陈述，不得附带时间、地点、当事人、数量等细节。**`ENVIRONMENT.md` 记录环境事实时只写「是什么」——IP、端口、路径、命令——不写「哪天发生的」。**
-本条已落到执行层：`scripts/check_skill_docs.py` 扫描本文件、同目录全部文档与 `scripts/` 全量脚本，命中具体日期判 ERR 阻断，命中历史事件叙事词判 WARN。**所有技能文档一律受扫，无文件级豁免**；唯一豁免是协议/版本常量行（如 `protocolVersion`），逐条打印 SKIP 以保持可见。技能文档改动后必须先跑该脚本（见 `AGENTS.md`「开发维护约定」）。
+> **H25 / H27 / H28 与 H26 的仓库分工部分均属技能文档自身的治理，与写卡执行无关**——见文末「附录 · 技能文档治理」。写卡时无需读那段。
 
 ---
 
@@ -300,22 +280,36 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 以 `structuredContent.total` 为云端标签总数，与本地首行 total 比对后，**不得只信首行的数字**：比对前须先核验本地「实际列出的标签数 == 首行 total」，任一不符即用 `structuredContent.tags` **整体重写**本地文件，重写后复核「列出数 == total」。云端数量权威（`tag_rename`/清空都会改变）。
 本核对已由流程闸门**代跑并阻塞**（见流程第 7 步）：云端 total、首行 total、实际列出数三者不一致即判阻塞，凭证不出。
 
-### 脚本
-- `scripts/memo_util.py` — **卡片签名/指纹/关键词/标签拆分的唯一实现**，被下面三个脚本共用（避免口径漂移）。
-- `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口；内置写前幂等查重、`structuredContent` 提取、成功/失败判定。
+### 脚本（写卡流程用到的）
+
+- `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口（见 H3）；内置写前幂等查重与成功/失败判定（见「写成功判定与防重复」）。
 - `scripts/sop_gate.py` — **SOP 流程闸门**：代跑第 ④标签树核对 / ⑤查重两路 / ⑧复盘三路，校验第 ②步验证留痕，全过后落带正文指纹的凭证（第 7 步阻塞项）。
 - `scripts/validate_memo.py` — 写云前质检（H14–H17 等，含字数上限）+ 校验 SOP 闸门凭证，EXIT=0 才可写云。
-- `scripts/test_validate_memo.py` — 质检脚本回归用例。
-- `scripts/test_sop_gate.py` — 闸门逻辑与凭证校验的离线回归用例。
-- `scripts/test_memo_util.py` — 签名/指纹/关键词公共实现的回归用例。
-- `scripts/check_skill_docs.py` — 技能文档内容纪律自检（H28）：扫具体日期与历史事件叙事，离线、只读。
-- `scripts/test_check_skill_docs.py` — 上述自检脚本回归用例。
-- `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF（专治 RST / 半开连接，异常路径按常态处理，socket 在 `finally` 中关闭）。
-- `scripts/git_tunnel.py` — GitHub 直连与注入代理都不通时的本地透传通道（触发条件与机制见 `ENVIRONMENT.md`）。
-- `scripts/push_skill.sh` — 文档改动后强制推送（H25）：认证、代理清理、隧道、commit、push、远端校验一条命令，禁手搓。
-- `scripts/cleanup.py` — 每轮收尾强制清理残留（H27）：列名 → 归档 trash → 断言归档完整 → 删除 → 复核残留 0。文件与**目录**两类残留一并处理，保留项与排除清单写死。
-- `scripts/test_cleanup.py` — 收尾清理的离线回归用例（收集/保留项/归档断言/递归删除，临时沙箱内进行）。
-- `scripts/run_audit.sh` — 技能文档自校入口：先跑离线内容自检（`check_skill_docs.py`），再包好 Git 工具链、`SOUNDING_TMP` 与隧道调 `audit_skill.sh` 做结构审计。
-- `scripts/audit_skill.sh` — 技能文档结构审计（第三方 sounding linter），不检查内容纪律。
+- `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF（见 `ENVIRONMENT.md`）。
 
-> 脚本与文档的**维护约定**（改脚本后须跑哪些回归、文档自校顺序等）属项目总则，见 `AGENTS.md`，不在本文件重复。
+> 其余脚本（`memo_util.py` 公共实现、各测试用例、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
+
+### 技能文档治理（与写卡执行无关）
+
+以下 H 条目管的是**技能文档自己怎么维护**，写卡时不必读。编号保留，供脚本与流程引用。
+
+**H25 · 文档改动走独立流程。**
+技能文档（SKILL.md / AGENTS.md / 词表 / 脚本）的修订**一律等用户另行指令触发**，触发后走独立改动流程（commit + 真实 hash + **立即 push**）。
+**push 是改动流程的必含终步，不是可选项**：commit 后必须立即 `git push` 并 `git ls-remote` 核对远端已含该 hash，不得停留在本地提交、不得等用户确认。
+**push 一律走 `scripts/push_skill.sh "msg"` 一条命令**（认证、代理清理、隧道、commit、push、远端校验全部收敛在脚本内；具体机制与环境坑见 `ENVIRONMENT.md`）。**禁止手搓 bash / 临时拼 git 命令**。
+**写卡复盘的建议中严禁提议改动这些文档**——复盘建议的落点只能是 flomo 云端卡片本身。
+
+**H26（仓库分工部分）· 本地与云端各存什么。**
+笔记只在云端：卡片正文只存在于 flomo 账号，本地不落盘任何笔记内容。本地只留技能文档、配置与脚本。
+不随仓库提交：`.mcp.json`（含 token）、`tag_tree.txt`（现采缓存）。（「云端状态现查」那半条属写卡纪律，已并入 H23。）
+
+**H27 · 收尾强制清理（不可等确认）。**
+每轮 / 每会话收尾必须把**与近轮无关的残留临时文件**归档并删除，属强制流程，不等用户确认。流程：显式列名 → 打包 `.workbuddy/trash/temp-cleanup-<ts>.tar.gz` 并断言归档完整 → 才删除 → 复核残留为 0。
+- **清理一律走 `scripts/cleanup.py`（默认执行）**：`--dry-run` 只列名、`--verify` 只复核残留是否为 0、`--list-rules` 打印当前生效的扫描与保留规则。**禁止临时手搓清理脚本**——保留项与排除清单已写死在脚本里，漏删/误删风险由脚本兜底。**清单以 `cleanup.py` 自身为唯一事实源**：需要核对时跑 `--list-rules`，本文件与 `ENVIRONMENT.md` 均不复述清单内容（清单随环境变化，复述必然漂移）。
+- **不得删当轮素材**：与当前轮次相关的抓取原文、草稿、请求 JSON 等按 H24 保留至少当次会话全部轮次；清理只清历史残留，不碰当轮。
+- 违反本规则（残留不清理）属严重违规。
+
+**H28 · 技能文档禁写日期与事件。**
+本文件及同目录其他技能文档（`AGENTS.md`、`ENVIRONMENT.md`、`README.md`、词表、脚本注释）只承载规则与流程，严禁写入具体日期与具体事件经过；说明理由只作抽象陈述，不得附带时间、地点、当事人、数量等细节。**`ENVIRONMENT.md` 记录环境事实时只写「是什么」——IP、端口、路径、命令——不写「哪天发生的」。**
+本条已落到执行层：`scripts/check_skill_docs.py` 扫描本文件、同目录全部文档与 `scripts/` 全量脚本，命中具体日期判 ERR 阻断，命中历史事件叙事词判 WARN。**所有技能文档一律受扫，无文件级豁免**；唯一豁免是协议/版本常量行（如 `protocolVersion`），逐条打印 SKIP 以保持可见。技能文档改动后必须先跑该脚本（见 `AGENTS.md`「开发维护约定」）。
+
