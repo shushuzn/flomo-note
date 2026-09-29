@@ -18,6 +18,11 @@ FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备�
 
 权限纪律：所有工具（只读与写操作）均可直接调用，无需额外授权。
 写操作（memo_create / memo_update / tag_rename / tag_add）执行后直接报告结果。
+
+作**库**被复用时的契约：握手失败、HTTP 错误、JSON-RPC 协议错误一律抛 `FlomoError`
+（`RuntimeError` 子类，可被 `except Exception` 接住）；**不使用 `SystemExit`**——
+它继承自 `BaseException`，会把调用方的异常处理穿透，在 HTTP 服务里表现为连接被掐断、
+错误原因传不出去。CLI 侧在入口把 `FlomoError` 转成退出码。
 """
 import itertools
 import json
@@ -57,6 +62,16 @@ def load_token():
     raise SystemExit("未找到 flomo token：请补全 .mcp.json，或设置 FLOMO_TOKEN 并 Export")
 
 
+class FlomoError(RuntimeError):
+    """云端调用失败（HTTP 错误 / JSON-RPC 协议错误）。
+
+    **不要用 `SystemExit` 表示这类失败**：`SystemExit` 继承自 `BaseException` 而非
+    `Exception`，一旦被当作通用错误类型抛出，库的调用方（`except Exception`）就接不住，
+    会直接穿透到进程顶层——在 HTTP 服务里表现为**连接被掐断、客户端拿到空响应**，
+    错误原因一个字都传不出去。CLI 需要退出码，在入口处转成 `return 1` 即可。
+    """
+
+
 class FlomoClient:
     def __init__(self, token):
         self._headers = {
@@ -75,7 +90,7 @@ class FlomoClient:
         try:
             resp = urllib.request.urlopen(req)
         except urllib.error.HTTPError as e:
-            raise SystemExit(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')}")
+            raise FlomoError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')}") from None
         body = resp.read().decode("utf-8", "replace")
         sid = resp.headers.get("Mcp-Session-Id")
         if sid and not self._session:
@@ -109,7 +124,7 @@ class FlomoClient:
             if oid != want:
                 continue
             if "error" in obj:
-                raise SystemExit("MCP error: " + json.dumps(obj["error"], ensure_ascii=False))
+                raise FlomoError("MCP error: " + json.dumps(obj["error"], ensure_ascii=False))
             if "result" in obj:
                 return obj["result"]
         # JSON-RPC 通知（如 notifications/initialized）无 result/error，属正常空响应
@@ -201,7 +216,7 @@ def _exact_content_dup(client, content):
     for keyword in concept_keywords(content, limit=4):
         try:
             res = client.tool("memo_search", {"keywords": keyword, "limit": 20})
-        except SystemExit:
+        except (FlomoError, SystemExit):
             continue
         for m in _result_memos(res):
             mid = m.get("id")
@@ -373,4 +388,9 @@ FLOMO_MCP_TOOLS = [
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # CLI 入口把库异常转成退出码（库层不再用 SystemExit 表达调用失败）
+    try:
+        sys.exit(main())
+    except FlomoError as e:
+        sys.stderr.write(f"[失败] {e}\n")
+        sys.exit(1)
