@@ -313,13 +313,15 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF（专治 RST / 半开连接，异常路径按常态处理，socket 在 `finally` 中关闭）。
 - `scripts/git_tunnel.py` — GitHub 直连与注入代理都不通时的本地透传通道（触发条件与机制见 `ENVIRONMENT.md`）。
 - `scripts/push_skill.sh` — 文档改动后强制推送（H25）：认证、代理清理、隧道、commit、push、远端校验一条命令，禁手搓。
-- `scripts/cleanup.py` — 每轮收尾强制清理残留（H27）：列名 → 归档 trash → 断言成员数 → 删除 → 复核残留 0，保留项与排除清单写死。
+- `scripts/cleanup.py` — 每轮收尾强制清理残留（H27）：列名 → 归档 trash → 断言归档完整 → 删除 → 复核残留 0。文件与**目录**两类残留一并处理，保留项与排除清单写死。
+- `scripts/test_cleanup.py` — 收尾清理的离线回归用例（收集/保留项/归档断言/递归删除，临时沙箱内进行）。
 - `scripts/run_audit.sh` — 技能文档自校入口：先跑离线内容自检（`check_skill_docs.py`），再包好 Git 工具链、`SOUNDING_TMP` 与隧道调 `audit_skill.sh` 做结构审计。
 - `scripts/audit_skill.sh` — 技能文档结构审计（第三方 sounding linter），不检查内容纪律。
 
 ### 维护约定
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
 - 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）——含 `_tag_tree_total_and_count` / `_check_tag_tree` / `_check_dedup` / `_check_review` 的假 client 离线桩，改这几处不必联网验证。
+- 改动 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）后必须跑 `python scripts/test_cleanup.py`（退出码 0 为全过）——覆盖文件与目录两类残留的收集、保留项豁免、归档断言口径，全部在临时沙箱内离线进行，不触碰真实临时目录。
 - 改动 `scripts/memo_util.py` 后必须跑 `python scripts/test_memo_util.py`（退出码 0 为全过）——它是三处共用的签名口径，改动影响面最大。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。

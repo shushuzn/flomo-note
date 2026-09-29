@@ -83,7 +83,8 @@ flomo-note/
 │   ├── sni_fetch.py           # SNI 被阻断时的取件通道
 │   ├── git_tunnel.py          # GitHub 本地透传通道
 │   ├── push_skill.sh          # 文档改动强制推送
-│   ├── cleanup.py             # 收尾强制清理残留
+│   ├── cleanup.py             # 收尾强制清理残留（文件与目录）
+│   ├── test_cleanup.py        # 收尾清理回归用例
 │   └── run_audit.sh / audit_skill.sh  # 技能文档结构审计
 ├── .gitignore                 # 忽略凭据与现采缓存
 └── README.md                  # 本文件

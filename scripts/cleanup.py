@@ -15,11 +15,15 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
   - 标签树快照 `tag_tree.txt`（现采缓存，不入库）
   - `.workbuddy/trash/*`（历史备份包，即归档目标本身）
   - 临时目录内的他项目旧件（`arxiv_test.xml`、`arxiv_vibe.xml`）
+  - 临时目录内的活动工作区（`flomo-push` 仓库镜像、`sounding_flomo` 审计目录）
 
-删除范围：
+删除范围（文件与目录一并处理）：
   - 项目根：`_tmp_*`（除 `_tmp_extract.py`）
-  - 临时目录：`arxiv_*.html`、`arxiv_*_abs.html`、`ithome_*.html`、`flomo_*`
-              （显式排除上述他项目旧件）
+  - 临时目录：抓取件（`arxiv_*` / `ithome_*`）、flomo 包与备份（`flomo_*` /
+              `flomo-note*`）、sounding 链（`sounding_*` / `sounding.tgz`）、
+              历轮中间产物（`h15*` / `kilo_removed_archive` / `*_body.txt` /
+              `*_create.json` / `*_update.txt` / `*_upd.json` / `all_memos.json` /
+              `agi_*`），显式排除上述保留项
   - `.workbuddy/lb_out/`：`*_create.json`、`*_memo.txt`、`*.err`
 
 用法：
@@ -29,6 +33,7 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
 """
 import argparse
 import os
+import shutil
 import stat
 import sys
 import tarfile
@@ -47,22 +52,45 @@ if _LEGACY_TMP.is_dir() and _LEGACY_TMP not in _TMP_CANDIDATES:
     _TMP_CANDIDATES.append(_LEGACY_TMP)
 
 # (基准目录, [glob 模式...])
+# 临时目录规则按"本项目产物特征"覆盖，而非零散白名单——白名单漏项会让
+# `--verify` 在残留尚存时误报「残留 = 0」（曾漏掉目录形态的中间产物）。
 SCAN = [
     (PROJECT_ROOT, ["_tmp_*"]),
     (LB_OUT, ["*_create.json", "*_memo.txt", "*.err"]),
 ]
 for _t in _TMP_CANDIDATES:
-    SCAN.append((_t, ["arxiv_*.html", "arxiv_*_abs.html", "ithome_*.html", "flomo_*"]))
+    SCAN.append((_t, [
+        # 网页/文章抓取件
+        "arxiv_*.html", "arxiv_*_abs.html", "arxiv_*.pdf", "ithome_*.html",
+        # flomo 相关：dl / 备份 / 技能包（flomo-push 为活动镜像，见 KEEP）
+        "flomo_*", "flomo-note*",
+        # sounding 审计工具链（sounding_flomo 为审计保留目录，见 KEEP）
+        "sounding_*", "sounding.tgz",
+        # 历轮中间产物：改动集工作目录、抽取正文/请求体、批量导出
+        "h15*", "kilo_removed_archive",
+        "*_body.txt", "*_create.json", "*_update.txt", "*_upd.json",
+        "all_memos.json", "all.json",
+        "agi_body.txt", "agi_create.json", "agi_full.txt",
+    ]))
 
 # 显式保留（命中 glob 也不删）：键为所在目录，值为文件名集合
 KEEP = {
     PROJECT_ROOT: {"_tmp_extract.py", "tag_tree.txt"},
 }
 for _t in _TMP_CANDIDATES:
-    KEEP[_t] = {"arxiv_test.xml", "arxiv_vibe.xml", "sounding_flomo"}
+    # sounding_flomo：审计工具保留目录；flomo-push：仓库活动镜像（推送用，勿删）
+    KEEP[_t] = {"arxiv_test.xml", "arxiv_vibe.xml", "sounding_flomo", "flomo-push"}
 
 
 def _force_remove(p: Path):
+    """删除文件或目录树。
+
+    目录形态的残留同样要能清（如改动集工作目录），此前只 os.remove 文件，
+    遇目录直接抛错 → 残留永远清不掉。
+    """
+    if p.is_dir() and not p.is_symlink():
+        shutil.rmtree(p, ignore_errors=True)
+        return
     try:
         p.chmod(stat.S_IWRITE)
     except OSError:
@@ -80,8 +108,6 @@ def collect():
             continue
         for pat in patterns:
             for p in base.glob(pat):
-                if not p.is_file():
-                    continue
                 keep = KEEP.get(base)
                 if keep is not None and p.name in keep:
                     continue
@@ -146,19 +172,28 @@ def main():
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive = TRASH_DIR / f"temp-cleanup-{ts}.tar.gz"
+
+    def _arcname(p):
+        return str(p).replace(":", "").lstrip("/")
+
+    want = {_arcname(p) for p in candidates}
     with tarfile.open(archive, "w:gz") as tf:
         for p in candidates:
-            tf.add(p, arcname=str(p).replace(":", "").lstrip("/"))
+            tf.add(p, arcname=_arcname(p))
+    # 断言归档完整：每个候选的顶层条目都必须出现在归档中。
+    # （不能拿 len(getmembers()) 比候选数——目录会被展开成多个成员，那是必然不等。）
     with tarfile.open(archive) as tf:
-        members = len(tf.getmembers())
-    assert members == len(candidates), f"归档成员数 {members} != 应删 {len(candidates)}"
+        have = {m.name for m in tf.getmembers()}
+        members = len(have)
+    missing = want - have
+    assert not missing, f"归档缺失 {len(missing)} 项：{sorted(missing)[:5]}"
 
     for p in candidates:
         _force_remove(p)
 
     left = verify()
     assert len(left) == 0, f"复核失败，残留 {len(left)} 个"
-    print(f"[cleanup] 已归档 {archive}（{members} 个），删除并复核残留 = 0，OK")
+    print(f"[cleanup] 已归档 {archive}（顶层 {members} 个），删除并复核残留 = 0，OK")
 
 
 if __name__ == "__main__":
