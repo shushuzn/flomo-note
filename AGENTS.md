@@ -43,9 +43,9 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python scripts/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
 - 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，且是标签树快照渲染/计数的唯一实现，改动影响面最大）。
 - 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python scripts/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
-- 改 `scripts/console_data.py`（控制台数据抽取：硬限/管线/标签树/脚本清单解析）→ 跑 `python scripts/test_console_data.py`（临时目录内离线验证解析口径，含标签树计数与 `memo_util` 同源断言）。
+- 改 `scripts/console_data.py`（控制台本地侧数据抽取：标签树分组解析与统计字段）→ 跑 `python scripts/test_console_data.py`（临时目录内离线验证解析口径，含标签树计数与 `memo_util` 同源断言）。
 - 改 `scripts/console_cloud.py`（控制台云端只读访问：白名单、字段精简、连接与失败处理）→ 跑 `python scripts/test_console_cloud.py`（全桩离线，不联网、不读 token；含「写工具与白名单外工具一律拒调用」与「返回值不含 token」断言）。**该层的只读白名单是控制台不写云的唯一保险，改动后必须确认用例里的拒调用断言仍通过**。
-- 改 `scripts/serve_console.py`（接口与路由）→ 起服务实测各接口；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
+- 改 `scripts/serve_console.py` 的接口路由或 `web/` 前端（导航项、视图、样式）→ 跑 `python scripts/test_console_web.py`（离线锁定前后端对齐：导航项必须有对应视图、前端调用的接口必须存在于服务路由表、前端不得引入外部资源、服务不得出现命令执行入口），再起服务实测一轮；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
 - 改 `scripts/check_skill_docs.py` → 跑 `python scripts/test_check_skill_docs.py`。
 - **一键跑全部离线用例：`bash scripts/run_tests.sh`**（各配套用例与内容纪律自检一并跑；改动脚本后首选，避免逐个手跑漏项）。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。

@@ -3,6 +3,7 @@
 
 覆盖控制台读云的三条边界与解析口径：
   - **只读白名单**：写工具与白名单外工具一律拒调用（控制台在结构上无法写云）；
+    白名单**恰等于**源码实际调用的工具（扫描锁定，不留无人使用的权限空位）；
   - **字段精简**：标签段 / 概念名 / 正文的拆解、摘要截断、云端截断标记、
     「此处省略」标记的压缩；
   - **连接与失败**：首次调用才建连、连接复用、失败即重置以便重连、
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -160,6 +162,13 @@ def run_limit_clamp():
 def run_whitelist():
     check("读写工具集不相交", not (C.READONLY_TOOLS & C.WRITE_TOOLS), str(C.READONLY_TOOLS & C.WRITE_TOOLS))
 
+    # 白名单与「源码里真正调用的工具」必须一一对应：
+    # 多一个 = 留了没人用的权限空位；少一个 = 方法一调就抛「白名单外工具」。
+    src = (Path(__file__).resolve().parent / "console_cloud.py").read_text(encoding="utf-8")
+    used = set(re.findall(r'self\.call\("(\w+)"', src))
+    check("白名单恰好等于实际调用的工具", C.READONLY_TOOLS == used,
+          f"permitted {sorted(C.READONLY_TOOLS)} / used {sorted(used)}")
+
     fake = FakeClient()
     r, made = reader_for(fake)
     for name in ("memo_create", "memo_update", "tag_rename"):
@@ -236,11 +245,8 @@ def run_reads():
     check("今日回顾走 get_daily_review", rev_fake.calls[-1][0] == "get_daily_review")
     check("今日回顾返回精简卡", rev["count"] == 1 and rev["memos"][0]["title"] == "向量检索的召回率")
 
-    # 标签检索
-    tag_fake = FakeClient({"tag_search": {"structuredContent": {"tags": [{"name": "AI/RAG"}, {"name": "AI/Agent"}]}}})
-    r5, _ = reader_for(tag_fake)
-    check("标签检索", r5.tag_names("AI")["tags"] == ["AI/RAG", "AI/Agent"])
-    check("空关键词不打云端", r5.tag_names("") == {"tags": []} and len(tag_fake.calls) == 1)
+    # 标签筛选由「标签树快照」供选项、检索仍走 memo_search 的 tag 参数，
+    # 因此不另开标签名检索能力——白名单里也就没有 tag_search。
 
 
 # --------------------------------------------------------------------------- #
