@@ -47,11 +47,13 @@ def check(label, ok):
     print(f"{'PASS' if ok else 'FAIL'}  {label}")
 
 
-def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None):
+def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None,
+                allow_no_gate=False):
     """在临时 gate 目录写一张凭证，并让 VM 指向该目录。
 
     `key_sig` 单独指定落盘用的文件名签名（默认同 `sig`）；用于构造
     "文件名对得上、但凭证内 signature 字段是另一张卡"的签名不符场景。
+    `allow_no_gate=True` 模拟 sop_gate.py --allow-no-gate 写入的降级授权标记。
     """
     tmp = Path(tempfile.mkdtemp())
     VM.GATE_DIR = tmp
@@ -69,6 +71,9 @@ def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None):
         "dedup": {},
         "review": {},
     }
+    if allow_no_gate:
+        gate["no_gate_authorized"] = True
+        gate["no_gate_reason"] = "测试：批量处理历史卡"
     (tmp / f"{sig_key}.json").write_text(
         json.dumps(gate, ensure_ascii=False), encoding="utf-8"
     )
@@ -139,19 +144,39 @@ def run_gate_check_cases():
 
 
 def run_no_gate_cases():
-    """--no-gate 降级：闸门问题变 WARN，不阻断。"""
-    VM.GATE_DIR = Path(tempfile.mkdtemp())
+    """--no-gate 降级须凭证带 --allow-no-gate 授权标记，否则不生效。"""
     orig_argv = sys.argv
-    try:
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
-                                         encoding="utf-8") as f:
-            f.write(BODY)
-            p = f.name
-        sys.argv = ["validate_memo.py", "--no-gate", p]
-        rc = VM.main()
-    finally:
-        sys.argv = orig_argv
-    check("--no-gate 不阻断（退出码 0）", rc == 0)
+
+    def _run():
+        # main() 不做跨轮清理，ERR/WARN 是模块级列表；连着调必须手动清，
+        # 否则上一轮的判错会污染下一轮退出码。
+        VM.ERR.clear(); VM.WARN.clear()
+        sys.argv = ["validate_memo.py", "--no-gate", _p]
+        try:
+            return VM.main()
+        finally:
+            sys.argv = orig_argv
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+                                     encoding="utf-8") as f:
+        f.write(BODY)
+        _p = f.name
+    sig = VM._signature_of(BODY)
+    bh = hashlib.sha256(BODY.encode()).hexdigest()
+
+    # 1) 无授权标记 → 降级不生效，闸门缺失照常判 ERR
+    _write_gate(sig, bh, expires_delta=-10, web={"searched": True})
+    check("无授权的 --no-gate 判 ERR（退出码 1）", _run() == 1)
+
+    # 2) 凭证带授权标记 + 闸门问题存疑 → 降级为 WARN，不阻断
+    _write_gate(sig, bh, expires_delta=-10, web={"searched": True},
+                allow_no_gate=True)
+    check("有授权的 --no-gate 降级不阻断（退出码 0）", _run() == 0)
+
+    # 3) 有授权但正文指纹对不上（凭证是旧版正文的）→ 授权失效，判 ERR
+    _write_gate(sig, "deadbeef" * 8, expires_delta=-10, web={"searched": True},
+                allow_no_gate=True)
+    check("授权凭证正文指纹不符时降级失效（退出码 1）", _run() == 1)
 
 
 def run_local_tag_tree_cases():

@@ -241,6 +241,12 @@ def main():
     ap.add_argument("--skip-web", action="store_true", help="显式声明非术语卡，无需网络验证")
     ap.add_argument("--out", help="凭证输出路径（默认 .sop_gate/<signature>.json）")
     ap.add_argument("--anchor-id", help="可选：本卡 id（更新场景下可作 memo_recommended 锚点）")
+    ap.add_argument(
+        "--allow-no-gate",
+        metavar="REASON",
+        help="显式授权本卡在 validate_memo.py 侧可降级闸门（仅限批量处理历史卡）；"
+             "理由会写进凭证供事后审计。不加此项时 --no-gate 一律无效。",
+    )
     args = ap.parse_args()
 
     content = Path(args.memo).read_text(encoding="utf-8-sig")
@@ -288,6 +294,12 @@ def main():
         "dedup": dedup,
         "review": review,
     }
+    if args.allow_no_gate:
+        # 降级授权随凭证落盘：validate_memo.py 只在看到此标记时才认 --no-gate。
+        # 于是「降级」从调用方口头声明变成凭证里的可审计事实，且绑定本卡签名与正文指纹。
+        gate["no_gate_authorized"] = True
+        gate["no_gate_reason"] = args.allow_no_gate
+        notes.append(f"降级授权·{args.allow_no_gate}")
     out = Path(args.out) if args.out else (GATE_DIR / f"{sig_key}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(gate, ensure_ascii=False, indent=2), encoding="utf-8")
