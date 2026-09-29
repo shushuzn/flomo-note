@@ -86,6 +86,18 @@ for _t in _TMP_CANDIDATES:
     KEEP[_t] = {"arxiv_test.xml", "arxiv_vibe.xml", "sounding_flomo", "flomo-push"}
 
 
+def _arcname(p: Path) -> str:
+    """归档条目名：统一为 POSIX 分隔符，并剥掉盘符与前导斜杠。
+
+    tarfile 存储成员名时会把 `os.sep` 归一化为 `/`，再剥掉前导 `/`。生成端
+    必须按同一口径产出条目名：若只对 `str(p)` 去冒号，Windows 上的反斜杠路径
+    会生成 `D\\OpenClaw\\...` 形式的条目名，与归档内实际写入的 `D/OpenClaw/...`
+    永不相等，于是「归档完整性」断言恒失败，而该断言位于删除循环之前——
+    结果是每次收尾都归档成功却删除不到任何文件，残留清零永远达不成。
+    """
+    return p.as_posix().replace(":", "").lstrip("/")
+
+
 def _force_remove(p: Path):
     """删除文件或目录树。
 
@@ -176,9 +188,6 @@ def main():
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive = TRASH_DIR / f"temp-cleanup-{ts}.tar.gz"
-
-    def _arcname(p):
-        return str(p).replace(":", "").lstrip("/")
 
     want = {_arcname(p) for p in candidates}
     with tarfile.open(archive, "w:gz") as tf:
