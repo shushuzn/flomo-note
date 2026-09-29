@@ -179,26 +179,6 @@ def _result_memos(result):
     return []
 
 
-def _dup_candidate_keywords(content):
-    """从卡片正文生成候选检索词（委托 memo_util.concept_keywords）。
-
-    历史实现内联于此；现收敛到 memo_util 单一实现，避免与闸门/校验两处口径漂移。
-    """
-    return concept_keywords(content, limit=4)
-
-
-def _memo_signature(text):
-    """取卡片稳定签名 = (首行标签行, 第二行概念名行)——委托 memo_util.memo_signature。
-
-    保留本包装仅为兼容既有调用点；新代码应直接用 memo_util.memo_signature
-    （返回 dict，便于与闸门凭证的签名字段直接比对）。
-    """
-    sig = memo_signature(text)
-    if not sig:
-        return None
-    return (sig["tagline"], sig["concept"])
-
-
 def _exact_content_dup(client, content):
     """幂等保护：写前查重，返回与 content 同签名（标签行+概念名行）的既有 memo id，否则 None。
 
@@ -206,10 +186,10 @@ def _exact_content_dup(client, content):
     再按卡片签名比对。flomo 的 memo_search 对超长正文可能截断
     （content_truncated=True），但前两行始终完整，故无需拉全文。
     """
-    sig = _memo_signature(content)
+    sig = memo_signature(content)
     if not sig:
         return None
-    for keyword in _dup_candidate_keywords(content):
+    for keyword in concept_keywords(content, limit=4):
         try:
             res = client.tool("memo_search", {"keywords": keyword, "limit": 20})
         except SystemExit:
@@ -218,7 +198,7 @@ def _exact_content_dup(client, content):
             mid = m.get("id")
             if not mid:
                 continue
-            if _memo_signature(m.get("content")) == sig:
+            if memo_signature(m.get("content")) == sig:
                 return mid
     return None
 
