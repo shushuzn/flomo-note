@@ -180,7 +180,11 @@ def run_no_gate_cases():
 
 
 def run_local_tag_tree_cases():
-    """本地快照计数口径：二级行 + 裸顶层。"""
+    """本地快照计数口径：二级行 + 裸顶层。
+
+    实现已收敛到 `memo_util.count_snapshot`（渲染端 `render_tag_tree` 同源），
+    闸门不再自带一份——两侧口径漂移会让快照永远判不自洽。
+    """
     lines = [
         "# total=3",
         "# AI",
@@ -189,8 +193,12 @@ def run_local_tag_tree_cases():
         "投资/",
         "  投资/一级市场",
     ]
-    leaves, bare = GATE._count_local_snapshot(lines)
+    leaves, bare = GATE.count_snapshot(lines)
     check("快照计数=二级行+裸顶层", (leaves, bare) == (2, 1))
+    check("计数口径取自 memo_util（单一实现）",
+          GATE.count_snapshot.__module__ == "memo_util")
+    check("首行 total 解析取自 memo_util",
+          GATE.snapshot_total(lines) == 3)
 
 
 def run_check_web_cases():

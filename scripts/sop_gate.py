@@ -33,7 +33,6 @@
 """
 import argparse
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -42,9 +41,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, load_token, _result_memos  # noqa: E402
 from memo_util import (  # noqa: E402
     body_hash,
+    count_snapshot,
     keywords_of_concept,
     memo_signature,
     signature_key,
+    snapshot_total,
     tag_leaves,
 )
 
@@ -85,27 +86,6 @@ def _local_tag_tree_paths():
     ]
 
 
-def _count_local_snapshot(lines):
-    """统计本地 tag_tree 快照承载的标签条目数。
-
-    快照规范（见 SKILL「标签树本地留存」）：首行 total，其后
-      `# 顶层名`        顶层分组标题行（不计数）
-        `  顶层/二级`    二级行（计数）
-      `投资/`           裸顶层（有顶层无二级，计数）
-    故条数 = 缩进二级行 + 行尾为 `/` 的裸顶层行。
-    """
-    leaves = 0
-    bare = 0
-    for ln in lines[1:]:
-        if not ln.strip():
-            continue
-        if ln.startswith((" ", "\t")):
-            leaves += 1
-        elif ln.rstrip().endswith("/"):
-            bare += 1
-    return leaves, bare
-
-
 def _check_tag_tree(client, blockers, notes):
     """④ 标签树数量核对：云端 total 与本地快照必须自洽。"""
     total, tags = _tag_tree_total_and_count(client)
@@ -118,10 +98,8 @@ def _check_tag_tree(client, blockers, notes):
             continue
         checked_any = True
         head = p.read_text(encoding="utf-8-sig").splitlines()
-        first = head[0] if head else ""
-        m = re.search(r"total\s*=\s*(\d+)", first)
-        local_total = int(m.group(1)) if m else None
-        leaves, bare = _count_local_snapshot(head)
+        local_total = snapshot_total(head)
+        leaves, bare = count_snapshot(head)
         listed = leaves + bare
         if local_total != total:
             blockers.append(
