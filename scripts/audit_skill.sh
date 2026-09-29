@@ -2,7 +2,7 @@
 # audit_skill.sh — flomo-note SKILL.md 本地自校（sounding 静态审计）
 #
 # 把 SKILL 记忆维护段的"改动后本地自校"落成一键命令：克隆 sounding（缺失时）→
-# 审计 .kilo/skills/flomo-note → 默认用完即清临时克隆（符合 SKILL 记忆维护纪律）。
+# 审计仓库根目录（SKILL.md 所在处）→ 默认用完即清临时克隆（符合 SKILL 记忆维护纪律）。
 # 审计确定性、不联网、不改文件、可复现；目标 score 100/100。
 #
 # 用法:
@@ -25,13 +25,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# SKILL.md 位置：优先用仓库内路径（.kilo/skills/flomo-note），否则用技能安装根目录。
-# 必须取「带真实目录名」的绝对路径（cd + pwd 解析符号链接与 ..），sounding 按目录名校验 frontmatter.name。
-if [ -d "$REPO_ROOT/.kilo/skills/flomo-note" ]; then
-  SKILL_DIR="$(cd "$REPO_ROOT/.kilo/skills/flomo-note" && pwd)"
-else
-  SKILL_DIR="$REPO_ROOT"
-fi
+# SKILL.md 位置：技能文档的唯一位置是仓库根目录。
+# 曾误判为 .kilo/skills/flomo-note（编辑器项目目录），导致仓库里并存两份技能文档、
+# 且被审计的是陈旧副本；此处直接取仓库根，并做目录名校验（sounding 按 frontmatter.name 校验）。
+SKILL_DIR="$REPO_ROOT"
 FLOMO_CLIENT="$SCRIPT_DIR/flomo_client.py"
 
 # Python 解释器：优先 SOUNDING_PY，其次当前平台 python3/python（跨平台，不写死路径）
