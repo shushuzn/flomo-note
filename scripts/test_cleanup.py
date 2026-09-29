@@ -57,6 +57,34 @@ def _fresh_sandbox():
     return base, keep
 
 
+def run_scan_pattern_cases():
+    """SCAN 的 glob 规则必须覆盖真实出现过的残留形态（漏项会让 --verify 假通过）。
+
+    注意：前面的用例会就地改写 C.SCAN，这里必须重新加载一份干净模块取真实规则。
+    """
+    import fnmatch
+
+    clean = _load("cleanup_scan_src", "cleanup.py")
+    pats = [pat for _base, _pats in clean.SCAN for pat in _pats]
+
+    def _matches(name):
+        return any(fnmatch.fnmatch(name, pat) for pat in pats)
+
+    # 写卡工作区目录
+    check("SCAN 覆盖 wrN 工作区目录", _matches("wr1") and _matches("wr3"))
+    # 裸请求体小文件
+    check("SCAN 覆盖 q*_tmp.json", _matches("q_tmp2.json") and _matches("qG_tmp.json"))
+    check("SCAN 覆盖 yA_tmp.json", _matches("yA_tmp.json"))
+    # 既有形态不回归
+    check("SCAN 仍覆盖 *_body.txt", _matches("x1_body.txt"))
+    check("SCAN 仍覆盖 kilo_removed_archive", _matches("kilo_removed_archive"))
+    # 真正无需保留的项不该被任何规则命中（sounding_*/_tmp_* 属"命中但被 KEEP 挡住"，另论）
+    check("SCAN 未误命中 flomo-push",
+          not any(fnmatch.fnmatch("flomo-push", pat) for pat in pats))
+    check("SCAN 未误命中 arxiv_test.xml",
+          not any(fnmatch.fnmatch("arxiv_test.xml", pat) for pat in pats))
+
+
 def run_collect_cases():
     base, keep = _fresh_sandbox()
     C.SCAN = [(base, ["arxiv_*.html", "x1_body.txt", "x1_create.json",
@@ -125,6 +153,7 @@ def run_archive_cases():
 
 if __name__ == "__main__":
     run_collect_cases()
+    run_scan_pattern_cases()
     run_verify_cases()
     run_force_remove_cases()
     run_archive_cases()
