@@ -42,9 +42,26 @@ BODY = (
 RESULTS = []
 
 
-def check(label, ok):
+# 供 _check_web 落点校验用的正文：只含 `430 公里` 这一个关键参数，
+# 便于构造「结论参数在正文 / 不在正文」两侧。
+WEB_BODY = (
+    "#科技/机器人\n"
+    "某测试概念名\n"
+    "\n"
+    "结论句。\n"
+    "\n"
+    "要点：\n"
+    "- WLTP 续航 430 公里\n"
+)
+
+
+def check(label, ok, detail=""):
+    """`detail` 只在失败时打印，用于回显实际值（成功时保持单行输出）。"""
     RESULTS.append(ok)
-    print(f"{'PASS' if ok else 'FAIL'}  {label}")
+    if ok:
+        print(f"PASS  {label}")
+    else:
+        print(f"FAIL  {label}" + (f"\n      实际：{detail}" if detail else ""))
 
 
 def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None,
@@ -202,7 +219,7 @@ def run_local_tag_tree_cases():
 
 
 def run_check_web_cases():
-    """_check_web 的四类判定（离线，只读文件）。"""
+    """_check_web：留痕校验 + 「结论已落进正文」的落点校验（离线，只读文件）。"""
     import json as _json
 
     def _verify_file(payload):
@@ -212,55 +229,129 @@ def run_check_web_cases():
 
     # 1) 未提供验证记录 → blocker
     b, n = [], []
-    GATE._check_web(None, b, n)
+    GATE._check_web(None, WEB_BODY, b, n)
     check("_check_web 未提供记录判阻塞", any("未提供第 2 步验证记录" in x for x in b))
 
     # 2) 文件不存在 → blocker
     b, n = [], []
-    GATE._check_web("/nonexistent/verify.json", b, n)
+    GATE._check_web("/nonexistent/verify.json", WEB_BODY, b, n)
     check("_check_web 文件不存在判阻塞", any("不存在" in x for x in b))
 
     # 3) searched=false → blocker
     b, n = [], []
-    GATE._check_web(_verify_file({"searched": False, "terms": []}), b, n)
+    GATE._check_web(_verify_file({"searched": False, "terms": []}), WEB_BODY, b, n)
     check("_check_web searched=false 判阻塞",
           any("未真正执行网络搜索" in x for x in b))
 
     # 4) terms 为空 → blocker
     b, n = [], []
-    GATE._check_web(_verify_file({"searched": True, "terms": []}), b, n)
+    GATE._check_web(_verify_file({"searched": True, "terms": []}), WEB_BODY, b, n)
     check("_check_web terms 为空判阻塞", any("terms 为空" in x for x in b))
 
     # 5) 条目缺 conclusion → blocker
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True,
-                                  "terms": [{"term": "某术语", "query": "q"}]}), b, n)
+                                  "terms": [{"term": "某术语", "query": "q"}]}), WEB_BODY, b, n)
     check("_check_web 条目缺 conclusion 判阻塞",
           any("缺 term/conclusion" in x for x in b))
 
-    # 6) 合法记录 → 通过且计数正确
+    # 6) 合法记录：一条按关键参数命中、一条按术语名命中 → 通过且计数正确
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "A", "query": "qa", "conclusion": "ca"},
-        {"term": "B", "query": "qb", "conclusion": "cb"},
-    ]}), b, n)
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓"},
+        {"term": "续航参数", "query": "qb", "conclusion": "WLTP 续航 430 公里"},
+    ]}), WEB_BODY, b, n)
     check("_check_web 合法记录通过",
-          b == [] and got == {"searched": True, "term_count": 2})
+          b == [] and got["searched"] is True and got["term_count"] == 2, str(b))
 
     # 7) 非法 JSON → blocker
     tmp = Path(tempfile.mkdtemp()) / "bad.json"
     tmp.write_text("{不是 JSON", encoding="utf-8")
     b, n = [], []
-    GATE._check_web(tmp, b, n)
+    GATE._check_web(tmp, WEB_BODY, b, n)
     check("_check_web 非法 JSON 判阻塞", any("非法 JSON" in x for x in b))
 
     # 8) searched 必须是布尔 true：字符串/数字都是真值，用真值判定会放行未搜索的记录
     for bad_val in ("no", "false", 1, 0, "true"):
         b, n = [], []
         GATE._check_web(_verify_file({"searched": bad_val, "terms": [
-            {"term": "A", "query": "qa", "conclusion": "ca"}]}), b, n)
+            {"term": "某测试概念名", "query": "q", "conclusion": "确认为该概念的标准称谓"}]}),
+            WEB_BODY, b, n)
         check(f"_check_web searched={bad_val!r} 判阻塞",
               any("必须为布尔 true" in x for x in b))
+
+    # 9) 核心新规：留痕齐全、但结论里的关键参数一个都没落进正文 → 必须阻塞。
+    #    这正是旧版闸门的缺口——「搜了不用」与「正文照抄原文」都能骗过旧版。
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q",
+         "conclusion": "该车 WLTP 续航 500 公里，起售价 9,999 欧元"}]}), WEB_BODY, b, n)
+    check("_check_web 结论关键参数未落正文判阻塞",
+          any("一个都没落" in x for x in b), str(b))
+    check("_check_web 未落条目在凭证里如实记为未命中",
+          got["landed"][0].get("matched") == [], str(got["landed"]))
+
+    # 10) 结论关键参数已落正文 → 通过，且凭证记下命中项
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 430 公里"}]}),
+        WEB_BODY, b, n)
+    check("_check_web 结论关键参数已落正文通过",
+          b == [] and bool(got["landed"][0]["matched"]), str(b))
+
+    # 11) 无数字的评级结论（五星）同属关键参数，未落正文照样阻塞
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某评级", "query": "q", "conclusion": "获 Euro NCAP 五星安全评级"}]}),
+        WEB_BODY, b, n)
+    check("_check_web 星级结论未落正文判阻塞", any("一个都没落" in x for x in b), str(b))
+
+    # 12) 纯命名结论：按术语名比对，不在正文即阻塞
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某无关术语", "query": "q", "conclusion": "确认为标准称谓"}]}),
+        WEB_BODY, b, n)
+    check("_check_web 纯命名结论术语名未落正文判阻塞",
+          any("找不到落点" in x for x in b), str(b))
+
+    # 13) in_body 显式落点：不存在 / 等于术语本身都要阻塞，真实落点才放行
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["正文里没有的句子"]}]}),
+        WEB_BODY, b, n)
+    check("_check_web in_body 落点不在正文判阻塞",
+          any("在卡正文中不存在" in x for x in b), str(b))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某测试概念名", "query": "q", "conclusion": "c",
+         "in_body": ["某测试概念名"]}]}), WEB_BODY, b, n)
+    check("_check_web in_body 落点等于术语本身判阻塞",
+          any("无信息量" in x for x in b), str(b))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c",
+         "in_body": ["WLTP 续航 430 公里"]}]}), WEB_BODY, b, n)
+    check("_check_web in_body 落点真实存在则放行", b == [], str(b))
+
+    # 14) not_in_body 显式豁免：放行，但豁免理由必须随凭证留痕（可审计）
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某无关参数", "query": "q", "conclusion": "WLTP 续航 500 公里",
+         "not_in_body": "该参数与卡片主题无关，按 H13 不并入"}]}), WEB_BODY, b, n)
+    check("_check_web not_in_body 显式豁免放行且留痕",
+          b == [] and got["landed"][0]["exempt"], str(b) + str(got["landed"]))
+
+    # 15) 关键参数提取本身的口径（防回归）
+    check("_evidence_tokens 不截断 kWh（前缀单位须长者在前）",
+          GATE._evidence_tokens("电池 60.2 kWh") == ["60.2 kWh"],
+          str(GATE._evidence_tokens("电池 60.2 kWh")))
+    check("_evidence_tokens 无单位数字不算关键参数（否则落点会空转）",
+          GATE._evidence_tokens("共 3 项，第 5 条") == [],
+          str(GATE._evidence_tokens("共 3 项，第 5 条")))
+    check("_evidence_tokens 千分位与单位内空格可比对",
+          GATE._norm("1,055 公里") == GATE._norm("1055公里"))
 
 
 def run_concept_keyword_cases():
