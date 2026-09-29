@@ -40,6 +40,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - 改 `scripts/sop_gate.py` 或闸门校验逻辑 → 跑 `python scripts/test_sop_gate.py`（含 tag_tree 计数 / 查重 / 复盘的假 client 离线桩，这几处不必联网验证）。
 - 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python scripts/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
 - 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，改动影响面最大）。
+- 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python scripts/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
 - 改 `scripts/check_skill_docs.py` → 跑 `python scripts/test_check_skill_docs.py`。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 环境变化只改 `ENVIRONMENT.md`。

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """git_tunnel.py — 本地 TCP 隧道代理：把指定主机的连接重定向到可达 IP。
 
-背景（实测记录见 ENVIRONMENT.md）
-    本机 DNS 把 github.com 解析到 20.205.243.166（新加坡 Azure 段），
-    该 IP 的 443 端口 TCP 超时（换 SNI、不发 SNI 均超时 → 是路由不通，
-    不是 SNI 关键字阻断，与 arxiv.org 那次的机制不同）。
-    而 github.com 的美国段 IP 140.82.112.3 / 113.3 / 114.3 / 121.4
-    完全可达，且 SNI=github.com 的 TLSv1.3 握手正常。
-    同时沙箱注入的 https_proxy(http://127.0.0.1:41264) 对 github.com 返回 502。
+背景
+    本机对 github.com 的直连不稳定：DNS 解析出的 IP 与常用美国段 IP 都
+    时通时断，且沙箱注入的 https_proxy(http://127.0.0.1:41264) 对该域名
+    返回 502，故推送 / 拉取必须绕开环境代理，且不能只认一个固定 IP。
 
 做法
     在本地开一个 HTTP CONNECT 代理，把 github.com:443 的流量在 TCP 层
     透传到可达 IP。TLS 与证书校验仍由 git 与 GitHub 端到端完成
     （SNI=github.com、证书校验 github.com，只是换了落地的 IP），
     因此不需要关校验、不降低安全性。
+    候选 IP 全失败时回落系统 DNS：候选表只是快照，会随 GitHub 调整而
+    整体失效；缺了回落，隧道会在候选漂移后对每次连接都回 502，而系统
+    DNS 解析出的 IP 可能本来是通的——排查时极易误判为「网络不通」。
 
 用法
     python scripts/git_tunnel.py                 # 监听 127.0.0.1:18123
@@ -37,15 +37,23 @@ import threading
 
 HOST = "127.0.0.1"
 
-# 域名 → 可达 IP 候选（按顺序尝试）。命中即用，否则回落正常 DNS 解析。
+# 域名 → 可达 IP 候选（按顺序尝试，命中即用）。候选全失败时由 connect_target
+# 回落系统 DNS，故本表只需列出「当前更可能通」的快照，不必覆盖全部可能 IP。
+# 同段 IP 往往同生共死（路由层面成段不可达），候选取值宜跨段分散。
 ROUTES = {
-    "github.com": ["140.82.114.3", "140.82.113.3", "140.82.112.3", "140.82.121.4"],
-    "api.github.com": ["20.205.243.168", "140.82.114.6", "140.82.113.6", "140.82.112.6"],
-    "codeload.github.com": ["20.205.243.165", "140.82.114.9", "140.82.113.9"],
+    "github.com": ["140.82.113.3", "20.205.243.166", "140.82.112.3", "140.82.121.4"],
+    "api.github.com": ["20.205.243.168", "140.82.113.6", "140.82.112.6"],
+    "codeload.github.com": ["20.205.243.165", "140.82.113.9"],
     "objects.githubusercontent.com": ["185.199.108.133", "185.199.109.133"],
     "raw.githubusercontent.com": ["185.199.108.133", "185.199.109.133"],
-    "gist.github.com": ["140.82.114.3", "140.82.113.3"],
+    "gist.github.com": ["140.82.113.3", "140.82.112.3"],
 }
+
+# 单个候选 IP 的连接超时。取值短一些：候选逐个尝试时，长超时会让每次
+# CONNECT 都白等一轮，git 侧先超时，表现出来就成了「隧道不可用」。
+CONNECT_TIMEOUT = 6
+# 系统 DNS 回落的连接超时（解析 + 建连，留足余量）。
+DNS_TIMEOUT = 15
 
 # hosts 片段用第一条候选（权威值），与 ENVIRONMENT.md 的用法说明解耦。
 HOSTS_PRIMARY = {h: ips[0] for h, ips in ROUTES.items()}
@@ -84,19 +92,24 @@ def log(msg):
 
 
 def connect_target(host, port):
-    """连到目标。命中 ROUTES 则逐个试候选 IP，否则走系统 DNS。"""
-    ips = ROUTES.get(host)
+    """连到目标：先逐个试 ROUTES 候选 IP，全失败再回落系统 DNS 解析。
+
+    回落是必需的。候选表是硬编码快照，整段漂移时逐个都会失败；若此时直接
+    放弃，隧道会对每次连接都回 502，而系统 DNS 解析出的 IP 本来可能可通，
+    故障因此被伪装成「网络不通」而难以察觉。
+    """
+    ips = ROUTES.get(host) or []
+    last = None
+    for ip in ips:
+        try:
+            s = socket.create_connection((ip, port), timeout=CONNECT_TIMEOUT)
+            return s, ip
+        except Exception as e:  # noqa: BLE001
+            last = e
+            log(f"  {host} -> {ip} 失败: {type(e).__name__}")
     if ips:
-        last = None
-        for ip in ips:
-            try:
-                s = socket.create_connection((ip, port), timeout=10)
-                return s, ip
-            except Exception as e:  # noqa: BLE001
-                last = e
-                log(f"  {host} -> {ip} 失败: {type(e).__name__}")
-        raise last if last else OSError("no candidate ip")
-    s = socket.create_connection((host, port), timeout=15)
+        log(f"  {host} 候选均失败（{type(last).__name__}），回落系统 DNS")
+    s = socket.create_connection((host, port), timeout=DNS_TIMEOUT)
     return s, host
 
 
@@ -157,7 +170,7 @@ def handle(client):
         try:
             up, ip = connect_target(host, port)
         except Exception as e:  # noqa: BLE001
-            log(f"  {host}:{port} 全部候选不可达: {type(e).__name__}")
+            log(f"  {host}:{port} 候选与系统 DNS 均不可达: {type(e).__name__}")
             client.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             client.close()
             return
