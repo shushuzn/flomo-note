@@ -12,6 +12,9 @@ tmp_*
 # 标签树本地快照：每次现采刷新的中间缓存，不入库
 tag_tree.txt
 
+# SOP 流程闸门凭证：每次写卡现采生成，属中间缓存，不入库
+.sop_gate/
+
 # 依赖与日志
 node_modules/
 *.log

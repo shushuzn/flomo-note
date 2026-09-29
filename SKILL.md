@@ -201,6 +201,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 ### 2. 验证（阻塞）
 主体若为专业术语、数学概念、科学名词、机构/产品/模型/定理简称等，必须 `search` 现查标准名称与定义，不凭原文简称或图片特征臆测。查证项：标准术语（中英文）、命名来源/发明者与首提时间、关键参数。结果融入正文对应要点。抓取失败或无替代来源时跳过写卡并说明原因。
+- **必须留痕**：核实结果落成 `verify.json`（`{"searched": true, "terms":[{"term","query","conclusion"}]}`），第 7 步闸门会校验。**术语卡无留痕 = 第 7 步直接 ERR 阻断写云**（`--skip-web` 仅限确认非术语卡时使用，且会在凭证中留痕 `web_skipped`，供事后审计）。
 
 ### 3. 提炼
 滤除营销话术，保留事实、数据与因果链（见 H13）；图片/截图输入只提炼内容、不记录载体（见 H19）。
@@ -221,13 +222,15 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 按 H14 写 1 条。
 
 ### 7. 写云前自检（阻塞）
-- 命令：`python scripts/validate_memo.py memo_body.txt`（支持 `--file`/`--content`/`--create`；JSON 自动抽 content，兼容顶层与 JSON-RPC 信封；读文件容忍 BOM）。
+- **先过流程闸门（阻塞）**：`python scripts/sop_gate.py --memo memo_body.txt --verify verify.json`（更新场景加 `--anchor-id <本卡 id>`；确认非术语卡用 `--skip-web` 替代 `--verify`）。该脚本**代跑**第 ④ 标签树数量核对、第 ⑤ 查重两路、第 ⑧ 复盘三路，并校验第 ② 步验证留痕，全过后在 `.sop_gate/` 落一份带**正文指纹**的凭证。退出码非 0 即未过，禁写云。
+- **再跑文本质检**：`python scripts/validate_memo.py memo_body.txt`（支持 `--file`/`--content`/`--create`；JSON 自动抽 content，兼容顶层与 JSON-RPC 信封；读文件容忍 BOM）。
 - **必须 EXIT=0（0 ERR）才写云**；任一 ERR 先改再写，禁把云端当草稿反复 `memo_update`。通过即 `memo_create` 写云，免确认。
-- 质检覆盖：标签两级（H17）、结构（H14）、flomo 不渲染语法、正文脏标签、占位/生造来源、预印本摘要依赖、旧格式遗留（H15）、**事件来源信息与通报方（H15/H16，第 5.8 节 ERR 硬阻断）**、载体信息（H16）。
+- **闸门凭证是机械兜底**：`validate_memo.py` 会校验凭证存在、签名相符、**正文指纹相符**（防"先跑闸门、后改正文"）、未过期、验证已执行。五项任一不符判 ERR 阻断——**"漏做 SOP 步骤"从此物理上不可能通过自检**。仅当批量处理历史卡等特殊场景方可 `--no-gate` 降级（问题转 WARN），常规写卡禁用。
+- 质检覆盖：标签两级（H17）、结构（H14）、flomo 不渲染语法、正文脏标签、占位/生造来源、预印本摘要依赖、旧格式遗留（H15）、**事件来源信息与通报方（H15/H16，第 5.8 节 ERR 硬阻断）**、载体信息（H16）、**SOP 流程闸门凭证（第 5.9 节）**。
 - ERR 阻塞，WARN 只提示。已知误报：标签段后空行 WARN——flomo 存储层自动插空行，本地单 `\n` 线上呈 `\n\n`，可忽略。
 
 ### 8. 复盘（写卡后必做，须现查）
-- **三路逐一现查**：`memo_search` 关键词扫近邻、`tag_tree` 列同主标签细分、`memo_recommended`（**传本卡 id**，limit 20，只读校验，专补关键词搜不到的情况；不写 `linked_memos`）。前两者返回**截断**内容只用于"发现有哪些卡"（见 H1）。
+- **三路逐一现查**：`memo_search` 关键词扫近邻、`tag_tree` 列同主标签细分、`memo_recommended`（**传本卡 id**，limit 20，只读校验，专补关键词搜不到的情况；不写 `linked_memos`）。前两者返回**截断**内容只用于"发现有哪些卡"（见 H1）。**前两路已在第 7 步闸门中代跑；本步的 `memo_recommended` 需在写云后按本卡 id 补一次定向复查**（闸门运行时本卡尚未存在，故凭证里的那条是锚卡推荐）。
 - **本卡全文自查（先做，阻塞）**：按 H11 回读所写卡全文核对 ① 首尾同事件 ② 无载体素材混入 ③ 无他卡串位 ④ 实测字数；问题当轮修正。
 - **新建合理性复查 / 错配核查 / 硬塞核查（先看）**：本卡是否应更新既有卡（H9）、标签是否塞进纯概念筐（H18）、标签是否与主体类别不符（H18）——是则当轮处置（合并 / 建具体二级 / 改正确标签）。
 - **标签归并**：两卡仅命名不同、本质同类 → 当轮 `tag_rename` 归并（异步生效，禁据"读回未变"立刻判定失败逐卡兜底，会与后台撞车；稍后重采 `tag_tree` 或按旧标签 `memo_search` 复查，确残留才逐卡 `memo_update` 且首行标签 token 去重）。
@@ -287,14 +290,17 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - 表格只认三种真形态（分隔行 `|---|---|`、竖线包裹行 `| a | b |`、空格包围竖线成组 `a | b | c`）；紧贴文字的竖线（绝对值、集合势、条件概率 `P(A|B)`）属正常书写。
 
 ### 标签树本地留存
-云端标签树留存本地**项目根** `tag_tree.txt`（首行 `# total=N`，按顶层分组列二级。`scripts/tag_tree.txt` 为历史遗留陈旧副本，已废弃、勿引用）。
+云端标签树留存本地 `scripts/tag_tree.txt`（首行 `# total=N`；其后顶层以 `# 顶层名` 标题行分组，二级行缩进列出；`投资/` 这类**裸顶层**（有顶层无二级）单独成行、不缩进。条数 = 缩进二级行 + 裸顶层行）。该文件属**现采缓存，不入库、不得 commit**（见 H26），已被 `.gitignore` 忽略。
 每次定标签与复盘前先比数量：`tag_tree` 现采**必须传 `{"limit":2000}` 拿全量**（服务端默认 200 会截断；且 `limit` 须 ≥ 云端 total，否则 `tags` 被截断致 `len(tags) ≠ total`，无法据以重建）。
-以 `structuredContent.total` 为云端标签总数，与本地首行 total 比对后，**不得只信首行的数字**：比对前须先核验本地「实际列出的标签数 == 首行 total」，任一不符即用 `structuredContent.tags` **整体重写**本地文件，重写后复核「列出数 == total」。**裸顶层标签**（tags 中形如 `投资/` 的有顶层无二级项）重写时单独成行 `投资/`，再另起一行列其二级（`投资/: 一级市场、…`），两者相加方等于 total。云端数量权威（`tag_rename`/清空都会改变）；本地文件属现采缓存，**不入库、不得 commit**。
+以 `structuredContent.total` 为云端标签总数，与本地首行 total 比对后，**不得只信首行的数字**：比对前须先核验本地「实际列出的标签数 == 首行 total」，任一不符即用 `structuredContent.tags` **整体重写**本地文件，重写后复核「列出数 == total」。云端数量权威（`tag_rename`/清空都会改变）。
+本核对已由 `scripts/sop_gate.py` **代跑并阻塞**（见流程第 7 步）：云端 total、首行 total、实际列出数三者不一致即判阻塞，凭证不出。
 
 ### 脚本
 - `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口；内置写前幂等查重、`structuredContent` 提取、成功/失败判定。
-- `scripts/validate_memo.py` — 写云前质检（H14–H17 等），EXIT=0 才可写云。
+- `scripts/sop_gate.py` — **SOP 流程闸门**：代跑第 ④标签树核对 / ⑤查重两路 / ⑧复盘三路，校验第 ②步验证留痕，全过后落带正文指纹的凭证（第 7 步阻塞项）。
+- `scripts/validate_memo.py` — 写云前质检（H14–H17 等）+ 校验 SOP 闸门凭证，EXIT=0 才可写云。
 - `scripts/test_validate_memo.py` — 质检脚本回归用例。
+- `scripts/test_sop_gate.py` — 闸门逻辑与凭证校验的离线回归用例。
 - `scripts/check_skill_docs.py` — 技能文档内容纪律自检（H28）：扫具体日期与历史事件叙事，离线、只读。
 - `scripts/test_check_skill_docs.py` — 上述自检脚本回归用例。
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF。
@@ -306,6 +312,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 ### 维护约定
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
+- 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。
 - 环境变化只改 `ENVIRONMENT.md`，不改本文件。
