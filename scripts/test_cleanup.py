@@ -8,14 +8,17 @@
   - 归档完整性断言按"顶层条目"比对，不再拿展开后的成员数误判；
   - 归档条目名与 tarfile 成员名同口径（反斜杠平台不得产出反斜杠条目名，
     否则完整性断言在删除循环之前恒失败，残留永远清不掉）；
+  - 近轮窗口：修改时间落在窗口内的项不算残留（H24/H27），窗口外的才清；
   - _force_remove 对文件与目录树都生效。
 
 不触碰真实 /tmp 与项目根，全部在 tempfile 沙箱内进行。
 退出码：0 = 全过。
 """
 import importlib.util
+import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -80,6 +83,8 @@ def run_scan_pattern_cases():
     # 既有形态不回归
     check("SCAN 仍覆盖 *_body.txt", _matches("x1_body.txt"))
     check("SCAN 仍覆盖 kilo_removed_archive", _matches("kilo_removed_archive"))
+    # 写卡草稿：内容已入云，落入窗口外即应清理（H26/H27）
+    check("SCAN 覆盖 memo_body*.txt", _matches("memo_body.txt") and _matches("memo_body_A.txt"))
     # 真正无需保留的项不该被任何规则命中（sounding_*/_tmp_* 属"命中但被 KEEP 挡住"，另论）
     check("SCAN 未误命中 flomo-push",
           not any(fnmatch.fnmatch("flomo-push", pat) for pat in pats))
@@ -92,7 +97,7 @@ def run_collect_cases():
     C.SCAN = [(base, ["arxiv_*.html", "x1_body.txt", "x1_create.json",
                       "kilo_removed_archive", "flomo-*", "arxiv_test.xml"])]
     C.KEEP = {base: {"arxiv_test.xml", "flomo-push"}}
-    got = {p.name for p in C.collect()}
+    got = {p.name for p in C.collect(0)}  # 关闭近轮窗口，专测收集逻辑
 
     check("文件类残留被收集", {"arxiv_1.html", "x1_body.txt", "x1_create.json"} <= got)
     check("目录类残留被收集（不再漏扫）", "kilo_removed_archive" in got)
@@ -105,11 +110,11 @@ def run_verify_cases():
     base, _ = _fresh_sandbox()
     C.SCAN = [(base, ["arxiv_*.html", "kilo_removed_archive"])]
     C.KEEP = {base: {"flomo-push"}}
-    left = C.verify()
+    left = C.verify(0)
     check("verify 在有残留时如实报出（非 0）", len(left) == 2)
 
     C.SCAN = [(base, ["__no_such_pattern__"])]
-    check("verify 无残留时为 0", len(C.verify()) == 0)
+    check("verify 无残留时为 0", len(C.verify(0)) == 0)
 
 
 def run_force_remove_cases():
@@ -128,6 +133,31 @@ def run_force_remove_cases():
     check("_force_remove 递归删除目录树", not d.exists())
 
 
+def run_recent_window_cases():
+    """近轮窗口：窗口内的项不算残留（H24/H27），窗口外的才清。"""
+    base = Path(tempfile.mkdtemp())
+    old = base / "z_old_tmp.txt"
+    new = base / "z_new_tmp.txt"
+    old.write_text("x", encoding="utf-8")
+    new.write_text("x", encoding="utf-8")
+    past = time.time() - 48 * 3600
+    os.utime(old, (past, past))  # 推到窗口之外
+
+    C.SCAN = [(base, ["z_*_tmp.txt"])]
+    C.KEEP = {}
+    skipped = []
+    got = {p.name for p in C.collect(24 * 60, skipped)}
+
+    check("窗口外残留被收集", got == {"z_old_tmp.txt"})
+    check("窗口内残留被跳过", "z_new_tmp.txt" not in got)
+    check("被跳过的项可读出（可见性，不静默放行）",
+          {p.name for p in skipped} == {"z_new_tmp.txt"})
+    check("窗口关闭（0）时全部参与清理",
+          {p.name for p in C.collect(0)} == {"z_old_tmp.txt", "z_new_tmp.txt"})
+    check("verify 与 collect 同口径，不把窗口内项算作残留",
+          [p.name for p in C.verify(24 * 60)] == ["z_old_tmp.txt"])
+
+
 def run_arcname_cases():
     """归档条目名必须与 tarfile 写入成员名时的归一化口径一致。
 
@@ -136,7 +166,6 @@ def run_arcname_cases():
     而完整性断言位于删除循环之前——归档成功、删除却一步不走，残留永远清不掉。
     故直接断言条目名形态与归一化幂等性，实现一旦退回旧口径即失败。
     """
-    import os
     base = Path(tempfile.mkdtemp())
     p = base / "a.txt"
     p.write_text("x", encoding="utf-8")
@@ -164,7 +193,7 @@ def run_archive_cases():
 
     C.SCAN = [(base, ["a.txt", "adir"])]
     C.KEEP = {}
-    candidates = C.collect()
+    candidates = C.collect(0)  # 关闭近轮窗口，专测归档逻辑
     check("归档前候选含文件与目录", {p.name for p in candidates} == {"a.txt", "adir"})
 
     archive = base / "t.tar.gz"
@@ -184,6 +213,7 @@ if __name__ == "__main__":
     run_scan_pattern_cases()
     run_verify_cases()
     run_force_remove_cases()
+    run_recent_window_cases()
     run_arcname_cases()
     run_archive_cases()
     print("---")
