@@ -264,7 +264,8 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - **无 `memo_delete`**：flomo 不提供云端移除卡片 API，**物理删除只能用户在 App 内手动完成**；技能侧绝不调用删除，也不主动提示用户去删。
 - **无 `memo_merge`**：跨卡合并靠"并入主卡（`memo_update` 重写）+ 清空冗余源卡（`memo_update` 空白）"两步组合（见 H9/H11/H23）；**绝不声明"已合并两张卡"**。
 - **清空 ≠ 删除**：清空 = `memo_update(id, content=' ')`（单空格，空串被忽略），属常规写云动作，免确认（见 H23）。
-- **参数**：`memo_create(content；format 可选 markdown / html，省略即纯文本)`；`memo_update(id / content)`；`tag_rename(old_tag / new_tag / max_memos)`（依赖 flomo Max 会员）。
+- **参数（写）**：`memo_create(content；format 可选 markdown / html，省略即纯文本)`；`memo_update(id / content)`；`tag_rename(old_tag / new_tag / max_memos)`（依赖 flomo Max 会员）。
+- **参数（读）**：`memo_search(keywords；可选 tag / limit / start_date / end_date / from / has_tag)`——**关键词字段名是 `keywords`，不是 `query`**（传错会被服务端按 `additionalProperties: false` 拒绝，报 `unexpected additional properties`）；`memo_batch_get(ids)`；`memo_recommended(id；可选 limit / no_same_tag)`；`tag_tree(limit)`（见「标签树本地留存」）；`tag_search` 传关键词字段同样是 `keywords`。
 - **禁 `linked_memos`**：`memo_create`/`memo_update` 均不得传 `linked_memos`（见 H12）；正文 `((memo_id))` 不被解析为链接。
 - **正文防标签误识别**：flomo 扫全文把 `#xxx` 当标签，写前预判改写——`#8435` 写"issue 8435"、`≤#150` 写"第150位"、`C#/.NET` 用空格或"与"连接。**正文斜杠不预判改写**（`/xxx` 属正常书写）。
 - 端点、鉴权、代理与推送通道见 `ENVIRONMENT.md`。
