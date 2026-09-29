@@ -10,6 +10,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import time
@@ -52,6 +53,17 @@ WEB_BODY = (
     "\n"
     "要点：\n"
     "- WLTP 续航 430 公里\n"
+)
+
+# 供汇总计数用例使用：含两处可作锚点的真实片段（均不等于术语本身）。
+SUMMARY_BODY = (
+    "#科技/机器人\n"
+    "某测试概念名\n"
+    "\n"
+    "结论句。\n"
+    "\n"
+    "要点：\n"
+    "- 该车 WLTP 续航 430 公里，起售价 30,000 欧元\n"
 )
 
 
@@ -353,6 +365,95 @@ def run_check_web_cases():
     check("_evidence_tokens 千分位与单位内空格可比对",
           GATE._norm("1,055 公里") == GATE._norm("1055公里"))
 
+    # 16) 汇总行的计数必须与凭证一致，且不许漏计锚点路径。
+    #     旧实现按手写键名清单（exempt / matched）反推，in_body 锚点分支的键是
+    #     anchors，于是「整份都用锚点声明」的记录被显示成「0 条在正文有落点」，
+    #     与凭证内容相反——不阻塞写入，却让审计文案说谎。
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["WLTP 续航 430 公里"]},
+        {"term": "某价格", "query": "q", "conclusion": "c", "in_body": ["起售价 30,000 欧元"]},
+        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "与主题无关"},
+    ]}), SUMMARY_BODY, b, n)
+    summary = next((x for x in n if x.startswith("验证·")), "")
+    landed_true = sum(1 for r in got["landed"] if r.get("landed"))
+    check("锚点路径计入汇总行（不再显示 0 条有落点）",
+          "其中 3 条在正文有落点或已豁免" in summary, summary)
+    check("汇总行条数 == 凭证中 landed 为真的条数",
+          f"其中 {landed_true} 条" in summary and landed_true == 3,
+          f"{summary} / {got['landed']}")
+    check("锚点记录 landing 判定正确（真实锚点 = 已落点）",
+          [r["landed"] for r in got["landed"]] == [True, True, True],
+          str(got["landed"]))
+
+    # 17) 每一条落点审计记录都必须显式带 landed 布尔（计数唯一依据）
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 500 公里"},          # 未落
+        {"term": "某参数2", "query": "q", "conclusion": "WLTP 续航 430 公里"},          # 已落
+        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "无关"}, # 豁免
+    ]}), WEB_BODY, b, n)
+    check("每条审计记录都显式带 landed 布尔",
+          all(isinstance(r.get("landed"), bool) for r in got["landed"]),
+          str(got["landed"]))
+    check("未落点条目 landed=False，已落点/豁免 landed=True",
+          [r["landed"] for r in got["landed"]] == [False, True, True],
+          str([r["landed"] for r in got["landed"]]))
+    n2 = next((x for x in n if x.startswith("验证·")), "")
+    check("汇总行点出未落点条目名（审计可定位）", "未落点 1 条" in n2, n2)
+
+    # 18) 结构约束：_check_term_landed 的每个分支都必须经 _landed_record 返回。
+    #     裸 dict 返回 = 计数依据可被静默遗漏，正是本次缺口的成因。
+    src = (Path(__file__).resolve().parent / "sop_gate.py").read_text(encoding="utf-8")
+    m = re.search(r"def _check_term_landed\(.*?\n(?=def )", src, re.S)
+    fn = m.group(0) if m else ""
+    check("_check_term_landed 无裸 dict 返回（一律经 _landed_record）",
+          "return {" not in fn, str(re.findall(r"return \{", fn)))
+    check("_check_term_landed 的四个分支都申报了 landed",
+          fn.count("return _landed_record(") == 4, str(fn.count("return _landed_record(")))
+
+
+def run_assemble_gate_cases():
+    """assemble_gate：凭证组装（纯函数）+ 机器盲区自声明。"""
+    sig = GATE.memo_signature(BODY)
+    web = {"searched": True, "term_count": 2, "landed": []}
+    g = GATE.assemble_gate(BODY, sig, web, {"keyword_hits": {}}, {"anchor": "x"}, now=1000)
+
+    check("assemble_gate 字段齐备",
+          {"signature", "sig_key", "body_hash", "generated_at", "expires_at",
+           "web", "dedup", "review"} <= set(g), str(sorted(g)))
+    check("assemble_gate 正文指纹与实际正文一致",
+          g["body_hash"] == hashlib.sha256(BODY.encode("utf-8")).hexdigest())
+    check("assemble_gate 有效期 = 生成时刻 + TTL",
+          (g["generated_at"], g["expires_at"]) == (1000, 1000 + GATE.GATE_TTL),
+          str((g["generated_at"], g["expires_at"])))
+    check("assemble_gate sig_key 与落盘口径同源",
+          g["sig_key"] == GATE.signature_key(sig))
+
+    # 机器盲区必须随凭证留痕，且逐项给出「为什么判不了 / 去哪看凭据」。
+    # 藏起盲区的凭证会让人误以为「凭证齐 = 全查过了」。
+    items = g.get("human_judgment") or []
+    check("凭证声明机器盲区清单（非空）", len(items) >= 3, str(items))
+    check("盲区项逐项带 item/why/evidence",
+          all(i.get("item") and i.get("why") and i.get("evidence") for i in items),
+          str(items))
+    check("盲区声明覆盖查重判定 / 本卡全文自查 / 抓回读回",
+          sum(1 for i in items if "查重" in i["item"]) == 1
+          and sum(1 for i in items if "全文自查" in i["item"]) == 1
+          and sum(1 for i in items if "抓回" in i["item"]) == 1, str(items))
+    check("盲区声明不改放行条件（与 web/dedup/review 并列，非阻塞项）",
+          "human_judgment" in g and g["web"] is web, str(sorted(g)))
+
+    # 带盲区声明的凭证在写云侧不得被误判为异常
+    tmp = Path(tempfile.mkdtemp())
+    VM.GATE_DIR = tmp
+    live = GATE.assemble_gate(BODY, sig, web, {"keyword_hits": {}}, {"anchor": "x"})
+    (tmp / f"{GATE.signature_key(sig)}.json").write_text(
+        json.dumps(live, ensure_ascii=False), encoding="utf-8")
+    VM.ERR.clear(); VM.WARN.clear()
+    VM.check_gate(BODY)
+    check("validate_memo 对带 human_judgment 的凭证不报错", VM.ERR == [], str(VM.ERR))
+
 
 def run_concept_keyword_cases():
     """keywords_of_concept 边界（概念名直接派生，不经卡片结构）。"""
@@ -538,6 +639,7 @@ if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
     run_check_web_cases()
+    run_assemble_gate_cases()
     run_concept_keyword_cases()
     run_no_gate_cases()
     run_local_tag_tree_cases()
