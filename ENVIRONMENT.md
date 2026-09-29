@@ -50,7 +50,7 @@ python scripts/git_tunnel.py --print-hosts
 - IP 会漂移，失效时用 `https://dns.alidns.com/resolve?name=<域名>&type=A` 重查，改回 `git_tunnel.py` 的 `ROUTES`（含备选 IP 的按序回退）。
 - `/etc/hosts` 改动**重启后自动还原**；如需持久化，同步写入 `~/.user_hosts`。
 - 注意：`sed -i` 对 `/etc/hosts` 无效（bind mount 无法重命名），**须用 Python 读→改→整体重写**。
-- 实测：`github.com` 的 `140.82.114.x` 段可达；`api.github.com` / `codeload.github.com` 走 `20.205.243.x`（新加坡段，对 API 通道稳定）。
+- 候选段位的可达性会随时段整体波动（常成段一起失效），故不在本文件记录「哪段通」：`ROUTES` 只放当前更可能通的快照，候选全失败时隧道自动回落系统 DNS 兜底。
 
 ### 推送方式选择
 
@@ -83,7 +83,7 @@ python scripts/sni_fetch.py <url> <out_path>
 
 ### 隧道与取件的实测背景
 
-- **`git_tunnel.py` 的由来**：本机 DNS 曾把 `github.com` 解析到新加坡 Azure 段地址，该 IP 的 443 端口 TCP 超时；换 SNI、不发 SNI 均超时，判定为路由不通（非 SNI 关键字阻断）。因此改为把连接重定向到美国段可达 IP，同时保持 SNI 与证书校验仍为 `github.com`。
+- **`git_tunnel.py` 的由来**：本机 DNS 曾把 `github.com` 解析到新加坡 Azure 段地址，该 IP 的 443 端口 TCP 超时；换 SNI、不发 SNI 均超时，判定为路由不通（非 SNI 关键字阻断）。因此改为把连接重定向到候选可达 IP，同时保持 SNI 与证书校验仍为 `github.com`；候选全失败则回落系统 DNS，避免候选表漂移后隧道对每次连接都回 502。
 - **`sni_fetch.py` 的由来**：本机网络对 SNI 中出现 `arxiv.org` 的 TLS ClientHello 直接回 RST（TCP 能建连、约 0.08s 后 `ConnectionResetError`）；换 SNI 为 `www.bing.com` 或去 SNI 即握手成功，确认为 SNI 关键字过滤。arXiv 走 Fastly，Fastly 按 HTTP `Host` 头路由，故前置 SNI 后内容照常返回。
 
 > 上两条为一次性实测记录（技能文档与脚本注释只写抽象理由，具体实测细节只落本文件）。
