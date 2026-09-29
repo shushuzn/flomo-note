@@ -71,6 +71,10 @@ for _t in _TMP_CANDIDATES:
         "*_body.txt", "*_create.json", "*_update.txt", "*_upd.json",
         "all_memos.json", "all.json",
         "agi_body.txt", "agi_create.json", "agi_full.txt",
+        # 写卡工作区（每次写卡建的 /tmp/wrN 目录）
+        "wr[0-9]*", "wr[0-9]*/",
+        # 裸请求体小文件（q*_tmp.json / yA_tmp.json 之类）
+        "*_tmp.json", "*_tmp[0-9A-Z].json",
     ]))
 
 # 显式保留（命中 glob 也不删）：键为所在目录，值为文件名集合
