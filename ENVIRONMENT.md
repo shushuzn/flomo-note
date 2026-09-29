@@ -95,6 +95,10 @@ python scripts/sni_fetch.py <url> <out_path>
 
 - 监听 `127.0.0.1:8787`（默认）。端口已被占用时 `serve_console.py` 拒绝启动并提示换端口。
 - 脚本模块在服务**启动那一刻**加载：改过脚本须重启进程，否则跑的还是旧代码。
+  **改完起服务若报「端口已被占用」，先查明占用者是不是上一轮遗留的旧实例**
+  （`netstat -ano | grep 8787` 拿 PID，`taskkill //F //PID <pid>` 再重启）——
+  否则页面会继续由旧代码接客，看到的现象是「代码明明改了，行为一点没变」，
+  且响应里少的新字段（如 `kind`）会误导你以为改动没生效。
 - 页面渲染验证用无头浏览器：本机 `C:/Users/35234/miniconda3/python.exe` 带 playwright 1.62（Chromium 已装）。启动浏览器须加 `--no-proxy-server`，否则沙箱代理会拦下对回环地址的请求。
 
 ---
