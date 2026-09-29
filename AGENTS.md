@@ -14,7 +14,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 ## 核心约定（全局不可违背）
 
 1. **笔记只在云端**：卡片正文只存在于 flomo 账号；本地不落盘任何笔记内容，绝不以"本地文件"代存云端卡片。
-2. **本地只留工具**：本目录仅存放技能文档（`SKILL.md`）、本总则（`AGENTS.md`）、环境备忘（`ENVIRONMENT.md`）、脚本（`scripts/`）与 MCP 配置（`.mcp.json`）。git 只追踪技能/配置文档，不含笔记内容。
+2. **本地只留工具**：本目录仅存放技能文档（`SKILL.md`）、本总则（`AGENTS.md`）、环境备忘（`ENVIRONMENT.md`）、脚本（`scripts/`）、项目控制台前端（`web/`）与 MCP 配置（`.mcp.json`）。git 只追踪技能/配置文档与工具，不含笔记内容。
 3. **不随仓库提交**：任何含凭据的配置、以及各类**现采缓存 / 中间态产物**（标签树快照、流程闸门凭证等）一律不入库。具体清单以 `.gitignore` 为准，细则见 `SKILL.md`。
 4. **写云免确认**：对云端数据的常规写操作（建卡、覆盖式更新、清空卡片、改标签）一律免确认，不展示等批。唯一例外是物理删除卡片（从云端彻底移除）须用户明确授权；flomo 无删除 API，删除只能用户在 App 内手动完成，技能侧不调用也不代做。**写操作的前置条件与流程细节以 `SKILL.md` 为准，本文件不复述。**
 5. **来源实实在在**：卡片引用的 URL 必须真实、可核、经过抓取或核验；禁止生造来源。
@@ -29,6 +29,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - `SKILL.md` —— 执行细则（唯一细则源）
 - `ENVIRONMENT.md` —— 环境备忘（路径、代理、端口、推送通道等随环境变化的细节）
 - `scripts/` —— 工具脚本
+- `web/` —— 项目控制台前端（静态资源；配 `scripts/serve_console.py` 起本地只读服务）
 - `.mcp.json` —— flomo MCP 配置（含 Bearer token，已忽略）
 - 笔记实体 —— 只在云端 flomo，本地不存在
 
@@ -42,6 +43,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python scripts/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
 - 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，且是标签树快照渲染/计数的唯一实现，改动影响面最大）。
 - 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python scripts/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
+- 改 `scripts/console_data.py`（控制台数据抽取：硬限/管线/标签树/脚本清单解析）→ 跑 `python scripts/test_console_data.py`（临时目录内离线验证解析口径，含标签树计数与 `memo_util` 同源断言）。
 - 改 `scripts/check_skill_docs.py` → 跑 `python scripts/test_check_skill_docs.py`。
 - **一键跑全部离线用例：`bash scripts/run_tests.sh`**（各配套用例与内容纪律自检一并跑；改动脚本后首选，避免逐个手跑漏项）。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。

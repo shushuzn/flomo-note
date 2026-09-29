@@ -70,22 +70,27 @@ flomo-note/
 ├── AGENTS.md                  # 项目总则（顶层目标与全局约定）
 ├── SKILL.md                   # 执行细则（唯一细则源）
 ├── ENVIRONMENT.md             # 运行环境事实（路径、代理、通道）
+├── web/                       # 项目控制台前端（Claude 风格，静态资源）
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
 ├── scripts/
-│   ├── memo_util.py           # 签名/指纹/关键词 唯一实现（三脚本共用）
+│   ├── memo_util.py           # 签名/指纹/关键词/标签树快照 唯一实现
 │   ├── flomo_client.py        # flomo MCP 调用唯一入口
 │   ├── sop_gate.py            # SOP 流程闸门（代跑核对/查重/复盘，出凭证）
 │   ├── validate_memo.py       # 写云前文本质检 + 闸门凭证校验
-│   ├── test_memo_util.py      # 公共实现回归用例
-│   ├── test_validate_memo.py  # 质检脚本回归用例
-│   ├── test_sop_gate.py       # 闸门脚本回归用例
-│   ├── test_check_skill_docs.py  # 文档纪律自检回归用例
+│   ├── tag_tree_sync.py       # 标签树快照现采重写与核对
 │   ├── check_skill_docs.py    # 技能文档内容纪律自检
 │   ├── sni_fetch.py           # SNI 被阻断时的取件通道
+│   ├── extract_arxiv_html.py  # arXiv HTML 正文抽取
+│   ├── cleanup.py             # 收尾强制清理残留（文件与目录）
 │   ├── git_tunnel.py          # GitHub 本地透传通道
 │   ├── push_skill.sh          # 文档改动强制推送
-│   ├── cleanup.py             # 收尾强制清理残留（文件与目录）
-│   ├── test_cleanup.py        # 收尾清理回归用例
-│   └── run_audit.sh / audit_skill.sh  # 技能文档结构审计
+│   ├── serve_console.py       # 控制台本地只读服务
+│   ├── console_data.py        # 控制台数据抽取（供上面两者共用）
+│   ├── run_audit.sh / audit_skill.sh    # 技能文档结构审计
+│   ├── run_tests.sh           # 一键跑全部离线回归
+│   └── test_*.py              # 各脚本配套回归用例
 ├── .gitignore                 # 忽略凭据与现采缓存
 └── README.md                  # 本文件
 ```
@@ -98,6 +103,39 @@ flomo-note/
 | `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现 |
 | `sop_gate.py` | 流程闸门：代跑标签树核对 / 查重两路 / 复盘三路，校验验证留痕 |
 | `validate_memo.py` | 文本质检（格式、标签、来源、载体、字数）+ 闸门凭证校验 |
+| `serve_console.py` + `web/` | 项目控制台：本地只读服务 + Claude 风格前端 |
+| `console_data.py` | 控制台数据抽取（解析 SKILL / 标签树 / 脚本清单） |
+
+---
+
+## 项目控制台
+
+本仓库自带一个**只读**的本地控制台，把项目自身的可视图景摊开来看：九步管线、
+硬限清单（H1–Hn）速查、脚本清单与回归状态、标签树分组速览、文档规模。
+
+```bash
+python scripts/serve_console.py            # 启动，默认 http://127.0.0.1:8787
+python scripts/serve_console.py --open     # 启动后自动开浏览器
+python scripts/serve_console.py --port 9000
+```
+
+数据全部由 `console_data.py` 从仓库本地读取，页面按需拉 `/api/*`：
+
+| 接口 | 内容 |
+|------|------|
+| `/api/overview` | 统计字段与文档规模 |
+| `/api/pipeline` | 九步管线（含阻塞标记） |
+| `/api/limits` | 硬限清单（按分组归并） |
+| `/api/scripts` | 工具脚本与回归用例 |
+| `/api/tagtree` | 标签树分组速览 |
+| `POST /api/tests/run` | 在本机跑一遍离线回归并回显输出 |
+
+**只读边界**：服务只读技能文档、脚本目录与标签树快照。不读 `.mcp.json`（含 token）、
+`.sop_gate/`（凭证）与任何笔记正文文件；不调用 flomo 云端接口，不发起任何写操作；
+仅监听回环地址，静态文件服务内含路径逃逸防护。
+
+标签树的**计数口径与闸门同源**（一律走 `memo_util`），控制台不另实现一份，
+避免出现「界面显示的数量与闸门口径不一致」这类漂移。
 
 ---
 
