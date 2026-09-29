@@ -80,8 +80,8 @@ if [ "$NO_COMMIT" -eq 0 ]; then
   if [ "${#FILES[@]}" -gt 0 ]; then
     git add "${FILES[@]}"
   else
-    # 用 -A（含新增与删除），不用 -u：-u 只跟踪已入库文件，会把**新增文件**漏掉，
-    # 导致"提交成功但远端缺文件"（曾因此漏交公共模块，使远端 import 失败）。
+    # 用 -A（含新增与删除），不用 -u：-u 只处理已入库文件，会漏掉新增文件，
+    # 造成「提交成功但远端缺文件」。提交后再做一次未跟踪文件自检兜底。
     git add -A
   fi
   if git diff --cached --quiet; then

@@ -18,11 +18,17 @@
 用法
     python scripts/git_tunnel.py                 # 监听 127.0.0.1:18123
     python scripts/git_tunnel.py 18124           # 指定端口
+    python scripts/git_tunnel.py --quiet 18124   # 关闭逐连接日志
+    python scripts/git_tunnel.py --print-hosts   # 打印 /etc/hosts 建议行后退出
     git -c http.proxy=http://127.0.0.1:18123 \
         -c https.proxy=http://127.0.0.1:18123 push origin HEAD
 
     说明：必须显式传 -c http.proxy，否则 git 会读到环境里的
     https_proxy=127.0.0.1:41264（沙箱代理），那条路对 github 是 502。
+
+    本文件是 GitHub 可达 IP 的**唯一事实源**；ENVIRONMENT.md 只描述
+    「怎么用」，不复制 IP 列表。IP 漂移时改这里，用 --print-hosts 生成
+    hosts 片段（重查手法见 ENVIRONMENT.md）。
 """
 import select
 import socket
@@ -30,19 +36,46 @@ import sys
 import threading
 
 HOST = "127.0.0.1"
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18123
 
 # 域名 → 可达 IP 候选（按顺序尝试）。命中即用，否则回落正常 DNS 解析。
 ROUTES = {
-    "github.com": ["140.82.112.3", "140.82.121.4", "140.82.113.3", "140.82.114.3"],
-    "api.github.com": ["140.82.114.6", "140.82.113.6", "140.82.112.6"],
-    "codeload.github.com": ["140.82.114.9", "140.82.113.9"],
+    "github.com": ["140.82.114.3", "140.82.113.3", "140.82.112.3", "140.82.121.4"],
+    "api.github.com": ["20.205.243.168", "140.82.114.6", "140.82.113.6", "140.82.112.6"],
+    "codeload.github.com": ["20.205.243.165", "140.82.114.9", "140.82.113.9"],
     "objects.githubusercontent.com": ["185.199.108.133", "185.199.109.133"],
     "raw.githubusercontent.com": ["185.199.108.133", "185.199.109.133"],
     "gist.github.com": ["140.82.114.3", "140.82.113.3"],
 }
 
-VERBOSE = True
+# hosts 片段用第一条候选（权威值），与 ENVIRONMENT.md 的用法说明解耦。
+HOSTS_PRIMARY = {h: ips[0] for h, ips in ROUTES.items()}
+
+
+def _parse_args(argv):
+    """解析位置参数与开关，返回 (port, verbose, action)。"""
+    port, verbose, action = 18123, True, None
+    for a in argv:
+        if a in ("--quiet", "-q"):
+            verbose = False
+        elif a in ("--verbose", "-v"):
+            verbose = True
+        elif a == "--print-hosts":
+            action = "print-hosts"
+        elif a.isdigit():
+            port = int(a)
+        elif a.startswith("-"):
+            sys.stderr.write(f"[tunnel] 未知参数 {a}（--quiet/--verbose/--print-hosts/<port>）\n")
+            sys.exit(2)
+    return port, verbose, action
+
+
+PORT, VERBOSE, ACTION = _parse_args(sys.argv[1:])
+
+
+def print_hosts():
+    """输出可直接追加到 /etc/hosts 的映射行。"""
+    for host in sorted(HOSTS_PRIMARY):
+        print(f"{HOSTS_PRIMARY[host]:<18}{host}")
 
 
 def log(msg):
@@ -145,6 +178,9 @@ def handle(client):
 
 
 def main():
+    if ACTION == "print-hosts":
+        print_hosts()
+        return
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))

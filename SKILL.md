@@ -315,8 +315,9 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 ### 维护约定
 - 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
-- 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）。
+- 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）——含 `_tag_tree_total_and_count` / `_check_tag_tree` / `_check_dedup` / `_check_review` 的假 client 离线桩，改这几处不必联网验证。
 - 改动 `scripts/memo_util.py` 后必须跑 `python scripts/test_memo_util.py`（退出码 0 为全过）——它是三处共用的签名口径，改动影响面最大。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。
 - 环境变化只改 `ENVIRONMENT.md`，不改本文件。
+- GitHub 可达 IP 只有一处事实源：`scripts/git_tunnel.py` 的 `ROUTES`；`ENVIRONMENT.md` 不复制 IP 值，需要 hosts 片段时用 `python scripts/git_tunnel.py --print-hosts` 生成。

@@ -39,28 +39,30 @@ env -u http_proxy -u https_proxy git -c http.proxy="" -c https.proxy="" ls-remot
 
 ### GitHub 域名与 DNS
 
-沙箱 DNS 会把 GitHub 相关域名劫持到保留段假 IP（`198.18.0.x`，非真实地址），表现为 TLS 立即失败。**需在 `/etc/hosts` 写真实 IP**：
+沙箱 DNS 会把 GitHub 相关域名劫持到保留段假 IP（`198.18.0.x`，非真实地址），表现为 TLS 立即失败。**需在 `/etc/hosts` 写真实 IP**。
 
-```
-140.82.114.3      github.com
-20.205.243.168    api.github.com
-20.205.243.165    codeload.github.com
-185.199.108.133   raw.githubusercontent.com
+具体 IP 值不在本文件维护——`scripts/git_tunnel.py` 的 `ROUTES` 是**唯一事实源**，需要 hosts 片段时直接生成：
+
+```bash
+python scripts/git_tunnel.py --print-hosts
 ```
 
-- IP 会漂移，失效时用 `https://dns.alidns.com/resolve?name=<域名>&type=A` 重查。
+- IP 会漂移，失效时用 `https://dns.alidns.com/resolve?name=<域名>&type=A` 重查，改回 `git_tunnel.py` 的 `ROUTES`（含备选 IP 的按序回退）。
 - `/etc/hosts` 改动**重启后自动还原**；如需持久化，同步写入 `~/.user_hosts`。
 - 注意：`sed -i` 对 `/etc/hosts` 无效（bind mount 无法重命名），**须用 Python 读→改→整体重写**。
+- 实测：`github.com` 的 `140.82.114.x` 段可达；`api.github.com` / `codeload.github.com` 走 `20.205.243.x`（新加坡段，对 API 通道稳定）。
 
 ### 推送方式选择
 
 按稳定性排序，逐级尝试：
 
-1. **GitHub Contents API**（最稳，单文件改动首选）——走 `api.github.com`，`GET` 取当前 `sha` → `PUT` 提交 base64 内容。
+1. **GitHub Contents API**（最稳，单文件改动首选）——走 `api.github.com`，直接 Git Data API 更省事：`GET ref/heads/<branch>` 取 base → `POST git/blobs`（base64）→ `POST git/trees`（`base_tree` + 路径覆盖）→ `POST git/commits` → `PATCH git/refs/heads/<branch>`。
 2. `git push` 直连（去代理 + hosts 覆盖后）——大文件易遇 `gnutls_handshake() failed`，属通道质量问题，重试或降级到方式 1。
 3. `python scripts/git_tunnel.py &` —— 本地 CONNECT 代理，把 `github.com:443` 透传到可达 IP（SNI 与证书校验仍端到端保持 `github.com`），配 `git -c http.proxy=http://127.0.0.1:18123 push`。
 
 **推送失败不等于 GitHub 不可用**，禁止据此下结论；必须换通道重试或如实报告"本地已提交、未推送 + commit hash"。
+
+**注意分支名**：本仓库默认分支是 `master`（受保护，push 会返回 `Bypassed rule violations ... must be made through a pull request`，但实际已写入）。API 通道必须显式写 `master`，写 `main` 会 404。
 
 #### `push_skill.sh` 内已收敛的环境坑（脚本自动处理，勿在 SKILL 复述）
 

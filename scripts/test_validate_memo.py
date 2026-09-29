@@ -215,12 +215,71 @@ def run_loader_cases():
         got = VM.load_content(["validate_memo.py", "--create", str(bad)])
         ok &= got.strip() != ""
         print(f"{'PASS' if got.strip() else 'FAIL'}  JSON 无 content 时回落为原文（不静默读空）")
+
+        # 带 BOM 的纯文本：utf-8-sig 应剥掉 BOM，首行仍是标签段
+        bom = d / "bom.txt"
+        bom.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+        got = VM.load_content(["validate_memo.py", "--file", str(bom)])
+        ok &= got == body and not got.startswith("\ufeff")
+        print(f"{'PASS' if got == body and not got.startswith(chr(0xFEFF)) else 'FAIL'}  "
+              f"带 BOM 文件剥离 BOM（首行仍为标签段）")
+
+        # 带 BOM 的 JSON：同样应剥 BOM 后正常抽取 content
+        bomj = d / "bom.json"
+        bomj.write_bytes(b"\xef\xbb\xbf" + json.dumps({"content": body}, ensure_ascii=False).encode("utf-8"))
+        got = VM.load_content(["validate_memo.py", "--create", str(bomj)])
+        ok &= got == body
+        print(f"{'PASS' if got == body else 'FAIL'}  带 BOM 的 JSON 正常抽取 content")
+    return ok
+
+
+def run_table_row_cases():
+    """_is_table_row 边界：真表格行 / 非表格行 / 空串。"""
+    cases = [
+        ("| 项 | 值 |", True, "标准管道分隔行"),
+        ("| a | b | c |", True, "三列表格行"),
+        ("|---|---|", True, "表格分隔行"),
+        ("- 普通列表项", False, "列表项非表格"),
+        ("普通句子含 | 竖线", False, "句中竖线非表格"),
+        ("|", False, "仅一个竖线不足以判表格"),
+        ("", False, "空串非表格"),
+    ]
+    ok = True
+    for s, want, label in cases:
+        got = VM._is_table_row(s)
+        same = got == want
+        ok &= same
+        print(f"{'PASS' if same else 'FAIL'}  _is_table_row({label}) -> {got}（期望 {want}）")
+    return ok
+
+
+def run_content_from_json_cases():
+    """_content_from_json 各分支：顶层/params.arguments/顶层 arguments/非法。"""
+    body = "正文内容"
+    cases = [
+        ("顶层 content", {"content": body}, body),
+        ("params.arguments.content",
+         {"params": {"arguments": {"content": body}}}, body),
+        ("顶层 arguments.content", {"arguments": {"content": body}}, body),
+        ("非 dict 输入", "不是字典", ""),
+        ("content 非字符串", {"content": 123}, ""),
+        ("arguments 非 dict", {"arguments": "x"}, ""),
+        ("无 content 键", {"foo": 1}, ""),
+    ]
+    ok = True
+    for label, obj, want in cases:
+        got = VM._content_from_json(obj)
+        same = got == want
+        ok &= same
+        print(f"{'PASS' if same else 'FAIL'}  _content_from_json({label}) -> {got!r}")
     return ok
 
 
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_loader_cases())
+    results.append(run_table_row_cases())
+    results.append(run_content_from_json_cases())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)
