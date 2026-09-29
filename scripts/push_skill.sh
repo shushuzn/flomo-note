@@ -80,13 +80,22 @@ if [ "$NO_COMMIT" -eq 0 ]; then
   if [ "${#FILES[@]}" -gt 0 ]; then
     git add "${FILES[@]}"
   else
-    git add -u
+    # 用 -A（含新增与删除），不用 -u：-u 只跟踪已入库文件，会把**新增文件**漏掉，
+    # 导致"提交成功但远端缺文件"（曾因此漏交公共模块，使远端 import 失败）。
+    git add -A
   fi
   if git diff --cached --quiet; then
     echo "[push] 无已暂存改动，仅推送已有提交"
   else
     git commit -m "$MSG"
     echo "[push] 已提交: $(git rev-parse --short HEAD)"
+  fi
+  # 提交后自检：工作区不得残留未跟踪文件（防"漏提新增文件"再次发生）
+  UNTRACKED="$(git ls-files --others --exclude-standard)"
+  if [ -n "$UNTRACKED" ]; then
+    echo "[push] 警告：工作区仍有未跟踪文件，未纳入本次提交：" >&2
+    echo "$UNTRACKED" | sed 's/^/[push]   /' >&2
+    echo "[push] 若确需入库，请显式传入文件名重跑（push_skill.sh \"msg\" <files...>）" >&2
   fi
 fi
 
