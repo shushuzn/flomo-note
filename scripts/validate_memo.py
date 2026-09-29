@@ -7,8 +7,11 @@
   python validate_memo.py --file create.json          文件是 JSON 时自动抽取 content
   python validate_memo.py --content "...正文..."       校验命令行传入
   python validate_memo.py --create create.json        校验 JSON 里的 content
+  python validate_memo.py --no-gate ...               降级闸门为警告（须凭证带授权标记）
 退出码：0=通过（可写云）；1=存在必须修复的错误；2=参数/用法错误。
 警告(WARN)不阻塞，错误(ERR)必须修复。
+`--no-gate` 降级须配套 `sop_gate.py --allow-no-gate <理由>` 先在凭证中留下授权标记，
+仅供批量处理历史卡等特殊场景；无授权的 --no-gate 一律判 ERR（防止绕过整套 SOP 闸门）。
 标签须为两级 `#顶层/二级`（恰一个 /）；三级及以上或裸顶层均判 ERR（对应 SKILL「标签规则」硬限）。
 卡片格式：首行标签段，第二行概念名称（简明概括卡片主题的名词/概念），空一行接正文；所有卡片均为追踪卡，后续进展用 memo_update 更新。
 模板前缀回显（ERR）：「结论先行」等 SKILL 条目名/格式指令词写进正文即判错——结论直接作为正文首段第一句，不加引导词。
@@ -502,6 +505,28 @@ def _signature_of(content):
     return memo_signature(content)
 
 
+def _no_gate_authorized(content):
+    """凭证里是否带 sop_gate.py --allow-no-gate 的降级授权标记。
+
+    授权与凭证同源（同签名、同正文指纹），因此不可被"另写一份凭证"绕过；
+    凭证缺失/损坏时返回 False，走正常闸门校验路径（并报缺凭证）。
+    """
+    sig = _signature_of(content)
+    if not sig:
+        return False
+    gate_path = GATE_DIR / f"{signature_key(sig)}.json"
+    if not gate_path.exists():
+        return False
+    try:
+        gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return False
+    if gate.get("no_gate_authorized") is not True:
+        return False
+    # 授权必须锚在同一份正文上，防止"给 A 卡授权的凭证"拿来给 B 卡降级
+    return gate.get("body_hash") == body_hash(content)
+
+
 def check_gate(content):
     """流程闸门校验：确认 ②验证 / ④tag_tree 核对 / ⑤查重两路 / ⑧复盘三路 都已执行。
 
@@ -612,6 +637,10 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         return 2
+    # ERR/WARN 是模块级列表：主流程入口统一清空，避免同进程多次调用时
+    # 上一轮的判错污染本轮退出码（测试里连着调 main() 会踩到）。
+    ERR.clear()
+    WARN.clear()
     argv = sys.argv[1:]
     no_gate = False
     if "--no-gate" in argv:
@@ -623,8 +652,9 @@ def main():
         sys.stderr.write(f"读取输入失败：{e}\n")
         return 2
     check(content)
-    # 流程闸门（可 --no-gate 降级为 WARN，仅供回归测试/历史卡批处理）
-    if no_gate:
+    # 流程闸门降级（--no-gate）不再是无条件开关：须凭证里带 sop_gate.py --allow-no-gate 的
+    # 授权标记才生效，否则照常判 ERR。避免"谁加个参数谁就绕过整套 SOP"。
+    if no_gate and _no_gate_authorized(content):
         _gate_err, _gate_warn = ERR[:], WARN[:]
         ERR.clear(); WARN.clear()
         check_gate(content)
@@ -633,6 +663,10 @@ def main():
         ERR[:] = _gate_err
         WARN[:] = _gate_warn + WARN
     else:
+        if no_gate:
+            err("使用了 --no-gate 但该项降级未经授权——凭证中缺少 sop_gate.py "
+                "--allow-no-gate 的授权标记。降级仅限批量处理历史卡，且须由 sop_gate.py "
+                "携理由生成凭证；常规写卡请直接跑 sop_gate.py 走完整闸门")
         check_gate(content)
     # 去重：同一问题可能被多条规则命中，重复提示无信息增量（dict 保序）
     for m in dict.fromkeys(ERR):

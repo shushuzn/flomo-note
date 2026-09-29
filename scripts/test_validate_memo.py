@@ -362,12 +362,60 @@ def run_gate_cases():
     return ok
 
 
+def run_no_gate_auth_cases():
+    """_no_gate_authorized：--no-gate 降级须凭证带授权标记，且绑定正文指纹。"""
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    from memo_util import body_hash, signature_key
+
+    BODY = "#数学/泛函方程\n某概念\n\n正文结论句。\n"
+    sig = VM._signature_of(BODY)
+    sk = signature_key(sig)
+    ok = True
+
+    def _write(gate_obj):
+        tmp = Path(tempfile.mkdtemp())
+        VM.GATE_DIR = tmp
+        (tmp / f"{sk}.json").write_text(
+            _json.dumps(gate_obj, ensure_ascii=False), encoding="utf-8")
+
+    base = {"signature": sig, "sig_key": sk, "body_hash": body_hash(BODY),
+            "expires_at": 9999999999, "web": {"searched": True}}
+
+    # 1) 无授权标记 → False
+    _write(dict(base))
+    same = VM._no_gate_authorized(BODY) is False
+    ok &= same
+    print(f"{'PASS' if same else 'FAIL'}  无授权标记时不认 --no-gate")
+
+    # 2) 有授权标记 + 指纹相符 → True
+    _write({**base, "no_gate_authorized": True, "no_gate_reason": "历史卡批处理"})
+    same = VM._no_gate_authorized(BODY) is True
+    ok &= same
+    print(f"{'PASS' if same else 'FAIL'}  有授权标记且指纹相符时认 --no-gate")
+
+    # 3) 有授权标记但指纹不符（凭证属旧版正文）→ False
+    _write({**base, "body_hash": "deadbeef" * 8, "no_gate_authorized": True})
+    same = VM._no_gate_authorized(BODY) is False
+    ok &= same
+    print(f"{'PASS' if same else 'FAIL'}  授权凭证指纹不符时授权失效")
+
+    # 4) 无凭证文件 → False
+    VM.GATE_DIR = Path(tempfile.mkdtemp())
+    same = VM._no_gate_authorized(BODY) is False
+    ok &= same
+    print(f"{'PASS' if same else 'FAIL'}  无凭证时授权判定为假")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_loader_cases())
     results.append(run_table_row_cases())
     results.append(run_content_from_json_cases())
     results.append(run_gate_cases())
+    results.append(run_no_gate_auth_cases())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)
