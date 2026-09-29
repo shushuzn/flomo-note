@@ -19,6 +19,10 @@ FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备�
 权限纪律：所有工具（只读与写操作）均可直接调用，无需额外授权。
 写操作（memo_create / memo_update / tag_rename / tag_add）执行后直接报告结果。
 
+写后验收：`memo_create` / `memo_update` 写入成功后**自动按 id 回读全文逐字比对**
+（H11），不一致、取不到卡、或被云端截断一律判失败（退出码非 0）——「拿到 id」
+只证明请求被受理，不证明云端存的就是这份正文。验收逻辑见 `readback_check`。
+
 作**库**被复用时的契约：握手失败、HTTP 错误、JSON-RPC 协议错误一律抛 `FlomoError`
 （`RuntimeError` 子类，可被 `except Exception` 接住）；**不使用 `SystemExit`**——
 它继承自 `BaseException`，会把调用方的异常处理穿透，在 HTTP 服务里表现为连接被掐断、
@@ -227,6 +231,54 @@ def _exact_content_dup(client, content):
     return None
 
 
+def _norm_body(text):
+    """回读比对用归一化：只压缩**空白差异**（CRLF、行尾空格、连续空行、首尾空行）。
+
+    连续空行压成一行、首尾空行去掉——两侧走同一套归一化，故段落结构不受影响；
+    非空白字符一律不宽容，那些差异意味着云端存的不是这份正文。
+    """
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out = []
+    for ln in lines:
+        ln = ln.rstrip()
+        if ln == "" and (not out or out[-1] == ""):
+            continue
+        out.append(ln)
+    while out and out[-1] == "":
+        out.pop()
+    return "\n".join(out)
+
+
+def readback_check(client, memo_id, written):
+    """写云后按 id 回读全文，与写入正文逐字比对（H11 的回读验收）。
+
+    返回 `(ok, detail)`。这件事必须机械做：写操作返回 id 只证明「请求被受理」，
+    不证明「云端存的正是这份正文」——中间可能被格式转换、被并发覆盖，或 id 对错了卡。
+    只看 id 就报成功，等于把「验收」交给运气。
+    """
+    res = client.tool("memo_batch_get", {"ids": [memo_id]})
+    memos = _result_memos(res)
+    if not memos:
+        return False, (f"回读未取到 memo（id={memo_id}）——写入是否落库须人工确认；"
+                       "禁止据此重发写请求")
+    m = memos[0]
+    if m.get("id") and m.get("id") != memo_id:
+        return False, (f"回读返回的是另一张卡（请求 {memo_id} / 实际 {m.get('id')}）"
+                       "——须人工核对，禁止据此重发写请求")
+    stored = m.get("content") or ""
+    if m.get("content_truncated"):
+        return False, (f"回读正文被云端截断（id={memo_id}）——无法逐字比对，"
+                       "须人工核对全文")
+    a, b = _norm_body(written), _norm_body(stored)
+    if a != b:
+        i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]),
+                 min(len(a), len(b)))
+        return False, (f"回读正文与写入不一致（写入 {len(a)} 字 / 云端 {len(b)} 字，"
+                       f"首个差异在第 {i + 1} 个字符）——禁止据此重发写请求，"
+                       f"须人工核对 id={memo_id}")
+    return True, f"回读一致（{len(b)} 字）"
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -269,6 +321,14 @@ def main():
             )
             return 1
         sys.stderr.write(f"[成功] 已写入 memo id={created_id}\n")
+        # H11 回读验收：写完必须按 id 拉回全文逐字比对，不一致即判失败。
+        # 这一步放在写命令内部，是为了让「验收」不依赖调用方记不记得做——
+        # 凭 id 就宣布成功，等于把验收交给运气。
+        ok, detail = readback_check(client, created_id, arguments.get("content") or "")
+        if not ok:
+            sys.stderr.write(f"[失败] 回读验收未过：{detail}\n")
+            return 1
+        sys.stderr.write(f"[验收] {detail}\n")
     return 0
 
 
