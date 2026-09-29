@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """serve_console.py — 项目控制台的本地服务（零第三方依赖）。
 
-控制台只做两件看的事：**云端笔记**（主视图，直接呈现 flomo 卡片：搜索、按标签筛、
-读全文、今日回顾）与**标签树**（本地快照的分组速览）。浏览器侧的数据全部来自本服务
-的 JSON 接口：云端侧委托 `console_cloud`，本地侧委托 `console_data`；
-本脚本只做静态文件与 JSON 接口，**不含任何执行命令或写数据的入口**（连 POST 处理都不存在）。
+控制台把云端 MCP 的**只读能力全部接出来**，分四个视图呈现：
+  - 云端笔记（主视图）：搜索 / 按标签 / 起止日期 / 来源 / 是否含标签 / 今日回顾，
+    点开读全文，抽屉里带「相关笔记」与多选取全文；
+  - 标签：本地快照分组速览 + 云端实时标签树（可前缀 / 深度 / 条数）+ 标签名搜索；
+  - 参考：记忆文档 / 用户画像 / 格式规范 / 标签规范四份云端文本；
+  - 能力：云端 MCP 工具清单（读工具已接出，写工具如实标注未接入及原因）。
+
+浏览器侧的数据全部来自本服务的 JSON 接口：云端侧委托 `console_cloud`，
+本地侧委托 `console_data`；本脚本只做静态文件与 JSON 接口，
+**不含任何执行命令或写数据的入口**（连 POST 处理都不存在）。
 
 **只读边界**（与项目铁律一致）：
   - 云端只走 `console_cloud` 的只读工具白名单，任何写操作在那一层就被拒；
@@ -130,10 +136,32 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             "/api/cloud/memos": lambda r: r.list_memos(
                 keywords=self._q(q, "keywords"),
                 tag=self._q(q, "tag"),
+                start_date=self._q(q, "start_date"),
+                end_date=self._q(q, "end_date"),
+                source=self._q(q, "source"),
+                has_tag=self._q(q, "has_tag"),
                 limit=self._q(q, "limit", 20),
             ),
             "/api/cloud/memo": lambda r: r.memo_detail(self._q(q, "id", "")),
+            "/api/cloud/memos/batch": lambda r: r.memo_batch(
+                (self._q(q, "ids", "") or "").split(",")
+            ),
             "/api/cloud/review": lambda r: r.daily_review(),
+            "/api/cloud/related": lambda r: r.recommended(
+                self._q(q, "id", ""),
+                limit=self._q(q, "limit", 10),
+                no_same_tag=self._q(q, "no_same_tag"),
+            ),
+            "/api/cloud/tagtree": lambda r: r.tag_tree(
+                prefix=self._q(q, "prefix"),
+                depth=self._q(q, "depth"),
+                limit=self._q(q, "limit", 200),
+            ),
+            "/api/cloud/tags": lambda r: r.tag_names(
+                self._q(q, "keywords", ""), self._q(q, "limit", 20)
+            ),
+            "/api/cloud/reference": lambda r: r.reference(),
+            "/api/cloud/tools": lambda r: r.tool_catalog(),
         }
 
         if path in cloud_routes:
