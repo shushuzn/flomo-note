@@ -185,7 +185,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 
 **H28 · 技能文档禁写日期与事件。**
 本文件及同目录其他技能文档（`AGENTS.md`、`ENVIRONMENT.md`、`README.md`、词表、脚本注释）只承载规则与流程，严禁写入具体日期与具体事件经过；说明理由只作抽象陈述，不得附带时间、地点、当事人、数量等细节。**`ENVIRONMENT.md` 记录环境事实时只写「是什么」——IP、端口、路径、命令——不写「哪天发生的」。**
-本条已落到执行层：`scripts/check_skill_docs.py` 扫描本文件、同目录全部文档与 `scripts/` 全量脚本，命中具体日期判 ERR 阻断，命中历史事件叙事词判 WARN。**所有技能文档一律受扫，无文件级豁免**；唯一豁免是协议/版本常量行（如 `protocolVersion`），逐条打印 SKIP 以保持可见。技能文档改动后必须先跑该脚本（见「维护约定」）。
+本条已落到执行层：`scripts/check_skill_docs.py` 扫描本文件、同目录全部文档与 `scripts/` 全量脚本，命中具体日期判 ERR 阻断，命中历史事件叙事词判 WARN。**所有技能文档一律受扫，无文件级豁免**；唯一豁免是协议/版本常量行（如 `protocolVersion`），逐条打印 SKIP 以保持可见。技能文档改动后必须先跑该脚本（见 `AGENTS.md`「开发维护约定」）。
 
 ---
 
@@ -318,12 +318,4 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/run_audit.sh` — 技能文档自校入口：先跑离线内容自检（`check_skill_docs.py`），再包好 Git 工具链、`SOUNDING_TMP` 与隧道调 `audit_skill.sh` 做结构审计。
 - `scripts/audit_skill.sh` — 技能文档结构审计（第三方 sounding linter），不检查内容纪律。
 
-### 维护约定
-- 改动 `scripts/validate_memo.py` 后必须跑 `python scripts/test_validate_memo.py`（退出码 0 为全过）。
-- 改动 `scripts/sop_gate.py` 或闸门校验逻辑后必须跑 `python scripts/test_sop_gate.py`（退出码 0 为全过）——含 `_tag_tree_total_and_count` / `_check_tag_tree` / `_check_dedup` / `_check_review` 的假 client 离线桩，改这几处不必联网验证。
-- 改动 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）后必须跑 `python scripts/test_cleanup.py`（退出码 0 为全过）——覆盖文件与目录两类残留的收集、保留项豁免、归档断言口径，全部在临时沙箱内离线进行，不触碰真实临时目录。
-- 改动 `scripts/memo_util.py` 后必须跑 `python scripts/test_memo_util.py`（退出码 0 为全过）——它是三处共用的签名口径，改动影响面最大。
-- 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
-- 改 `scripts/check_skill_docs.py` 后必须跑 `python scripts/test_check_skill_docs.py`（退出码 0 为全过）。
-- 环境变化只改 `ENVIRONMENT.md`，不改本文件。
-- GitHub 可达 IP 只有一处事实源：`scripts/git_tunnel.py` 的 `ROUTES`；`ENVIRONMENT.md` 不复制 IP 值，需要 hosts 片段时用 `python scripts/git_tunnel.py --print-hosts` 生成。
+> 脚本与文档的**维护约定**（改脚本后须跑哪些回归、文档自校顺序等）属项目总则，见 `AGENTS.md`，不在本文件重复。
