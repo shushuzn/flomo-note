@@ -191,7 +191,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 滤除营销话术，保留事实、数据与因果链（见 H13）；图片/截图输入只提炼内容、不记录载体（见 H19）。
 
 ### 4. 定标签（阻塞）
-1. 取标签树：按「附录 · 标签树本地留存」口径核对——`tag_tree` 现采（`limit` 传 2000）后须核验本地「实际列出数 == 首行 total」，一致即直接用本地，不符即现采并整体重写。
+1. 取标签树：按「附录 · 标签树本地留存」口径核对——`tag_tree` 现采（`limit` 传 2000）后须核验本地「实际列出数 == 首行 total」，一致即直接用本地，不符即用 `scripts/tag_tree_sync.py` 整体重写。
 2. 命中既有簇优先复用，但只在与主题精确匹配时复用；不精确则新建更精准标签（见 H18）。
 3. 避开纯概念筐：具体当期主题落到具体二级，无则新建（见 H18.4）。
 4. 标签严格两级，禁三级（见 H17）。
@@ -280,6 +280,7 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 每次定标签与复盘前先比数量：`tag_tree` 现采**必须传 `{"limit":2000}` 拿全量**（服务端默认 200 会截断；且 `limit` 须 ≥ 云端 total，否则 `tags` 被截断致 `len(tags) ≠ total`，无法据以重建）。
 以 `structuredContent.total` 为云端标签总数，与本地首行 total 比对后，**不得只信首行的数字**：比对前须先核验本地「实际列出的标签数 == 首行 total」，任一不符即用 `structuredContent.tags` **整体重写**本地文件，重写后复核「列出数 == total」。云端数量权威（`tag_rename`/清空都会改变）。
 本核对已由流程闸门**代跑并阻塞**（见流程第 7 步）：云端 total、首行 total、实际列出数三者不一致即判阻塞，凭证不出。
+**重写一律走 `scripts/tag_tree_sync.py`**（现采 → 整体重写各处快照 → 复核；`--check` 只读比对、不改文件）。该脚本的渲染与计数与闸门**共用 `memo_util` 同一份实现**，避免两侧口径漂移出「重写做了、闸门仍判不自洽」的死锁；禁止再手搓临时脚本重写。
 
 ### 脚本（写卡流程用到的）
 
@@ -288,8 +289,9 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/validate_memo.py` — 写云前质检（H14–H17 等，含字数上限）+ 校验 SOP 闸门凭证，EXIT=0 才可写云。
 - `scripts/sni_fetch.py` — SNI 被关键字阻断时域名前置取正文与 PDF（见 `ENVIRONMENT.md`）。
 - `scripts/extract_arxiv_html.py` — arXiv LaTeX HTML 正文抽取（保护 MathML 公式，转纯文本）。
+- `scripts/tag_tree_sync.py` — 标签树本地快照的现采重写与核对（见「标签树本地留存」）。
 
-> 其余脚本（`memo_util.py` 公共实现、各测试用例、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
+> 其余脚本（`memo_util.py` 公共实现、各测试用例、`run_tests.sh` 一键回归、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
 
 ### 技能文档治理（与写卡执行无关）
 
