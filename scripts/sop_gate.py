@@ -23,16 +23,34 @@
     "searched": true,
     "terms": [
       {"term": "隐式世界-动作模型", "query": "...", "conclusion": "确认为 ... 的标准称谓"},
-      {"term": "CoRL 最佳论文", "query": "...", "conclusion": "正式名为 CoRL 2025 杰出论文奖"}
+      {"term": "Geely E5", "query": "...", "conclusion": "纯电动紧凑型 SUV，WLTP 续航 430 公里",
+       "in_body": ["WLTP 续航 430 公里"]}
     ]
   }
   说明：`--skip-web` 仅当卡片主体不是专业术语/机构/产品/模型/定理简称时可用，
   且会在凭证中留痕 `web_skipped=true`，便于事后审计。
 
+**结论必须落进正文（本闸门的新增阻塞项）**：留痕只证明「搜索做了」，不证明
+「搜到的东西写进卡了」——只落一份验证记录、正文却照抄原文，同样能骗过旧版闸门。
+故本脚本逐条核对落点，判定顺序：
+
+  1. `in_body`：调用方显式声明的正文落点片段。每段都必须是正文的真实子串，
+     且不得等于术语本身（否则是空转声明）；不符即阻塞。
+  2. 结论里能提取到**关键参数**（数字 + 单位，如 `430 公里` / `160 kW` / `31,200 欧元`，
+     以及「五星」这类评级）时：至少一项须出现在正文，否则阻塞。
+  3. 结论提取不到关键参数（纯命名类核实）时：术语本身的词块至少一个须出现在正文，
+     否则阻塞。
+  4. 确实不该写进正文的条目（如与卡片主题无关的参数），用
+     `"not_in_body": "<理由>"` 显式豁免；豁免会随凭证留痕，供事后审计。
+
+比对前两侧统一做归一化（去空白与千分位逗号、统一小写），避免
+`160 kW` / `160kW`、`1,055 公里` / `1055公里` 这类写法差异造成误判。
+
 退出码：0 = 闸门全过并已出凭证；1 = 有阻塞项未过（凭证不出）。
 """
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -55,6 +73,92 @@ GATE_DIR = PROJECT_ROOT / ".sop_gate"
 # 凭证有效期（秒）。同一张卡的闸门凭证在此时限内可反复用于自检，
 # 超期须重跑，避免"昨天的凭证给今天的卡用"。
 GATE_TTL = 6 * 3600
+
+# 结论里的「关键参数」：数字 + 单位。用于核对搜到的参数有没有落进卡正文。
+# 单位表只收可核对的量纲，刻意不含「年/月/日」——事件日期本就写在正文里，
+# 拿它当落点会形成空转。**互为前缀的单位必须长者在前**（`kWh` 在 `kW` 前），
+# 否则 `60.2 kWh` 会被截成 `60.2 kW`，落点比对随之失真。
+_EVIDENCE_RE = re.compile(
+    r"\d[\d,.]*\s*(?:kWh|kW|km|kg|GB|TB|MB|GHz|MHz|Hz|nm|"
+    r"亿元|万元|欧元|美元|元|吨|公斤|千克|克|"
+    r"公里|千米|毫米|厘米|米|小时|分钟|秒|%|％)",
+    re.IGNORECASE,
+)
+# 评级类关键结论（无数字，但同样属「搜到的实质信息」）。
+_RATING_RE = re.compile(r"(?:五|四|三|两)星")
+# 术语词块：结论无关键参数时，按术语本身的 ASCII / 中文词块比对落点。
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-_.]{1,}|[\u4e00-\u9fff]{2,}")
+
+
+def _norm(text):
+    """比对用归一化：去空白与千分位逗号、统一小写。
+
+    正文与验证记录的空格 / 大小写写法常不一致（`160 kW` / `160kW`、
+    `1,055 公里` / `1055公里`），逐字比对必然误判，故两侧都先过这一层。
+    """
+    return re.sub(r"[\s,，]", "", text or "").lower()
+
+
+def _evidence_tokens(text):
+    """结论里的关键参数（数字 + 单位、星级）。"""
+    return [m.group(0) for m in _EVIDENCE_RE.finditer(text or "")] + [
+        m.group(0) for m in _RATING_RE.finditer(text or "")
+    ]
+
+
+def _name_tokens(text):
+    """术语本身的 ASCII / 中文词块（结论无关键参数时的兜底落点）。"""
+    return _TOKEN_RE.findall(text or "")
+
+
+def _check_term_landed(item, body, blockers):
+    """一条核实结论是否落进了卡正文；返回落点审计记录（写进凭证）。
+
+    判定顺序见模块顶部用法说明。留痕证明「搜了」，本函数证明「写了」——
+    缺了它，「搜了不用」与「留痕齐全、正文照抄原文」都能通过闸门。
+    """
+    term = (item.get("term") or "").strip()
+    conclusion = item.get("conclusion") or ""
+    norm_body = _norm(body)
+
+    reason = (item.get("not_in_body") or "").strip()
+    if reason:
+        return {"term": term, "exempt": reason}
+
+    anchors = item.get("in_body") or []
+    if anchors:
+        for a in anchors:
+            na = _norm(a)
+            if not na or na == _norm(term) or na in _norm(term):
+                blockers.append(
+                    f"验证术语「{term}」的 in_body 落点「{a}」无信息量"
+                    "（等于或包含于术语本身）——落点须是正文里承载该结论的具体表述"
+                )
+            elif na not in norm_body:
+                blockers.append(
+                    f"验证术语「{term}」声明的 in_body 落点「{a}」在卡正文中不存在"
+                )
+        return {"term": term, "anchors": anchors}
+
+    evidence = _evidence_tokens(conclusion)
+    if evidence:
+        matched = [t for t in evidence if _norm(t) in norm_body]
+        if not matched:
+            blockers.append(
+                f"验证术语「{term}」的结论含关键参数（{'、'.join(evidence[:3])}），"
+                "但卡正文里一个都没落——「搜到」不等于「写到」，须融入正文对应要点；"
+                "确属不该写入正文的，用 not_in_body 显式豁免并给出理由"
+            )
+        return {"term": term, "evidence": evidence, "matched": matched}
+
+    names = _name_tokens(term)
+    matched = [t for t in names if _norm(t) in norm_body]
+    if not matched:
+        blockers.append(
+            f"验证术语「{term}」在卡正文中找不到落点"
+            "（结论无关键参数，按术语名比对亦未命中）"
+        )
+    return {"term": term, "names": names, "matched": matched}
 
 
 def _tag_tree_total_and_count(client):
@@ -181,8 +285,12 @@ def _check_review(client, sig, blockers, notes, anchor_id=None):
     return {"anchor": anchor, "anchor_source": anchor_src, "recommended": [m.get("id") for m in recs]}
 
 
-def _check_web(verify_path, blockers, notes):
-    """② 验证：读取调用方的网络搜索留痕，校验术语覆盖。"""
+def _check_web(verify_path, body, blockers, notes):
+    """② 验证：读调用方的网络搜索留痕，校验术语覆盖**且结论已落进卡正文**。
+
+    两件事都做才叫完成：留痕证明「搜索做了」，落点校验证明「搜到的写进卡了」
+    （见 `_check_term_landed`）。只查前者会放过「留痕齐全、正文照抄原文」。
+    """
     if verify_path is None:
         blockers.append("未提供第 2 步验证记录（--verify）；术语卡必须现查，非术语卡须显式 --skip-web")
         return None
@@ -205,11 +313,15 @@ def _check_web(verify_path, blockers, notes):
     terms = data.get("terms") or []
     if not terms:
         blockers.append("验证记录 terms 为空——未记录任何术语核实结果")
+    landed = []
     for t in terms:
         if not (t.get("term") and t.get("conclusion")):
             blockers.append(f"验证记录条目缺 term/conclusion：{t}")
-    notes.append(f"验证·已核实 {len(terms)} 个术语")
-    return {"searched": data.get("searched"), "term_count": len(terms)}
+            continue
+        landed.append(_check_term_landed(t, body, blockers))
+    hit = sum(1 for r in landed if r.get("exempt") or r.get("matched"))
+    notes.append(f"验证·已核实 {len(terms)} 个术语，其中 {hit} 条在正文有落点或已豁免")
+    return {"searched": data.get("searched"), "term_count": len(terms), "landed": landed}
 
 
 def main():
@@ -241,7 +353,7 @@ def main():
         web = {"web_skipped": True}
         notes.append("验证·调用方显式声明无需网络验证（--skip-web）")
     else:
-        web = _check_web(args.verify, blockers, notes)
+        web = _check_web(args.verify, content, blockers, notes)
 
     token, src = load_token()
     client = FlomoClient(token)

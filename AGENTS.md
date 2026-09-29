@@ -38,7 +38,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 改动脚本后必须先跑其配套回归用例，退出码 0 才算过。**本节面向维护者，不进入写卡执行路径**；写卡时不需要读本节。
 
 - 改 `scripts/validate_memo.py` → 跑 `python scripts/test_validate_memo.py`。
-- 改 `scripts/sop_gate.py` 或闸门校验逻辑 → 跑 `python scripts/test_sop_gate.py`（含 tag_tree 计数 / 查重 / 复盘的假 client 离线桩，这几处不必联网验证）。
+- 改 `scripts/sop_gate.py` 或闸门校验逻辑 → 跑 `python scripts/test_sop_gate.py`（含 tag_tree 计数 / 查重 / 复盘的假 client 离线桩，这几处不必联网验证；含验证记录的**落点校验**——结论里的关键参数必须能在卡正文里找到，否则阻塞）。
 - 改 `scripts/tag_tree_sync.py` → 跑 `python scripts/test_tag_tree_sync.py`（沙箱内离线验证响应解析、核对三类不一致与重写闭环）。
 - 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python scripts/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
 - 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，且是标签树快照渲染/计数的唯一实现，改动影响面最大）。
