@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """console_cloud.py — 控制台的云端笔记只读访问层。
 
-控制台要看的主体是**云端笔记本身**（卡片正文、标签、时间、字数），仓库文档的
-元信息只是辅助。本模块把「读云」这一件事收敛到一处：调 flomo 的只读工具取回
-卡片，精简成前端可直接渲染的字段。
+控制台要看的主体是**云端笔记本身**（卡片正文、标签、时间、字数），另配一份标签树
+分组速览；仓库侧的解析结果只喂统计字段。本模块把「读云」这一件事收敛到一处：
+调 flomo 的只读工具取回卡片，精简成前端可直接渲染的字段。
 
 三条边界：
 
@@ -32,18 +32,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, _result_memos, load_token  # noqa: E402
 
-# 云端只读工具白名单：控制台能调用的全部工具，一个不多。
+# 云端只读工具白名单：**恰好等于**本模块各读方法实际调用的工具，一个不多。
+# 允许调用的即「明确有人用」的——权限面不预留空位；要加读能力，先加方法再加此处，
+# 回归用例按源码扫描锁定这层对等关系（见 test_console_cloud.py）。
 READONLY_TOOLS = frozenset(
     {
         "memo_search",
         "memo_batch_get",
-        "memo_recommended",
-        "tag_tree",
-        "tag_search",
         "get_daily_review",
-        "get_format_guide",
-        "get_tag_guide",
-        "memory_context",
     }
 )
 
@@ -238,12 +234,3 @@ class CloudReader:
         """今日回顾：云端挑选的历史卡片，与列表同构。"""
         memos = _result_memos(self.call("get_daily_review", {}))
         return {"count": len(memos), "memos": [slim_memo(m) for m in memos]}
-
-    def tag_names(self, keywords: str, limit: int = 20) -> dict:
-        """按关键词搜标签名（轻量，比拉全树省）。"""
-        if not keywords:
-            return {"tags": []}
-        result = self.call("tag_search", {"keywords": keywords, "limit": _clamp_limit(limit)})
-        sc = result.get("structuredContent") or {}
-        names = [t.get("name") for t in (sc.get("tags") or []) if t.get("name")]
-        return {"tags": names}

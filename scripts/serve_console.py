@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """serve_console.py — 项目控制台的本地服务（零第三方依赖）。
 
-控制台是**看笔记**的：主视图直接呈现 flomo 云端的卡片（搜索、按标签筛、读全文、
-今日回顾），辅以仓库自身的可视图景（九步管线、硬限清单、脚本与回归、标签树、文档规模）。
-浏览器侧的数据全部来自本服务的 JSON 接口：仓库侧委托 `console_data`，
-云端侧委托 `console_cloud`——本脚本只做静态文件、JSON 接口与按需跑离线回归。
+控制台只做两件看的事：**云端笔记**（主视图，直接呈现 flomo 卡片：搜索、按标签筛、
+读全文、今日回顾）与**标签树**（本地快照的分组速览）。浏览器侧的数据全部来自本服务
+的 JSON 接口：云端侧委托 `console_cloud`，本地侧委托 `console_data`；
+本脚本只做静态文件与 JSON 接口，**不含任何执行命令或写数据的入口**（连 POST 处理都不存在）。
 
 **只读边界**（与项目铁律一致）：
   - 云端只走 `console_cloud` 的只读工具白名单，任何写操作在那一层就被拒；
@@ -22,10 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
-import os
-import shutil
 import socket
-import subprocess
 import sys
 import threading
 import webbrowser
@@ -35,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from console_cloud import CloudError, CloudReader, cloud_status  # noqa: E402
-from console_data import collect_all, load_limits, load_pipeline, load_scripts, load_tagtree  # noqa: E402
+from console_data import collect_all, load_tagtree  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
@@ -62,27 +59,6 @@ def port_in_use(host: str, port: int, timeout: float = 0.4) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         return s.connect_ex((host, port)) == 0
-
-
-def run_regression() -> dict:
-    """按需跑离线回归（run_tests.sh）。超时 300s；返回结构化结果。"""
-    bash = shutil.which("bash")
-    if not bash:
-        return {"ok": False, "error": "未找到 bash", "lines": []}
-    env = dict(os.environ, PYTHON_BIN=sys.executable)
-    try:
-        proc = subprocess.run(
-            [bash, "scripts/run_tests.sh"],
-            cwd=str(REPO_ROOT),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "回归超时（>300s）", "lines": []}
-    out = (proc.stdout or "") + (proc.stderr or "")
-    return {"ok": proc.returncode == 0, "rc": proc.returncode, "lines": out.splitlines()}
 
 
 class ConsoleHandler(BaseHTTPRequestHandler):
@@ -140,6 +116,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         return vals[0] if vals else default
 
     # ---- 路由 ----------------------------------------------------------- #
+    # 接口只服务界面实际要看的两件事：云端笔记与标签树；不外扩未使用的入口。
     def do_GET(self):
         u = urlparse(self.path)
         path = u.path
@@ -147,9 +124,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
         routes = {
             "/api/overview": lambda: {**collect_all(REPO_ROOT), "cloud": cloud_status()},
-            "/api/pipeline": lambda: load_pipeline(REPO_ROOT),
-            "/api/limits": lambda: load_limits(REPO_ROOT),
-            "/api/scripts": lambda: load_scripts(REPO_ROOT),
             "/api/tagtree": lambda: load_tagtree(REPO_ROOT),
         }
         cloud_routes = {
@@ -160,9 +134,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             ),
             "/api/cloud/memo": lambda r: r.memo_detail(self._q(q, "id", "")),
             "/api/cloud/review": lambda r: r.daily_review(),
-            "/api/cloud/tags": lambda r: r.tag_names(
-                self._q(q, "keywords", ""), self._q(q, "limit", 20)
-            ),
         }
 
         if path in cloud_routes:
@@ -181,13 +152,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
-
-    def do_POST(self):
-        path = self.path.split("?", 1)[0]
-        if path == "/api/tests/run":
-            self._send_json(run_regression())
-            return
-        self._send_json({"error": "unknown endpoint"}, 404)
 
 
 def main(argv=None):
@@ -214,8 +178,7 @@ def main(argv=None):
     httpd = ThreadingHTTPServer((args.host, args.port), ConsoleHandler)
     url = f"http://{args.host}:{args.port}/"
     print(f"[console] flomo-note 控制台已启动：{url}")
-    print(f"[console] 只读服务 · 仓库根 {REPO_ROOT}")
-    print("[console] Ctrl+C 停止")
+    print("[console] 只读服务 · 仓库根 %s" % REPO_ROOT)
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

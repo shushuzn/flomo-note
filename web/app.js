@@ -1,27 +1,22 @@
 /* flomo-note 控制台 · 前端逻辑
-   主视图是**云端笔记**（只读浏览 flomo 卡片），其余视图看仓库自身状态。
+   只做两件看的事：**云端笔记**（只读浏览 flomo 卡片）与**标签树**（本地快照分组速览）。
    数据全部来自本地服务 /api/*；页面不发起任何写操作。
-   所有插入文本一律先转义，避免正文与文档里的尖括号破坏结构。 */
+   所有插入文本一律先转义，避免正文里的尖括号破坏结构。 */
 
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const VIEW_META = {
-  notes:    { title: "云端笔记", sub: "只读浏览 flomo 云端卡片：搜索、按标签筛、读全文" },
-  pipeline: { title: "九步管线", sub: "从抓取到写云的强制执行顺序，标「阻塞」的步骤未完成不得进入下一步" },
-  limits:   { title: "硬限清单", sub: "SKILL.md 中编号即引用点的硬性规则（H1–Hn）" },
-  scripts:  { title: "脚本与回归", sub: "工具脚本、配套回归用例，可按需在本机跑一遍离线回归" },
-  tags:     { title: "标签树", sub: "本地快照的分组速览；计数与闸门同源（memo_util）" },
-  docs:     { title: "文档", sub: "技能文档的规模速览" },
+  notes: { title: "云端笔记", sub: "只读浏览 flomo 云端卡片：搜索、按标签筛、读全文" },
+  tags:  { title: "标签树", sub: "本地快照的分组速览；计数与闸门同源（memo_util）" },
 };
 
 const state = {
   view: "notes",
   cache: {},
-  limitsOpen: new Set(),
   tagQuery: "",
   // 云端视图状态：模式决定拉取方式；输入值留在 state 里，避免渲染时丢焦点
-  cloudMode: "recent",   // recent | search | tag | review
+  cloudMode: "recent",   // recent | search | review
   cloudQuery: "",
   cloudTag: "",
   cloudLimit: 20,
@@ -69,18 +64,6 @@ function renderStats(cells) {
       <div class="stat-num">${esc(c.n ?? "—")}</div>
       <div class="stat-label">${esc(c.l)}</div>
     </div>`).join("");
-}
-
-// 仓库侧统计：离开云端视图时恢复成这一组
-function repoCells(stats) {
-  return [
-    { n: stats.tags,           l: "标签总数", alert: stats.tags_consistent === false },
-    { n: stats.steps,          l: "管线步骤" },
-    { n: stats.steps_blocking, l: "其中阻塞" },
-    { n: stats.limits,         l: "硬限条目" },
-    { n: stats.limits_core,    l: "写卡硬限" },
-    { n: stats.tests,          l: "回归用例" },
-  ];
 }
 
 /* ---------- 云端笔记（主视图） ---------- */
@@ -173,9 +156,10 @@ async function viewNotes() {
   const ov = await get("overview");
   const cloud = ov.cloud || {};
   if (!cloud.available) {
+    renderStats([{ n: "—", l: "云端笔记" }]);
     return `<div class="card"><div class="empty">
       云端不可用：${esc(cloud.reason || "未知原因")}
-      <div class="hint">控制台靠项目内的凭证配置访问 flomo；凭证缺失时只有仓库侧的视图可用。</div>
+      <div class="hint">控制台靠项目内的凭证配置访问 flomo；凭证缺失时只有「标签树」视图可用。</div>
     </div></div>`;
   }
 
@@ -274,94 +258,20 @@ function runCloudQuery() {
   refreshCloud();
 }
 
-/* ---------- 视图：管线 ---------- */
-async function viewPipeline() {
-  const steps = await get("pipeline");
-  if (!steps.length) return `<div class="empty">未解析到管线步骤</div>`;
-  return `<div class="card">${steps.map((s) => `
-    <div class="step${s.blocking ? " is-blocking" : ""}">
-      <div class="step-no">${esc(s.n)}</div>
-      <div>
-        <div class="step-title">
-          ${esc(s.title)}
-          ${s.blocking ? '<span class="badge badge-block">阻塞</span>' : ""}
-        </div>
-        <div class="step-body">${inline(s.body)}</div>
-      </div>
-    </div>`).join("")}</div>`;
-}
-
-/* ---------- 视图：硬限 ---------- */
-async function viewLimits() {
-  const limits = await get("limits");
-  if (!limits.length) return `<div class="empty">未解析到硬限条目</div>`;
-
-  let html = "", lastGroup = null;
-  for (const l of limits) {
-    if (l.group_name && l.group_name !== lastGroup) {
-      lastGroup = l.group_name;
-      html += `<div class="group-head">${esc(l.group_name)}</div>`;
-    }
-    const open = state.limitsOpen.has(l.id);
-    const long = (l.body || "").length > 120;
-    html += `
-      <div class="limit">
-        <div class="limit-head">
-          <span class="limit-id">${esc(l.id)}</span>
-          <span class="limit-title">${esc(l.title)}</span>
-        </div>
-        <div class="limit-body${open ? " is-open" : ""}">${inline(l.body || "（无正文）")}</div>
-        ${long ? `<button class="limit-more" data-limit="${esc(l.id)}">${open ? "收起" : "展开全文"}</button>` : ""}
-      </div>`;
-  }
-  return `<div class="card">${html}</div>`;
-}
-
-/* ---------- 视图：脚本 ---------- */
-async function viewScripts() {
-  const scripts = await get("scripts");
-  const tools = scripts.filter((s) => s.kind === "tool");
-  const tests = scripts.filter((s) => s.kind === "test");
-
-  const row = (s) => `
-    <div class="row">
-      <div class="row-name">${esc(s.name)}</div>
-      <div class="row-desc">${esc(s.summary || "—")}</div>
-      <div class="row-tags">
-        ${s.kind === "test"
-          ? '<span class="badge">用例</span>'
-          : s.has_test
-            ? '<span class="badge badge-ok">测试 ✓</span>'
-            : '<span class="badge badge-quiet">—</span>'}
-      </div>
-    </div>`;
-
-  return `
-    <div class="section-head"><h2>工具脚本</h2><span class="count">${tools.length} 个</span></div>
-    <div class="card">${tools.map(row).join("")}</div>
-    <div class="section-head"><h2>回归用例</h2><span class="count">${tests.length} 个</span></div>
-    <div class="card">${tests.map(row).join("")}</div>
-    <div class="section-head">
-      <h2>一键回归</h2>
-      <span class="count">离线执行 scripts/run_tests.sh</span>
-    </div>
-    <div class="card">
-      <div class="row" style="grid-template-columns:1fr auto">
-        <div class="row-desc">在本机跑一遍全部离线用例与文档纪律自检，不改动任何文件。</div>
-        <button class="btn btn-primary" id="btn-run">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-               stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l12 8-12 8z"/></svg>
-          运行回归
-        </button>
-      </div>
-      <pre class="run-out" id="run-out" hidden></pre>
-    </div>`;
-}
-
 /* ---------- 视图：标签树 ---------- */
 async function viewTags() {
   const t = await get("tagtree");
-  if (!t.present) return `<div class="empty">未找到标签树快照（tag_tree.txt）</div>`;
+  if (!t.present) {
+    renderStats([{ n: "—", l: "标签总数" }]);
+    return `<div class="empty">未找到标签树快照（tag_tree.txt）</div>`;
+  }
+
+  renderStats([
+    { n: t.total,         l: "标签总数", alert: !t.consistent },
+    { n: t.listed,        l: "列出条目" },
+    { n: t.groups.length, l: "分组" },
+    { n: t.bare_count,    l: "裸顶层" },
+  ]);
 
   const q = state.tagQuery.trim().toLowerCase();
   const groups = t.groups
@@ -403,27 +313,10 @@ function hl(text, q) {
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + q.length)) + "</mark>" + esc(text.slice(i + q.length));
 }
 
-/* ---------- 视图：文档 ---------- */
-async function viewDocs() {
-  const overview = await get("overview");
-  const docs = overview.docs || [];
-  if (!docs.length) return `<div class="empty">未找到技能文档</div>`;
-  const kb = (n) => (n / 1024).toFixed(1) + " KB";
-  return `<div class="card">${docs.map((d) => `
-    <div class="doc-row">
-      <span class="doc-name">${esc(d.name)}</span>
-      <span class="doc-meta">${esc(d.lines)} 行 · ${esc(kb(d.bytes))}</span>
-    </div>`).join("")}</div>`;
-}
-
 /* ---------- 渲染调度 ---------- */
 const VIEWS = {
-  notes:    viewNotes,
-  pipeline: viewPipeline,
-  limits:   viewLimits,
-  scripts:  viewScripts,
-  tags:     viewTags,
-  docs:     viewDocs,
+  notes: viewNotes,
+  tags:  viewTags,
 };
 
 async function render() {
@@ -431,10 +324,6 @@ async function render() {
   $("#page-title").textContent = meta.title;
   $("#page-sub").textContent = meta.sub;
   $$("#nav .nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === state.view));
-
-  // 非云端视图恢复仓库侧统计（云端视图会自行改写统计条）
-  const ov = state.cache.overview;
-  if (ov && state.view !== "notes") renderStats(repoCells(ov.stats || {}));
 
   const view = $("#view");
   view.innerHTML = `<div class="card"><div class="empty"><div class="skeleton" style="width:60%;margin:0 auto 9px"></div>
@@ -486,14 +375,6 @@ document.addEventListener("click", (e) => {
     return;
   }
 
-  const more = e.target.closest(".limit-more");
-  if (more) {
-    const id = more.dataset.limit;
-    state.limitsOpen.has(id) ? state.limitsOpen.delete(id) : state.limitsOpen.add(id);
-    render();
-    return;
-  }
-
   const ghead = e.target.closest(".tgroup-head");
   if (ghead) {
     ghead.closest(".tgroup").classList.toggle("is-open");
@@ -504,12 +385,7 @@ document.addEventListener("click", (e) => {
     state.cache = {};
     state.cloudData = null;
     render();
-    toast("已重新读取本地与云端");
-    return;
-  }
-
-  if (e.target.closest("#btn-run")) {
-    runRegression();
+    toast("已重新读取云端与本地快照");
   }
 });
 
@@ -548,32 +424,10 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-async function runRegression() {
-  const btn = $("#btn-run");
-  const out = $("#run-out");
-  btn.disabled = true;
-  out.hidden = false;
-  out.textContent = "正在运行离线回归…";
-  try {
-    const r = await api("/api/tests/run", { method: "POST" });
-    const text = (r.error ? `[错误] ${r.error}\n\n` : "") + (r.lines || []).join("\n");
-    out.textContent = text || "(无输出)";
-    out.style.color = r.ok ? "#B7D2B9" : "#E8B4AC";
-    toast(r.ok ? "回归全部通过" : "回归存在失败，详见输出");
-  } catch (e) {
-    out.textContent = `调用失败：${e.message}`;
-    out.style.color = "#E8B4AC";
-    toast("调用失败");
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 /* ---------- 启动 ---------- */
 (async function boot() {
   try {
     const overview = await get("overview");
-    renderStats(repoCells(overview.stats || {}));
     const cloud = overview.cloud || {};
     $("#conn-badge").className = "badge " + (cloud.available ? "badge-ok" : "badge-warn");
     $("#conn-text").textContent = cloud.available ? "本地 + 云端已连接" : "本地已连接 · 云端不可用";
