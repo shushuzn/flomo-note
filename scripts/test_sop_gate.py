@@ -221,6 +221,14 @@ def run_check_web_cases():
     GATE._check_web(tmp, b, n)
     check("_check_web 非法 JSON 判阻塞", any("非法 JSON" in x for x in b))
 
+    # 8) searched 必须是布尔 true：字符串/数字都是真值，用真值判定会放行未搜索的记录
+    for bad_val in ("no", "false", 1, 0, "true"):
+        b, n = [], []
+        GATE._check_web(_verify_file({"searched": bad_val, "terms": [
+            {"term": "A", "query": "qa", "conclusion": "ca"}]}), b, n)
+        check(f"_check_web searched={bad_val!r} 判阻塞",
+              any("必须为布尔 true" in x for x in b))
+
 
 def run_concept_keyword_cases():
     """_concept_keywords 边界（经 memo_util 委托）。"""
@@ -344,6 +352,32 @@ def run_dedup_net_cases():
           any(x.startswith("科技/机器人") for x in got.get("tag_neighbors", [])))
     check("_check_dedup 两路都跑了",
           any("查重·关键词" in x for x in n) and any("查重·标签路" in x for x in n))
+
+    # 3) 多标签时近邻计数不得跨标签累积（每条 note 只反映自己那个标签）
+    c = FakeClient(
+        tag_tree=_tt(4, ["科技/机器人", "科技/机器人/人形", "投资/一级市场", "投资/一级市场/私募"]),
+        search={},
+    )
+    b, n = [], []
+    GATE._check_dedup(c, GATE._signature("#科技/机器人 #投资/一级市场\n某概念\n\n正文\n"), b, n)
+    per_leaf = [x for x in n if "查重·标签路" in x]
+    check("_check_dedup 两个标签各出一条计数", len(per_leaf) == 2)
+    check("_check_dedup 近邻计数不跨标签累积",
+          all("近邻 2 个簇" in x for x in per_leaf))
+
+    # 4) 精确/前缀匹配：无关簇不得被子串误命中
+    c = FakeClient(
+        tag_tree=_tt(3, ["其他/机器人架构", "科技/机器人学", "科技/机器人"]),
+        search={},
+    )
+    b, n = [], []
+    got = GATE._check_dedup(c, GATE._signature("#科技/机器人\n某概念\n\n正文\n"), b, n)
+    check("_check_dedup 子串不误命中无关簇",
+          "其他/机器人架构" not in got.get("tag_neighbors", []))
+    check("_check_dedup 精确与子路径均命中",
+          "科技/机器人" in got.get("tag_neighbors", []))
+    check("_check_dedup 同级不同名不命中",
+          "科技/机器人学" not in got.get("tag_neighbors", []))
 
 
 def run_review_net_cases():

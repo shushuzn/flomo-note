@@ -40,9 +40,11 @@ GATE_DIR = PROJECT_ROOT / ".sop_gate"
 TAG_CHAR_OK = re.compile(r"^[\w\u4e00-\u9fff/]+$")
 
 # 表格：分隔行（|---|---|）、被竖线包裹的行（| a | b |）、空格包围的竖线成组（a | b | c）
-TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$")
-TABLE_WRAPPED = re.compile(r"^\s*\|.*\|\s*$")
-SPACED_PIPE = re.compile(r"(?:^|\s)\|(?=\s|$)")
+# 半角 `|` 与全角 `｜`（U+FF5C）同等认定——中文输入法下常打出全角，漏认会造成漏报。
+_P = "|｜"
+TABLE_SEP = re.compile(rf"^\s*[{_P}]?\s*:?-{{2,}}:?\s*(?:[{_P}]\s*:?-{{2,}}:?\s*)+[{_P}]?\s*$")
+TABLE_WRAPPED = re.compile(rf"^\s*[{_P}].*[{_P}]\s*$")
+SPACED_PIPE = re.compile(rf"(?:^|\s)[{_P}](?=\s|$)")
 
 
 def err(msg):
@@ -60,13 +62,15 @@ def _is_table_row(s):
     一律误判为表格。改为只认三种真表格形态：
     分隔行、竖线包裹行、空格包围的竖线成组；紧贴文字的竖线（绝对值/条件概率/势）放行。
     判定前剥掉列表标记，使「- | a | b |」这类列表内的表格也能识别。
+    竖线半角与全角同等认定（中文输入法常打出全角）。
     """
     core = re.sub(r"^(?:[-*~\u2022]|\d{1,2}[.、)])\s+", "", s).strip()
     if TABLE_SEP.match(core):
         return True
-    if TABLE_WRAPPED.match(core) and core.count("|") >= 2:
+    if TABLE_WRAPPED.match(core) and core.count("|") + core.count("｜") >= 2:
         return True
-    return len(SPACED_PIPE.findall(core)) >= 2 and core.count("|") >= 2
+    return (len(SPACED_PIPE.findall(core)) >= 2
+            and core.count("|") + core.count("｜") >= 2)
 
 
 def check(content):
@@ -114,6 +118,16 @@ def check(content):
         warn("标签段后第二行应为概念名称（简明概括卡片主题的名词/概念），不应为空行")
     elif len(lines) > 2 and lines[2].strip() != "":
         err("标题行后必须空一行再接正文（标题单独成段）——缺少空行时 flomo 会将标题与正文首段合并为一大段，无法辨识标题")
+    # 概念名行不得以 # 开头：否则卡片签名（首行标签段 + 第二行概念名）不成立，
+    # 会导致签名取不到 → 幂等查重失效 + SOP 闸门凭证无从校验，一路静默放行。
+    # 此检查必须在「结构本身不合规」层就报错，不能依赖下游以缺签名为由兜底。
+    for i in range(1, min(3, len(lines))):
+        s = lines[i].strip()
+        if s and s.startswith("#"):
+            err(f"第 {i + 1} 行是标签（以 # 开头），但它应为概念名称——"
+                f"标签只能出现在首行标签段，多写一行标签会让卡片签名失效"
+                f"（连带使写前幂等查重与 SOP 闸门校验同时失效）")
+            break
 
     # 3) 正文
     body = "\n".join(lines[1:]).strip()
@@ -465,7 +479,11 @@ def check_gate(content):
     """
     sig = _signature_of(content)
     if not sig:
-        return  # 结构本身不合规，已由 H14 那节报错，此处不重复
+        # 不得静默 return：签名取不到时凭证文件名无从计算，若放行即等于
+        # 「结构不合规」顺便豁免了整套 SOP 闸门，形成静默绕过路径。
+        err("卡片签名取不到（首行须为标签段、第二行须为不以 # 开头的概念名称），"
+            "无法核对 SOP 流程闸门凭证——请先修正卡片结构")
+        return
     sig_key = signature_key(sig)
     gate_path = GATE_DIR / f"{sig_key}.json"
     if not gate_path.exists():

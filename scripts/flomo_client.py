@@ -80,12 +80,18 @@ class FlomoClient:
         sid = resp.headers.get("Mcp-Session-Id")
         if sid and not self._session:
             self._session = sid
-        return self._parse_sse(body)
+        return self._parse_sse(body, payload.get("id"))
 
     @staticmethod
-    def _parse_sse(body):
-        """解析 SSE，返回匹配本请求 id 的 result；遇 error 直接抛错。"""
-        want = None
+    def _parse_sse(body, want_id=None):
+        """解析 SSE，返回匹配 want_id 的 result；遇 error 直接抛错。
+
+        want_id 由调用方显式传入（即本次请求的 JSON-RPC id）。**不能退化为
+        "取流里第一个出现的 id"**：SSE 流可能先夹带服务端通知或并发响应，
+        那时取到的就不是本次请求的结果——写操作会据此误判成功/失败。
+        仅当调用方未传（如无 id 的单向通知）时才回落取首个非空 id。
+        """
+        want = want_id
         for line in body.splitlines():
             line = line.strip()
             if not line.startswith("data:"):
@@ -95,11 +101,12 @@ class FlomoClient:
                 obj = json.loads(d)
             except json.JSONDecodeError:
                 continue
-            if obj.get("id") is None:
+            oid = obj.get("id")
+            if oid is None:
                 continue
             if want is None:
-                want = obj.get("id")
-            if obj.get("id") != want:
+                want = oid
+            if oid != want:
                 continue
             if "error" in obj:
                 raise SystemExit("MCP error: " + json.dumps(obj["error"], ensure_ascii=False))

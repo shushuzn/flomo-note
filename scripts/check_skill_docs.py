@@ -81,8 +81,13 @@ def iter_targets(root: Path):
             if p.suffix.lower() in DOC_SUFFIXES and p.name not in EXEMPT_NAMES and fresh(p):
                 yield p
 
+    # --root 顶层：文档与脚本都要收。此前这里只按 SCRIPT_SUFFIXES 收集，
+    # 导致 --root 指向外部目录时其顶层 .md 全部漏检（只扫到该目录的脚本）。
     for p in sorted(root.glob("*")):
-        if p.suffix.lower() in SCRIPT_SUFFIXES and fresh(p):
+        if p.suffix.lower() in DOC_SUFFIXES and p.name not in EXEMPT_NAMES:
+            if fresh(p):
+                yield p
+        elif p.suffix.lower() in SCRIPT_SUFFIXES and fresh(p):
             yield p
     scripts = root / "scripts"
     if scripts.is_dir():
