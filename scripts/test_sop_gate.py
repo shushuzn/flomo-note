@@ -229,6 +229,153 @@ def run_concept_keyword_cases():
     check("_concept_keywords 限长 2", len(GATE._concept_keywords("某概念名称")) <= 2)
 
 
+class FakeClient:
+    """假 flomo client：按工具名返回预设响应，并可记录调用参数。"""
+
+    def __init__(self, tag_tree=None, search=None, recommended=None):
+        self._tag_tree = tag_tree if tag_tree is not None else {}
+        self._search = search or {}
+        self._recommended = recommended or {}
+        self.calls = []
+
+    def tool(self, name, args=None):
+        self.calls.append((name, dict(args or {})))
+        if name == "tag_tree":
+            return self._tag_tree
+        if name == "memo_search":
+            kw = (args or {}).get("keywords", "")
+            return self._search.get(kw, {"structuredContent": {"memos": []}})
+        if name == "memo_recommended":
+            return self._recommended
+        return {}
+
+
+def _tt(total, names):
+    """构造 tag_tree 响应（structuredContent 形态）。"""
+    return {"structuredContent": {"total": total,
+                                  "tags": [{"name": n} for n in names]}}
+
+
+def run_tag_tree_net_cases():
+    """_tag_tree_total_and_count / _check_tag_tree（假 client，不联网）。"""
+    # 1) structuredContent 直取，且 limit 必须传 2000
+    c = FakeClient(tag_tree=_tt(600, ["AI/物理AI", "投资/一级市场"]))
+    total, tags = GATE._tag_tree_total_and_count(c)
+    check("tag_tree 取 structuredContent.total", total == 600)
+    check("tag_tree 条数正确", len(tags) == 2)
+    check("tag_tree 必须传 limit=2000",
+          c.calls and c.calls[0][1].get("limit") == 2000)
+
+    # 2) structuredContent 缺失 → 回落解析 content[].text 内层 JSON
+    fallback = {"content": [{"text": json.dumps({"total": 42, "tags": [{"name": "A/b"}]})}]}
+    total, tags = GATE._tag_tree_total_and_count(FakeClient(tag_tree=fallback))
+    check("tag_tree 回落解析 content[].text", total == 42 and len(tags) == 1)
+
+    # 3) 两者皆无 → (None, [])
+    total, tags = GATE._tag_tree_total_and_count(FakeClient(tag_tree={}))
+    check("tag_tree 无数据返回 None", total is None and tags == [])
+
+    # 4) total 缺失 → 判阻塞
+    b, n = [], []
+    GATE._check_tag_tree(FakeClient(tag_tree={"structuredContent": {"tags": []}}), b, n)
+    check("_check_tag_tree total 缺失判阻塞",
+          any("未取到 structuredContent.total" in x for x in b))
+
+    # 5) 快照自洽（total=3 = 二级行2 + 裸顶层1）→ 无阻塞
+    d = Path(tempfile.mkdtemp())
+    snap = d / "tag_tree.txt"
+    snap.write_text("# total=3\n# AI\n  AI/物理AI\n# 投资\n投资/\n  投资/一级市场\n",
+                    encoding="utf-8")
+    orig = GATE._local_tag_tree_paths
+    try:
+        GATE._local_tag_tree_paths = lambda: [snap]
+        b, n = [], []
+        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, ["AI/物理AI", "投资/一级市场"])), b, n)
+        check("_check_tag_tree 自洽通过", b == [] and any("二级行=2" in x for x in n))
+
+        # 6) 首行 total 与云端不一致 → 判阻塞
+        snap.write_text("# total=9\n# AI\n  AI/物理AI\n", encoding="utf-8")
+        b, n = [], []
+        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
+        check("_check_tag_tree total 不一致判阻塞",
+              any("与云端 total=3 不一致" in x for x in b))
+
+        # 7) 快照列出数与首行 total 不自洽 → 判阻塞
+        snap.write_text("# total=3\n# AI\n  AI/物理AI\n", encoding="utf-8")
+        b, n = [], []
+        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
+        check("_check_tag_tree 列出数不自洽判阻塞",
+              any("不自洽" in x for x in b))
+
+        # 8) 找不到任何快照 → 判阻塞
+        GATE._local_tag_tree_paths = lambda: [d / "nope.txt"]
+        b, n = [], []
+        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
+        check("_check_tag_tree 无快照判阻塞", any("未找到任何本地 tag_tree 快照" in x for x in b))
+    finally:
+        GATE._local_tag_tree_paths = orig
+
+
+def run_dedup_net_cases():
+    """_check_dedup 两路查重（假 client，不联网）。"""
+    sig = GATE._signature(BODY)
+    # 1) 关键词无法派生 → 判阻塞
+    b, n = [], []
+    got = GATE._check_dedup(FakeClient(), {"concept": "#", "tagline": "#A/b"}, b, n)
+    check("_check_dedup 关键词无法派生判阻塞", any("无法从概念名派生查重关键词" in x for x in b))
+    check("_check_dedup 关键词缺失败返回空", got == {})
+
+    # 2) 正常两路：关键词命中 + 标签近邻
+    c = FakeClient(
+        tag_tree=_tt(3, ["科技/机器人", "科技/机器人/人形", "投资/一级市场"]),
+        search={"某测试概念名": {"structuredContent": {"memos": [
+            {"id": "M1", "content": "已有卡片内容" * 20},
+        ]}}},
+    )
+    b, n = [], []
+    got = GATE._check_dedup(c, sig, b, n)
+    check("_check_dedup 无阻塞", b == [])
+    check("_check_dedup 关键词命中被记录",
+          any(v for v in got.get("keyword_hits", {}).values()))
+    check("_check_dedup content_head 截断 60", all(
+        len(h["content_head"]) <= 60
+        for v in got.get("keyword_hits", {}).values() for h in v))
+    check("_check_dedup 标签近邻被记录",
+          any(x.startswith("科技/机器人") for x in got.get("tag_neighbors", [])))
+    check("_check_dedup 两路都跑了",
+          any("查重·关键词" in x for x in n) and any("查重·标签路" in x for x in n))
+
+
+def run_review_net_cases():
+    """_check_review 三路复盘补 memo_recommended（假 client，不联网）。"""
+    sig = GATE._signature(BODY)
+
+    # 1) 显式给 anchor → 直接调 memo_recommended，且 id 必填
+    c = FakeClient(recommended={"structuredContent": {"memos": [{"id": "R1"}, {"id": "R2"}]}})
+    b, n = [], []
+    got = GATE._check_review(c, sig, b, n, anchor_id="ANCHOR")
+    check("_check_review 显式 anchor 通过", b == [] and got["anchor"] == "ANCHOR")
+    check("_check_review anchor_source 标明来源", got["anchor_source"] == "调用方提供")
+    check("_check_review recommended 收集 id", got["recommended"] == ["R1", "R2"])
+    check("_check_review 必传 id 且带 limit",
+          c.calls[-1][0] == "memo_recommended" and c.calls[-1][1].get("id") == "ANCHOR")
+
+    # 2) 无 anchor 时从关键词检索取首条
+    c = FakeClient(
+        search={"某测试概念名": {"structuredContent": {"memos": [{"id": "HIT1"}]}}},
+        recommended={"structuredContent": {"memos": []}},
+    )
+    b, n = [], []
+    got = GATE._check_review(c, sig, b, n)
+    check("_check_review 关键词命中作锚", b == [] and got and got["anchor"] == "HIT1")
+    check("_check_review anchor_source 记命中来源", got and "命中首条" in got["anchor_source"])
+
+    # 3) 既无 id 又无命中 → 判阻塞且返回 None
+    b, n = [], []
+    got = GATE._check_review(FakeClient(), sig, b, n)
+    check("_check_review 无锚判阻塞", any("无法取锚" in x for x in b) and got is None)
+
+
 if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
@@ -236,6 +383,9 @@ if __name__ == "__main__":
     run_concept_keyword_cases()
     run_no_gate_cases()
     run_local_tag_tree_cases()
+    run_tag_tree_net_cases()
+    run_dedup_net_cases()
+    run_review_net_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)
