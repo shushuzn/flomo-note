@@ -63,13 +63,21 @@ trap cleanup EXIT
 TOKEN=""
 CRED_FILE="$HOME/.git-credentials"
 if [ -f "$CRED_FILE" ]; then
-  TOKEN="$(grep -E 'github\.com' "$CRED_FILE" | head -1 | sed -E 's#https://[^:]*:([^@]*)@.*#\1#')"
+  # 凭据文件可能含多个主机/账号条目，只取 github.com 那条（去重后取首条）。
+  TOKEN="$(grep -E '^https://[^/@:]+:[^@]+@github\.com' "$CRED_FILE" \
+           | head -1 \
+           | sed -E 's#https://[^:]*:([^@]*)@.*#\1#')"
 fi
 if [ -z "$TOKEN" ]; then
   echo "[push] 错误：~/.git-credentials 中无 github.com 条目，无法避开 reg.exe 黑名单。" >&2
-  echo "[push] 请先 `git credential approve` 或手动写入，或用其他方式授权后重试。" >&2
+  echo "[push] 请先 \`git credential approve\` 或手动写入，或用其他方式授权后重试。" >&2
+  echo "[push] 期望格式（每行一条）：https://<user>:<token>@github.com" >&2
   exit 3
 fi
+# 格式自检：token 不该含空白 / 引号 / @，否则下面的 insteadOf 拼接会产生畸形 URL
+case "$TOKEN" in
+  *[[:space:]\'\"@]*) echo "[push] 错误：解析出的 token 含非法字符，请检查 ~/.git-credentials 格式。" >&2; exit 3 ;;
+esac
 
 # ---- 1. 暂存 + 提交（只做一次）----
 # 提交前先禁用 Qoder post-commit hook：否则会拉起 Qoder.exe→reg.exe 被黑名单拦截（无害但噪音）

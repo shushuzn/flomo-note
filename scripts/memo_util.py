@@ -46,9 +46,13 @@ def signature_key(sig):
 
 
 def body_hash(content):
-    """正文整体指纹（用于凭证，防"先跑闸门、后改正文"）。"""
+    """正文整体指纹（用于凭证，防"先跑闸门、后改正文"）。
+
+    非字符串入参（None / 数字等）加类型前缀，使 `None` 与 `""` **不产生同指纹**——
+    否则"取不到正文"与"正文恰好为空"在凭证层无法区分，会掩盖调用侧的空值缺陷。
+    """
     if not isinstance(content, str):
-        content = content or ""
+        return hashlib.sha256(f"<non-str:{type(content).__name__}>".encode("utf-8")).hexdigest()
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
@@ -83,9 +87,14 @@ def tag_leaves(tagline):
     """取标签行里**合法两级**的 (顶层, 二级) 对。
 
     如 `#科技/机器人 #AI/物理AI` → [(科技,机器人),(AI,物理AI)]。
-    严格两级：二级部分不得再含 `/`（`#科技/安全/邮件` 属三段非法，不产出），
-    否则会被误当成合法的 `(科技, 安全/邮件)`。
+    严格两级：二级部分不得再含 `/`，且**必须以空白或行尾收束**——
+    否则 `#科技/安全/邮件` 会被误当成合法的 `(科技, 安全)`。
+    二级名收尾的句读标点须剔除：`#科技/机器人。` 显然是 `科技/机器人`
+    被句号收尾，若把句号吃进二级名，近邻比对会指向不存在的簇。
+    **只剔行尾句读，不剔成对括号**——`#科技/机器人（人形）` 的括号属名字本身。
     """
     if not tagline:
         return []
-    return re.findall(r"#([^/\s#]+)/([^\s#/]+)(?=\s|$)", tagline)
+    raw = re.findall(r"#([^/\s#]+)/([^\s#/]+)(?=\s|$)", tagline)
+    tail = "，。、；：！？,.;:!?）】》」』"
+    return [(top, leaf.rstrip(tail)) for top, leaf in raw if leaf.rstrip(tail)]

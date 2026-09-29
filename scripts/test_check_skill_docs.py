@@ -59,6 +59,8 @@ CASES = [
      {"AGENTS.md": f"# 总则\n\n{DASH} 定稿。\n"}, 1, 0),
     ("技能根下的 README.md 也纳入扫描",
      {"README.md": f"# 说明\n\n{DASH} 发布。\n"}, 1, 0),
+    ("技能根下夹空行样本不误伤",
+     {SKILL: "# 规则\n\n\n只写规则。\n"}, 0, 0),
 ]
 
 
@@ -106,9 +108,36 @@ def run_real_tree_case():
     return ok
 
 
+def run_external_root_case():
+    """防回归：--root 指向外部目录时，该目录顶层的 .md 也必须纳入扫描。
+
+    历史缺陷：顶层只按 SCRIPT_SUFFIXES 收集，外部 root 的 .md 全部漏检，
+    使针对任意目录做内容纪律自检时给出假通过。
+    """
+    ok = True
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "EXTERNAL.md").write_text(f"# 外部文档\n\n{DASH} 事件。\n", encoding="utf-8")
+        (root / "plain.py").write_text(f"# {DASH} 注释\n", encoding="utf-8")
+        names = {p.name for p in CD.iter_targets(root)}
+        for want in ("EXTERNAL.md", "plain.py"):
+            hit = want in names
+            ok &= hit
+            print(f"{'PASS' if hit else 'FAIL'}  外部 root 顶层纳入扫描：{want}")
+        errs = []
+        for p in CD.iter_targets(root):
+            e, _, _ = CD.scan_file(p, root)
+            errs += e
+        has = any("EXTERNAL.md" in m for m in errs)
+        ok &= has
+        print(f"{'PASS' if has else 'FAIL'}  外部 root 的 .md 日期被检出")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
+    results.append(run_external_root_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

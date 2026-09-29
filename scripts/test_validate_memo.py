@@ -161,6 +161,15 @@ CASES = [
      "#数学/统计推断\n某概念\n\n结论先于论证：先给结论再补细节\n", 0, 0),
     ("正常结论句不判错",
      "#数学/统计推断\n某概念\n\n结论是 AI 判官可降检验成本\n", 0, 0),
+    # 卡片签名失效路径：第二行写成标签 → 签名取不到
+    # → 连带使写前幂等查重与 SOP 闸门校验同时静默失效，必须 ERR 阻断
+    ("第二行是标签判错（签名失效）",
+     "#数学/泛函\n#这不是概念名\n\n正文结论句。\n", 1, 0),
+    ("第三行是标签判错（概念名被挤走）",
+     "#数学/泛函\n\n#另一个标签\n\n正文结论句。\n", 1, 1),
+    # 反例：签名两行之外的正文不应被本条误伤（正文含 # 另由脏标签规则判，此处不重复判错）
+    ("正文普通行不因本条判错",
+     "#数学/泛函方程\n某概念\n\n结论句正常书写，无异常字符。\n", 0, 0),
 ]
 
 
@@ -243,6 +252,12 @@ def run_table_row_cases():
         ("普通句子含 | 竖线", False, "句中竖线非表格"),
         ("|", False, "仅一个竖线不足以判表格"),
         ("", False, "空串非表格"),
+        ("｜ 项目 ｜ 值 ｜", True, "全角竖线包裹行"),
+        ("｜ 项 ｜ 值 ｜ 备注 ｜", True, "全角三列表格行"),
+        ("a ｜ b ｜ c", True, "全角竖线空格成组"),
+        ("｜p｜≤r", False, "全角竖线紧贴文字属数学书写"),
+        ("|p|≤r", False, "半角竖线紧贴文字属数学书写"),
+        ("P(A|B) 表示条件概率", False, "条件概率竖线"),
     ]
     ok = True
     for s, want, label in cases:
@@ -275,11 +290,46 @@ def run_content_from_json_cases():
     return ok
 
 
+def run_gate_cases():
+    """check_gate 的签名失效路径：不得因「取不到签名」而静默放行整套闸门。"""
+    ok = True
+    cases = [
+        ("第二行是标签 → 签名失效须判错",
+         "#数学/泛函\n#这不是概念名\n\n正文结论句。\n", True),
+        ("仅一行标签 → 签名失效须判错",
+         "#数学/泛函\n", True),
+        ("结构合规但无凭证 → 判错（缺凭证）",
+         "#数学/泛函方程\n某概念\n\n正文结论句。\n", True),
+    ]
+    for label, content, want_err in cases:
+        VM.ERR.clear()
+        VM.WARN.clear()
+        VM.check_gate(content)
+        got_err = len(VM.ERR) > 0
+        same = got_err == want_err
+        ok &= same
+        print(f"{'PASS' if same else 'FAIL'}  check_gate {label}（得到 ERR={got_err}）")
+        if not same:
+            for m in VM.ERR:
+                print("      ERR :", m)
+    # 签名失效时错误信息必须点明「签名取不到」，不能只说缺凭证
+    VM.ERR.clear()
+    VM.check_gate("#数学/泛函\n#这不是概念名\n\n正文。\n")
+    has_msg = any("签名取不到" in m for m in VM.ERR)
+    ok &= has_msg
+    print(f"{'PASS' if has_msg else 'FAIL'}  check_gate 签名失效错误信息可辨识")
+    if not has_msg:
+        for m in VM.ERR:
+            print("      ERR :", m)
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_loader_cases())
     results.append(run_table_row_cases())
     results.append(run_content_from_json_cases())
+    results.append(run_gate_cases())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

@@ -54,6 +54,11 @@ def run_body_hash():
     check("同正文同指纹", MU.body_hash(CARD) == MU.body_hash(CARD))
     check("正文微改指纹即变", MU.body_hash(CARD) != MU.body_hash(CARD + "x"))
     check("None 不崩", isinstance(MU.body_hash(None), str))
+    # None 与空串必须可区分：否则"取不到正文"会被误当成"正文为空"
+    check("None 与空串指纹不同", MU.body_hash(None) != MU.body_hash(""))
+    check("None 指纹稳定", MU.body_hash(None) == MU.body_hash(None))
+    check("数字与非字符串同类型同指纹", MU.body_hash(1) == MU.body_hash(2))
+    check("字符串与非字符串指纹不同", MU.body_hash("1") != MU.body_hash(1))
 
 
 def run_keywords():
@@ -75,6 +80,22 @@ def run_tag_leaves():
     check("空值返回空表", MU.tag_leaves("") == [] and MU.tag_leaves(None) == [])
     check("三段标签不匹配两级",
           MU.tag_leaves("#科技/安全/邮件") == [])
+    # 二级名收尾标点须剔除，否则近邻比对会指向不存在的簇
+    check("二级名收尾句号被剔除", MU.tag_leaves("#科技/机器人。") == [("科技", "机器人")])
+    check("二级名收尾逗号/分号被剔除",
+          MU.tag_leaves("#科技/机器人， #投资/一级市场；")
+          == [("科技", "机器人"), ("投资", "一级市场")])
+    check("混合标点与多标签",
+          MU.tag_leaves("#科技/安全  #投资/一级市场。")
+          == [("科技", "安全"), ("投资", "一级市场")])
+    # 全角括号属二级名的一部分还是收尾标点：右括号在尾部应剔除
+    check("二级名尾右括号被剔除",
+          MU.tag_leaves("#科技/机器人）") == [("科技", "机器人")])
+    # 成对括号**未**收尾时（后接空白/行尾才算收尾），内部左括号必须保留
+    check("二级名内部左括号保留",
+          MU.tag_leaves("#科技/机器人（人形）") == [("科技", "机器人（人形")])
+    check("纯中文二级名不被误剔",
+          MU.tag_leaves("#科技/机器人") == [("科技", "机器人")])
 
 
 if __name__ == "__main__":

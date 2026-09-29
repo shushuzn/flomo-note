@@ -34,6 +34,12 @@ MAX_REDIRECTS = 6
 
 
 def _dechunk(body: bytes) -> bytes:
+    """解 chunked 传输编码。
+
+    声明长度大于实际剩余字节时，旧实现在 `rest[p+2:p+2+n]` 处静默取半截数据
+    仍按 200 落盘。此处改为原样返回已解部分并让调用方可见——宁可返回短数据
+    也不要装作完整（`_dechunk` 无法抛错影响控制流，故以长度自检收尾）。
+    """
     out, rest = b"", body
     while True:
         p = rest.find(b"\r\n")
@@ -45,7 +51,11 @@ def _dechunk(body: bytes) -> bytes:
             return out
         if n == 0:
             return out
-        out += rest[p + 2:p + 2 + n]
+        chunk = rest[p + 2:p + 2 + n]
+        if len(chunk) < n:
+            # 声明 n 字节但实际不足：传输被截断，返回已得部分而非补齐假数据
+            return out + chunk
+        out += chunk
         rest = rest[p + 2 + n + 2:]
 
 
@@ -56,24 +66,33 @@ def fetch_once(url: str, ip: str, sni: str, timeout: int = 60):
     path = parts.path or "/"
     if parts.query:
         path += "?" + parts.query
-    raw = socket.create_connection((ip, 443), timeout=timeout)
     ctx = ssl.create_default_context()
     ctx.check_hostname = False          # 证书是 SNI 域名的，不校验主机名
     ctx.verify_mode = ssl.CERT_NONE
-    ss = ctx.wrap_socket(raw, server_hostname=sni)
-    req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
-           f"User-Agent: {UA}\r\n"
-           f"Accept: application/pdf,text/html,application/xhtml+xml,*/*\r\n"
-           f"Accept-Language: en-US,en;q=0.9\r\n"
-           f"Connection: close\r\n\r\n")
-    ss.send(req.encode())
-    buf = b""
-    while True:
-        chunk = ss.recv(65536)
-        if not chunk:
-            break
-        buf += chunk
-    ss.close()
+    raw, ss, buf = None, None, b""
+    try:
+        raw = socket.create_connection((ip, 443), timeout=timeout)
+        ss = ctx.wrap_socket(raw, server_hostname=sni)
+        req = (f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+               f"User-Agent: {UA}\r\n"
+               f"Accept: application/pdf,text/html,application/xhtml+xml,*/*\r\n"
+               f"Accept-Language: en-US,en;q=0.9\r\n"
+               f"Connection: close\r\n\r\n")
+        ss.send(req.encode())
+        while True:
+            chunk = ss.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        # 本工具专治 RST / 半开连接，异常路径比正常路径更常走——
+        # 不在 finally 里关闭，重试多次会累积泄漏文件描述符。
+        for s in (ss, raw):
+            if s is not None:
+                try:
+                    s.close()
+                except OSError:
+                    pass
     head, _, body = buf.partition(b"\r\n\r\n")
     head_txt = head.decode("latin-1")
     status = head_txt.split("\r\n")[0]

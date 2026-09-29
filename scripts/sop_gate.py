@@ -187,11 +187,15 @@ def _check_dedup(client, sig, blockers, notes):
     leaves = _tag_leaves(sig["tagline"])
     near = []
     for top, leaf in leaves:
+        hit = 0
         for t in tags:
             name = t.get("name") if isinstance(t, dict) else str(t)
-            if name and (name == f"{top}/{leaf}" or leaf in str(name)):
+            # 精确匹配 `顶层/二级` 或其下的子路径；不用裸子串匹配，否则
+            # 短二级词会命中无关簇（如「机器」命中「其他/机器人架构」）。
+            if name and (name == f"{top}/{leaf}" or name.startswith(f"{top}/{leaf}/")):
                 near.append(name)
-        notes.append(f"查重·标签路「{top}/{leaf}」近邻 {len(near)} 个簇")
+                hit += 1
+        notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇")
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
@@ -235,8 +239,13 @@ def _check_web(verify_path, blockers, notes):
     except json.JSONDecodeError as e:
         blockers.append(f"验证记录非法 JSON：{e}")
         return None
-    if not data.get("searched"):
-        blockers.append("验证记录 searched != true——第 2 步未真正执行网络搜索")
+    # 严格判定：必须是 JSON 布尔 true。字符串 "false"/"no" 与数字 0 都是真值，
+    # 用真值判定会把「没搜索」的记录判为通过——这是闸门存在的意义所在。
+    if data.get("searched") is not True:
+        blockers.append(
+            f"验证记录 searched 必须为布尔 true（实际为 {data.get('searched')!r}）"
+            "——第 2 步未真正执行网络搜索"
+        )
     terms = data.get("terms") or []
     if not terms:
         blockers.append("验证记录 terms 为空——未记录任何术语核实结果")
