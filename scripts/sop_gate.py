@@ -46,6 +46,11 @@
 比对前两侧统一做归一化（去空白与千分位逗号、统一小写），避免
 `160 kW` / `160kW`、`1,055 公里` / `1055公里` 这类写法差异造成误判。
 
+**凭证自带边界声明**：凭证里的 `human_judgment` 列出本闸门**机器判不了**的项
+（如「查重候选是否同一事件」属语义判定、写云后才存在的本卡全文自查）。它是
+如实标注闸门的边界，**不参与放行判定**——一份看起来处处有据的凭证比一份
+标注了盲区的凭证更危险。
+
 退出码：0 = 闸门全过并已出凭证；1 = 有阻塞项未过（凭证不出）。
 """
 import argparse
@@ -73,6 +78,27 @@ GATE_DIR = PROJECT_ROOT / ".sop_gate"
 # 凭证有效期（秒）。同一张卡的闸门凭证在此时限内可反复用于自检，
 # 超期须重跑，避免"昨天的凭证给今天的卡用"。
 GATE_TTL = 6 * 3600
+
+# 本闸门**机器判不了、只能人工判定**的项。写进凭证是刻意的：
+# 一份处处有据、却把盲区藏起来的凭证，比一份如实标注边界的东西更危险——
+# 审计者会以为「凭证齐 = 全查过了」。清单只声明边界，不改变任何放行条件。
+_HUMAN_ITEMS = [
+    {
+        "item": "⑤ 查重：命中候选是否同一事件",
+        "why": "闸门只保证两路真的跑了、候选被读到；「是否撞卡」须按 H8 三项语义判定，机器判不了",
+        "evidence": "dedup.keyword_hits / dedup.tag_neighbors（候选已留痕）",
+    },
+    {
+        "item": "⑧ 本卡全文自查（H11 ①–④）",
+        "why": "写云后才存在本卡，闸门运行时无从校验本卡自身",
+        "evidence": "写云后回读本卡全文（memo_batch_get）并与落点核对的结论比对",
+    },
+    {
+        "item": "① 抓回原文并读回",
+        "why": "属工具侧动作，无落盘凭据可查",
+        "evidence": "本轮抓取件与正文草稿（按 H24 保留在近轮窗口，可人工比对）",
+    },
+]
 
 # 结论里的「关键参数」：数字 + 单位。用于核对搜到的参数有没有落进卡正文。
 # 单位表只收可核对的量纲，刻意不含「年/月/日」——事件日期本就写在正文里，
@@ -111,11 +137,28 @@ def _name_tokens(text):
     return _TOKEN_RE.findall(text or "")
 
 
+def _landed_record(term, landed, **extra):
+    """落点审计记录的唯一构造入口——每条都必须显式带 `landed`。
+
+    这个 `landed` 是汇总行与凭证的唯一计数依据。此前汇总行是按手写的键名清单
+    （`exempt` / `matched`）反推的，新增一条分支只要键名不同就**静默漏计**：
+    `in_body` 锚点分支返回的键是 `anchors`，于是整份都用锚点声明的验证记录会
+    显示成「0 条在正文有落点」，而凭证里锚点逐条齐全——不阻塞写入，却让审计
+    文案与事实相反。计数不能靠「猜键名」，只能靠分支自己申报。
+    """
+    rec = {"term": term, "landed": bool(landed)}
+    rec.update(extra)
+    return rec
+
+
 def _check_term_landed(item, body, blockers):
     """一条核实结论是否落进了卡正文；返回落点审计记录（写进凭证）。
 
     判定顺序见模块顶部用法说明。留痕证明「搜了」，本函数证明「写了」——
     缺了它，「搜了不用」与「留痕齐全、正文照抄原文」都能通过闸门。
+
+    每个分支一律经 `_landed_record` 返回（不得裸 dict）：计数只看 `landed`，
+    新增分支忘了申报就会被 `test_sop_gate.py` 的结构用例当场拦下。
     """
     term = (item.get("term") or "").strip()
     conclusion = item.get("conclusion") or ""
@@ -123,22 +166,25 @@ def _check_term_landed(item, body, blockers):
 
     reason = (item.get("not_in_body") or "").strip()
     if reason:
-        return {"term": term, "exempt": reason}
+        return _landed_record(term, True, exempt=reason)
 
     anchors = item.get("in_body") or []
     if anchors:
+        ok = True
         for a in anchors:
             na = _norm(a)
             if not na or na == _norm(term) or na in _norm(term):
+                ok = False
                 blockers.append(
                     f"验证术语「{term}」的 in_body 落点「{a}」无信息量"
                     "（等于或包含于术语本身）——落点须是正文里承载该结论的具体表述"
                 )
             elif na not in norm_body:
+                ok = False
                 blockers.append(
                     f"验证术语「{term}」声明的 in_body 落点「{a}」在卡正文中不存在"
                 )
-        return {"term": term, "anchors": anchors}
+        return _landed_record(term, ok, anchors=anchors)
 
     evidence = _evidence_tokens(conclusion)
     if evidence:
@@ -149,7 +195,7 @@ def _check_term_landed(item, body, blockers):
                 "但卡正文里一个都没落——「搜到」不等于「写到」，须融入正文对应要点；"
                 "确属不该写入正文的，用 not_in_body 显式豁免并给出理由"
             )
-        return {"term": term, "evidence": evidence, "matched": matched}
+        return _landed_record(term, bool(matched), evidence=evidence, matched=matched)
 
     names = _name_tokens(term)
     matched = [t for t in names if _norm(t) in norm_body]
@@ -158,7 +204,7 @@ def _check_term_landed(item, body, blockers):
             f"验证术语「{term}」在卡正文中找不到落点"
             "（结论无关键参数，按术语名比对亦未命中）"
         )
-    return {"term": term, "names": names, "matched": matched}
+    return _landed_record(term, bool(matched), names=names, matched=matched)
 
 
 def _tag_tree_total_and_count(client):
@@ -319,9 +365,37 @@ def _check_web(verify_path, body, blockers, notes):
             blockers.append(f"验证记录条目缺 term/conclusion：{t}")
             continue
         landed.append(_check_term_landed(t, body, blockers))
-    hit = sum(1 for r in landed if r.get("exempt") or r.get("matched"))
-    notes.append(f"验证·已核实 {len(terms)} 个术语，其中 {hit} 条在正文有落点或已豁免")
+    # 计数只看分支自己申报的 landed（见 _landed_record），不按键名猜——
+    # 否则新增分支一改键名就静默漏计，汇总行会与凭证内容相反。
+    hit = sum(1 for r in landed if r.get("landed"))
+    missed = [r["term"] for r in landed if not r.get("landed")]
+    line = f"验证·已核实 {len(terms)} 个术语，其中 {hit} 条在正文有落点或已豁免"
+    if missed:
+        line += f"；未落点 {len(missed)} 条（{'、'.join(missed[:3])}）"
+    notes.append(line)
     return {"searched": data.get("searched"), "term_count": len(terms), "landed": landed}
+
+
+def assemble_gate(content, sig, web, dedup, review, *, sig_key=None,
+                  expires_delta=GATE_TTL, now=None):
+    """组装凭证（纯函数：不联网、不落盘），便于用例直接断言凭证内容。
+
+    凭证字段是写云侧 `validate_memo.check_gate` 的判据来源，改动此处
+    会同时影响两侧，故单独抽出来可测。
+    """
+    ts = int(time.time()) if now is None else int(now)
+    return {
+        "signature": sig,
+        "sig_key": sig_key or signature_key(sig),
+        "body_hash": body_hash(content),
+        "generated_at": ts,
+        "expires_at": ts + expires_delta,
+        "web": web,
+        "dedup": dedup,
+        "review": review,
+        # 机器盲区随凭证留痕，供事后审计看清闸门的边界（不参与放行判定）。
+        "human_judgment": list(_HUMAN_ITEMS),
+    }
 
 
 def main():
@@ -363,6 +437,10 @@ def main():
     dedup = _check_dedup(client, sig, blockers, notes)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
+    notes.append(
+        f"闸门边界·{len(_HUMAN_ITEMS)} 项机器判不了，须人工判定（已随凭证留痕）："
+        + "；".join(i["item"] for i in _HUMAN_ITEMS)
+    )
     print()
     for n in notes:
         print("  · " + n)
@@ -374,16 +452,7 @@ def main():
         return 1
 
     sig_key = signature_key(sig)  # 与 validate_memo 侧同源，保证文件名口径一致
-    gate = {
-        "signature": sig,
-        "sig_key": sig_key,
-        "body_hash": body_hash(content),
-        "generated_at": int(time.time()),
-        "expires_at": int(time.time()) + GATE_TTL,
-        "web": web,
-        "dedup": dedup,
-        "review": review,
-    }
+    gate = assemble_gate(content, sig, web, dedup, review, sig_key=sig_key)
     if args.allow_no_gate:
         # 降级授权随凭证落盘：validate_memo.py 只在看到此标记时才认 --no-gate。
         # 于是「降级」从调用方口头声明变成凭证里的可审计事实，且绑定本卡签名与正文指纹。
