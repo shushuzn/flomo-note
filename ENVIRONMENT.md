@@ -91,6 +91,14 @@ python scripts/sni_fetch.py <url> <out_path>
 
 ---
 
+## 项目控制台
+
+- 监听 `127.0.0.1:8787`（默认）。端口已被占用时 `serve_console.py` 拒绝启动并提示换端口。
+- 脚本模块在服务**启动那一刻**加载：改过脚本须重启进程，否则跑的还是旧代码。
+- 页面渲染验证用无头浏览器：本机 `C:/Users/35234/miniconda3/python.exe` 带 playwright 1.62（Chromium 已装）。启动浏览器须加 `--no-proxy-server`，否则沙箱代理会拦下对回环地址的请求。
+
+---
+
 ## 目录与产物
 
 - 中间文件（抓取原文、草稿、请求 JSON、被替换的旧卡全文）写在 `/root/.codebuddy/artifact/<会话 id>/`，用完不即时全删，须保留最近若干轮（保留规则见 SKILL.md）。

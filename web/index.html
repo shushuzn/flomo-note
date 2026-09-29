@@ -25,7 +25,10 @@
     </div>
 
     <nav class="nav" id="nav">
-      <button class="nav-item is-active" data-view="pipeline">
+      <button class="nav-item is-active" data-view="notes">
+        <span class="nav-dot"></span>云端笔记
+      </button>
+      <button class="nav-item" data-view="pipeline">
         <span class="nav-dot"></span>九步管线
       </button>
       <button class="nav-item" data-view="limits">
@@ -46,15 +49,15 @@
       <div class="badge badge-quiet" id="conn-badge">
         <span class="badge-dot"></span><span id="conn-text">连接中…</span>
       </div>
-      <p class="foot-note">只读服务<br>不接触云端与笔记内容</p>
+      <p class="foot-note">只读：不写云端<br>笔记内容不落盘</p>
     </div>
   </aside>
 
   <main class="main">
     <header class="topbar">
       <div>
-        <h1 class="page-title" id="page-title">九步管线</h1>
-        <p class="page-sub" id="page-sub">从抓取到写云的强制执行顺序</p>
+        <h1 class="page-title" id="page-title">云端笔记</h1>
+        <p class="page-sub" id="page-sub">只读浏览 flomo 云端卡片：搜索、按标签筛、读全文</p>
       </div>
       <div class="topbar-actions">
         <button class="btn btn-ghost" id="btn-refresh" title="重新读取仓库数据">
@@ -72,6 +75,18 @@
     <div class="view" id="view"></div>
   </main>
 </div>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <span class="drawer-kind">memo</span>
+    <button class="drawer-close" id="drawer-close" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
