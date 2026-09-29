@@ -72,6 +72,14 @@ python scripts/sni_fetch.py <url> <out_path>
 
 原理：SNI 换成无关域名、HTTP `Host` 头保留目标域，Fastly 按 Host 路由故内容照常返回（自动跟随重定向、去 chunked/gzip）。
 
+### 隧道与取件的实测背景
+
+- **`git_tunnel.py` 的由来**：本机 DNS 曾把 `github.com` 解析到新加坡 Azure 段地址，该 IP 的 443 端口 TCP 超时；换 SNI、不发 SNI 均超时，判定为路由不通（非 SNI 关键字阻断）。因此改为把连接重定向到美国段可达 IP，同时保持 SNI 与证书校验仍为 `github.com`。
+- **`sni_fetch.py` 的由来**：本机网络对 SNI 中出现 `arxiv.org` 的 TLS ClientHello 直接回 RST（TCP 能建连、约 0.08s 后 `ConnectionResetError`）；换 SNI 为 `www.bing.com` 或去 SNI 即握手成功，确认为 SNI 关键字过滤。arXiv 走 Fastly，Fastly 按 HTTP `Host` 头路由，故前置 SNI 后内容照常返回。
+
+> 上两条为一次性实测记录（H28 要求此类细节只落本文件，技能文档与脚本注释只写抽象理由）。
+
+
 ---
 
 ## 目录与产物
