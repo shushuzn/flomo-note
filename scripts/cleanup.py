@@ -10,15 +10,21 @@
 Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目录存在则一并纳入扫描
 （Windows 老环境），不存在则自动跳过（Linux 下即为此情形，不报错）。
 
+近轮窗口
+    只清「与近轮无关的历史残留」（H24/H27）：`collect()` 跳过修改时间落在
+    `RECENT_WINDOW_MINUTES` 之内的项，故当轮与近轮的抓取原文、草稿、请求 JSON
+    不会被同一轮收尾即刻删掉；窗口之外才参与归档删除。窗口可用 `--keep-minutes`
+    覆盖（0 = 关闭窗口，全部参与清理）。
+
 保留项（绝不删）：
-  - 项目根 `_tmp_extract.py`（项目抽取工具）
   - 标签树快照 `tag_tree.txt`（现采缓存，不入库）
   - `.workbuddy/trash/*`（历史备份包，即归档目标本身）
   - 临时目录内的他项目旧件（`arxiv_test.xml`、`arxiv_vibe.xml`）
   - 临时目录内的活动工作区（`flomo-push` 仓库镜像、`sounding_flomo` 审计目录）
+  - 落在近轮窗口内的全部项（见上）
 
 删除范围（文件与目录一并处理）：
-  - 项目根：`_tmp_*`（除 `_tmp_extract.py`）
+  - 项目根：`_tmp_*`、`memo_body*.txt`（写卡草稿，内容已入云）
   - 临时目录：抓取件（`arxiv_*` / `ithome_*`）、flomo 包与备份（`flomo_*` /
               `flomo-note*`）、sounding 链（`sounding_*` / `sounding.tgz`）、
               历轮中间产物（`h15*` / `kilo_removed_archive` / `*_body.txt` /
@@ -27,9 +33,11 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
   - `.workbuddy/lb_out/`：`*_create.json`、`*_memo.txt`、`*.err`
 
 用法：
-  python scripts/cleanup.py            # 执行清理（默认）
-  python scripts/cleanup.py --dry-run  # 只列名不删
-  python scripts/cleanup.py --verify   # 只复核残留是否为 0（CI / 自校，非 0 则退出码 1）
+  python scripts/cleanup.py                    # 执行清理（默认）
+  python scripts/cleanup.py --dry-run          # 只列名不删
+  python scripts/cleanup.py --verify           # 只复核残留是否为 0（CI / 自校，非 0 则退出码 1）
+  python scripts/cleanup.py --list-rules       # 打印生效的扫描与保留规则
+  python scripts/cleanup.py --keep-minutes N   # 覆盖近轮窗口（0 = 关闭）
 """
 import argparse
 import os
@@ -38,6 +46,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -55,7 +64,7 @@ if _LEGACY_TMP.is_dir() and _LEGACY_TMP not in _TMP_CANDIDATES:
 # 临时目录规则按"本项目产物特征"覆盖，而非零散白名单——白名单漏项会让
 # `--verify` 在残留尚存时误报「残留 = 0」（曾漏掉目录形态的中间产物）。
 SCAN = [
-    (PROJECT_ROOT, ["_tmp_*"]),
+    (PROJECT_ROOT, ["_tmp_*", "memo_body*.txt"]),
     (LB_OUT, ["*_create.json", "*_memo.txt", "*.err"]),
 ]
 for _t in _TMP_CANDIDATES:
@@ -79,11 +88,17 @@ for _t in _TMP_CANDIDATES:
 
 # 显式保留（命中 glob 也不删）：键为所在目录，值为文件名集合
 KEEP = {
-    PROJECT_ROOT: {"_tmp_extract.py", "tag_tree.txt"},
+    PROJECT_ROOT: {"tag_tree.txt"},
 }
 for _t in _TMP_CANDIDATES:
     # sounding_flomo：审计工具保留目录；flomo-push：仓库活动镜像（推送用，勿删）
     KEEP[_t] = {"arxiv_test.xml", "arxiv_vibe.xml", "sounding_flomo", "flomo-push"}
+
+
+# 近轮窗口（分钟）：修改时间落在此窗口内的项视为当轮/近轮素材，按 H24/H27 保留，
+# 不参与清理；窗口之外的才属「与近轮无关的历史残留」。0 = 关闭窗口（全部参与清理）。
+# 窗口值属脚本参数，随环境调整时只改此处或走 --keep-minutes，文档不复述。
+RECENT_WINDOW_MINUTES = 24 * 60
 
 
 def _arcname(p: Path) -> str:
@@ -117,7 +132,15 @@ def _force_remove(p: Path):
         pass
 
 
-def collect():
+def collect(keep_minutes=None, skipped=None):
+    """收集应清理的残留；修改时间落在近轮窗口内的项跳过（H24/H27）。
+
+    `keep_minutes=None` 取默认窗口，0 表示关闭窗口。命中的近轮项追加进
+    `skipped`（调用方传列表时），供打印可见性，不做静默放行。
+    """
+    if keep_minutes is None:
+        keep_minutes = RECENT_WINDOW_MINUTES
+    cutoff = time.time() - keep_minutes * 60 if keep_minutes > 0 else None
     candidates = []
     for base, patterns in SCAN:
         if not base.exists():
@@ -127,14 +150,22 @@ def collect():
                 keep = KEEP.get(base)
                 if keep is not None and p.name in keep:
                     continue
+                if cutoff is not None:
+                    try:
+                        if p.stat().st_mtime >= cutoff:
+                            if skipped is not None:
+                                skipped.append(p)
+                            continue
+                    except OSError:
+                        pass
                 candidates.append(p)
     # 去重并排序，稳定输出
     uniq = sorted({str(p) for p in candidates})
     return [Path(p) for p in uniq]
 
 
-def verify():
-    return collect()
+def verify(keep_minutes=None):
+    return collect(keep_minutes)
 
 
 def list_rules():
@@ -149,6 +180,7 @@ def list_rules():
         if names:
             print(f"  {base}: {', '.join(sorted(names))}")
     print("[cleanup] 归档目录:", TRASH_DIR)
+    print(f"[cleanup] 近轮窗口: 窗口内（mtime ≥ now - {RECENT_WINDOW_MINUTES} 分钟）的项保留，不参与清理")
 
 
 def main():
@@ -156,6 +188,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="只列名不删")
     ap.add_argument("--verify", action="store_true", help="只复核残留是否为 0")
     ap.add_argument("--list-rules", action="store_true", help="打印生效的扫描与保留规则后退出")
+    ap.add_argument("--keep-minutes", type=int, default=RECENT_WINDOW_MINUTES,
+                    help=f"近轮窗口（分钟）：窗口内视为近轮素材不清理；0 = 关闭窗口（默认 {RECENT_WINDOW_MINUTES}）")
     args = ap.parse_args()
 
     if args.list_rules:
@@ -163,17 +197,19 @@ def main():
         return
 
     if args.verify:
-        left = verify()
+        skipped = []
+        left = collect(args.keep_minutes, skipped)
         if left:
             print(f"[cleanup] 残留 {len(left)} 个（应清未清）：")
             for p in left:
                 print(f"  {p}")
             sys.exit(1)
-        print("[cleanup] 残留 = 0，OK")
+        print(f"[cleanup] 残留 = 0，OK（近轮素材保留 {len(skipped)} 个）")
         return
 
-    candidates = collect()
-    print(f"[cleanup] 待清理 {len(candidates)} 个：")
+    skipped = []
+    candidates = collect(args.keep_minutes, skipped)
+    print(f"[cleanup] 待清理 {len(candidates)} 个（近轮素材保留 {len(skipped)} 个）：")
     for p in candidates:
         print(f"  {p}")
 
@@ -204,7 +240,7 @@ def main():
     for p in candidates:
         _force_remove(p)
 
-    left = verify()
+    left = verify(args.keep_minutes)
     assert len(left) == 0, f"复核失败，残留 {len(left)} 个"
     print(f"[cleanup] 已归档 {archive}（顶层 {members} 个），删除并复核残留 = 0，OK")
 
