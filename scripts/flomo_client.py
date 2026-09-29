@@ -143,6 +143,15 @@ class FlomoClient:
         }
         return self._post(payload)
 
+    def tools_list(self):
+        """列出云端 MCP 暴露的全部工具（协议层元信息，不读任何卡片数据）。
+
+        与 `tool()` 的区别：这是 JSON-RPC 的发现方法，不是工具调用，故不列入
+        工具白名单——白名单管的是「能调哪些工具」，本方法不调任何工具。
+        """
+        payload = {"jsonrpc": "2.0", "id": next(_IDS), "method": "tools/list", "params": {}}
+        return self._post(payload)
+
 
 def usage():
     print(__doc__)

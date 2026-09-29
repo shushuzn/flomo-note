@@ -29,7 +29,13 @@
         <span class="nav-dot"></span>云端笔记
       </button>
       <button class="nav-item" data-view="tags">
-        <span class="nav-dot"></span>标签树
+        <span class="nav-dot"></span>标签
+      </button>
+      <button class="nav-item" data-view="reference">
+        <span class="nav-dot"></span>参考
+      </button>
+      <button class="nav-item" data-view="tools">
+        <span class="nav-dot"></span>能力
       </button>
     </nav>
 
@@ -66,7 +72,7 @@
 
 <aside class="drawer" id="drawer" aria-hidden="true">
   <div class="drawer-head">
-    <span class="drawer-kind">memo</span>
+    <span class="drawer-kind" id="drawer-kind">memo</span>
     <button class="drawer-close" id="drawer-close" aria-label="关闭">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
