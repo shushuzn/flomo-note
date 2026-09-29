@@ -375,6 +375,11 @@ class CloudReader:
 
         `write=False`（默认）只放行读白名单；写工具须显式 `write=True` 才放行，
         读路径上写工具一律拒——避免「顺手」从读方法里发出写操作。
+
+        失败一律**转成 `CloudError`**：本层是控制台与云端之间的唯一边界，任何漏出去的
+        异常都会在 HTTP 服务里变成「连接被掐断、错误传不出去」。除普通异常外还显式拦
+        `SystemExit`（`BaseException` 子类，`except Exception` 接不住）——客户端历史上
+        拿它表示协议错误，这类错误绝不能让响应半途失联。
         """
         allowed = WRITE_TOOLS if write else READONLY_TOOLS
         if name not in allowed:
@@ -384,7 +389,7 @@ class CloudReader:
             return self._connect().tool(name, arguments or {})
         except CloudError:
             raise
-        except Exception as e:  # noqa: BLE001 — 网络/协议异常统一转 CloudError
+        except (Exception, SystemExit) as e:  # noqa: BLE001 — 网络/协议异常统一转 CloudError
             # 会话可能已失效：丢弃连接，下次请求重连
             self._reset()
             raise CloudError(f"云端调用失败（{name}）：{type(e).__name__}: {e}") from None
@@ -728,7 +733,7 @@ class CloudReader:
         """
         try:
             raw = self._connect().tools_list()
-        except Exception as e:  # noqa: BLE001 — 统一转 CloudError，交给上层降级
+        except (Exception, SystemExit) as e:  # noqa: BLE001 — 统一转 CloudError，交给上层降级
             self._reset()
             raise CloudError(f"取工具清单失败：{type(e).__name__}: {e}") from None
 

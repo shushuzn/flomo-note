@@ -27,6 +27,11 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 from memo_util import count_snapshot, render_tag_tree, snapshot_total  # noqa: E402
 
+# 客户端异常提到模块级：`main()` 里按需局部导入客户端是为离线模式（--response），
+# 但入口的 `except FlomoError` 必须在模块级可见——否则异常匹配时会 NameError。
+# flomo_client 导入期不联网、不读 token，模块级导入无副作用。
+from flomo_client import FlomoError  # noqa: E402
+
 # 快照的全部留存路径：闸门对每条路径都做核对，须同时保持自洽。
 SNAPSHOT_PATHS = [PROJECT_ROOT / "tag_tree.txt", SCRIPT_DIR / "tag_tree.txt"]
 
@@ -144,4 +149,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # CLI 入口把库异常转成退出码（非 0）
+    try:
+        sys.exit(main())
+    except FlomoError as e:
+        print(f"[失败] 云端调用出错：{e}", file=sys.stderr)
+        sys.exit(2)

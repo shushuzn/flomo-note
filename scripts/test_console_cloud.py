@@ -47,6 +47,7 @@ def check(name, ok, detail=""):
 
 def load_module():
     here = Path(__file__).resolve().parent
+    sys.path.insert(0, str(here))
     spec = importlib.util.spec_from_file_location("console_cloud", here / "console_cloud.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["console_cloud"] = mod
@@ -55,6 +56,8 @@ def load_module():
 
 
 C = load_module()
+# 客户端自己的异常类型（与 console_cloud 同源导入，避免两处各写一份）
+from flomo_client import FlomoError  # noqa: E402
 
 # 时间戳由片段拼接构造，不在源码里写出完整日期字面量（技能文档内容自检对脚本同样生效）
 TS = "20" + "26" + "-09-29T18:20:34+08:00"
@@ -75,6 +78,11 @@ def wrap(memos):
     """云端工具返回的包裹结构（结构化数据在 structuredContent）。"""
     return {"content": [{"type": "text", "text": json.dumps({"memos": memos}, ensure_ascii=False)}],
             "structuredContent": {"memos": memos}}
+
+
+def _as_exc(value):
+    """桩注入的异常：实例原样抛，字符串包成 RuntimeError。"""
+    return value if isinstance(value, BaseException) else RuntimeError(value)
 
 
 def text_reply(value):
@@ -111,7 +119,11 @@ TOOL_LIST = {
 
 
 class FakeClient:
-    """桩客户端：记录调用、可注入返回值或异常。"""
+    """桩客户端：记录调用、可注入返回值或异常。
+
+    `raises` 的值可以是异常实例（原样抛出，用来验证 `SystemExit` 这类
+    `BaseException` 子类也被边界接住），也可以是字符串（包成 `RuntimeError`）。
+    """
 
     def __init__(self, responses=None, raises=None, tool_list=None):
         self.calls = []
@@ -127,14 +139,14 @@ class FakeClient:
     def tool(self, name, arguments=None):
         self.calls.append((name, arguments or {}))
         if name in self._raises:
-            raise RuntimeError(self._raises[name])
+            raise _as_exc(self._raises[name])
         return self._responses.get(name, wrap([]))
 
     def tools_list(self):
         """协议发现方法（不是工具调用）：工具清单不走白名单，但也不读卡片数据。"""
         self.list_calls += 1
         if "tools/list" in self._raises:
-            raise RuntimeError(self._raises["tools/list"])
+            raise _as_exc(self._raises["tools/list"])
         return self._tool_list
 
 
@@ -567,6 +579,30 @@ def run_read_tool_entry():
     except C.CloudError as e:
         got = "缺工具名" if "缺少工具名" in str(e) else str(e)
     check("通用入口拒绝空工具名", got == "缺工具名", got)
+
+    # 边界兜底：客户端无论抛什么（含 BaseException 子类 SystemExit），
+    # 都必须在本层转成 CloudError。漏出去 = HTTP 连接被掐断、错误传不到界面。
+    for exc, label in ((FlomoError("MCP error: 缺 id"), "FlomoError"),
+                       (SystemExit("MCP error: 缺 id"), "SystemExit")):
+        bad, _ = reader_for(FakeClient(raises={"memo_recommended": exc}))
+        try:
+            bad.run_read_tool("memo_recommended", {})
+            got = "未拦下"
+        except C.CloudError as e:
+            got = "CloudError" if "云端调用失败（memo_recommended）" in str(e) else str(e)
+        except BaseException as e:  # noqa: BLE001 — 漏出 BaseException 即本次要防的缺陷
+            got = f"漏出 {type(e).__name__}"
+        check(f"客户端抛 {label} 时转 CloudError", got == "CloudError", got)
+
+    bad_cat, _ = reader_for(FakeClient(raises={"tools/list": SystemExit("boom")}))
+    try:
+        bad_cat.tool_catalog()
+        got = "未拦下"
+    except C.CloudError as e:
+        got = "CloudError" if "取工具清单失败" in str(e) else str(e)
+    except BaseException as e:  # noqa: BLE001
+        got = f"漏出 {type(e).__name__}"
+    check("工具清单遇 SystemExit 也转 CloudError", got == "CloudError", got)
 
 
 # --------------------------------------------------------------------------- #
