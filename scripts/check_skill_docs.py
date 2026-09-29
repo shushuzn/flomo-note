@@ -47,14 +47,20 @@ CONST_LINE_RE = re.compile(r"(?i)version|protocol")
 # 属模式定义而非叙事，故对这两个文件只停用叙事扫描（日期扫描照常生效），并打印 SKIP 保持可见。
 NARRATIVE_SELF_EXEMPT = {"check_skill_docs.py", "test_check_skill_docs.py"}
 
-SKILL_DIR_REL = Path(".kilo/skills/flomo-note")
 DOC_SUFFIXES = {".md", ".py", ".sh"}
 SCRIPT_SUFFIXES = {".py", ".sh"}
 EXEMPT_NAMES = {"ENVIRONMENT.md"}
 
 
 def iter_targets(root: Path):
-    """产出待扫描文件：技能目录全量 + 仓库根与 scripts 目录下的脚本。"""
+    """产出待扫描文件：**技能根全量文档** + 仓库根与 scripts 目录下的脚本。
+
+    技能根 = 本脚本所在目录的上一级（`scripts/` 的同级），**按脚本位置推导**，
+    不依赖仓库目录名约定（历史教训：曾硬编码 `.kilo/skills/flomo-note`，
+    而实际技能目录名不同，导致 SKILL.md/AGENTS.md/README.md 全部漏检，
+    H28 自检"0 错"实为假通过）。
+    若 `--root` 指向的目录本身即技能根（含 scripts/），同样能正确覆盖。
+    """
     seen = set()
 
     def fresh(p: Path) -> bool:
@@ -66,11 +72,15 @@ def iter_targets(root: Path):
         seen.add(rp)
         return True
 
-    skill_dir = root / SKILL_DIR_REL
-    if skill_dir.is_dir():
-        for p in sorted(skill_dir.rglob("*")):
+    # 技能根：脚本自身位置的上一级，与 --root 取并集（两者可能是同一目录）
+    skill_roots = {Path(__file__).resolve().parent.parent}
+    if root.is_dir():
+        skill_roots.add(root)
+    for sk in sorted(skill_roots):
+        for p in sorted(sk.glob("*")):
             if p.suffix.lower() in DOC_SUFFIXES and p.name not in EXEMPT_NAMES and fresh(p):
                 yield p
+
     for p in sorted(root.glob("*")):
         if p.suffix.lower() in SCRIPT_SUFFIXES and fresh(p):
             yield p

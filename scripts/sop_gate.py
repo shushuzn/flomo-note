@@ -41,6 +41,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, load_token, _result_memos  # noqa: E402
+from memo_util import (  # noqa: E402
+    body_hash,
+    concept_keywords,
+    memo_signature,
+    signature_key,
+    tag_leaves,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -51,44 +58,24 @@ GATE_TTL = 6 * 3600
 
 
 def _signature(content):
-    """与 flomo_client._memo_signature 同口径：首行标签行 + 第二行概念名行。
-
-    注意：卡片正文首行可能是标签段、第二行可能是空行（H14 允许两种写法），
-    故取"前三个非空行"的前两行，保证与云端签名一致。
-    """
-    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    if len(lines) < 2:
-        return None
-    tagline, concept = lines[0], lines[1]
-    if not tagline.startswith("#") or not concept:
-        return None
-    return {"tagline": tagline, "concept": concept}
+    """签名（委托 memo_util.memo_signature，返回 dict）。"""
+    return memo_signature(content)
 
 
 def _body_hash(content):
-    """正文整体指纹。纳入凭证，杜绝"先跑闸门、后改正文"的绕过。"""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    """正文整体指纹（委托 memo_util.body_hash）。"""
+    return body_hash(content)
 
 
 def _concept_keywords(concept):
-    """从概念名派生检索词（与 flomo_client._dup_candidate_keywords 同思路）。"""
-    kws = []
-    clean = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", concept)
-    zh = re.findall(r"[\u4e00-\u9fff]{4,}", concept)
-    if zh:
-        kws.append(max(zh, key=len))
-    if clean:
-        kws.append(clean[:8])
-    out = []
-    for k in kws:
-        if k and k not in out:
-            out.append(k)
-    return out[:2]
+    """从概念名派生检索词（与 flomo_client 同源，见 memo_util.concept_keywords）。"""
+    # 概念名并非完整卡片，用一行标签占位使其通过 memo_signature 的结构校验
+    return concept_keywords(f"#_/_\n{concept}\n", limit=2)
 
 
 def _tag_leaves(tagline):
     """取标签行里的二级词（如 #科技/机器人 → 机器人）。"""
-    return re.findall(r"#([^/\s#]+)/([^\s#]+)", tagline)
+    return tag_leaves(tagline)
 
 
 def _tag_tree_total_and_count(client):
@@ -289,7 +276,7 @@ def main():
     client = FlomoClient(token)
     client.init()
 
-    tag = _check_tag_tree(client, blockers, notes)      # ④
+    _check_tag_tree(client, blockers, notes)      # ④
     dedup = _check_dedup(client, sig, blockers, notes)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
@@ -303,13 +290,11 @@ def main():
         print(f"闸门未过：{len(blockers)} 项阻塞，未生成凭证", file=sys.stderr)
         return 1
 
-    sig_key = hashlib.sha256(
-        (sig["tagline"] + "\n" + sig["concept"]).encode("utf-8")
-    ).hexdigest()[:16]
+    sig_key = signature_key(sig)  # 与 validate_memo 侧同源，保证文件名口径一致
     gate = {
         "signature": sig,
         "sig_key": sig_key,
-        "body_hash": _body_hash(content),
+        "body_hash": body_hash(content),
         "generated_at": int(time.time()),
         "expires_at": int(time.time()) + GATE_TTL,
         "web": web,

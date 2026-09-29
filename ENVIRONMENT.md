@@ -19,7 +19,7 @@
 ## flomo 连接
 
 - 端点：`https://flomoapp.com/mcp`（Bearer 鉴权）。
-- token 来源优先级：环境变量 `FLOMO_TOKEN` > 项目根 `.mcp.json` 的 `mcpServers.flomo.headers.Authorization`。
+- token 来源优先级：**项目根 `.mcp.json` 的 `mcpServers.flomo.headers.Authorization` 优先**；仅在该文件不存在时后备到环境变量 `FLOMO_TOKEN`（env 中的 token 可能过期，故不作权威来源）。
 - `.mcp.json` 含 token，**已 gitignore，绝不入库**。
 - 本环境无 MCP 面板，`.mcp.json` 不会被自动加载，统一走 `scripts/flomo_client.py` 直连。
 

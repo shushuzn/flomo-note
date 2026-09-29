@@ -69,18 +69,21 @@ flomo-note/
 ├── SKILL.md                   # 执行细则（唯一细则源）
 ├── ENVIRONMENT.md             # 运行环境事实（路径、代理、通道）
 ├── scripts/
+│   ├── memo_util.py           # 签名/指纹/关键词 唯一实现（三脚本共用）
 │   ├── flomo_client.py        # flomo MCP 调用唯一入口
 │   ├── sop_gate.py            # SOP 流程闸门（代跑核对/查重/复盘，出凭证）
 │   ├── validate_memo.py       # 写云前文本质检 + 闸门凭证校验
+│   ├── test_memo_util.py      # 公共实现回归用例
 │   ├── test_validate_memo.py  # 质检脚本回归用例
 │   ├── test_sop_gate.py       # 闸门脚本回归用例
+│   ├── test_check_skill_docs.py  # 文档纪律自检回归用例
 │   ├── check_skill_docs.py    # 技能文档内容纪律自检
 │   ├── sni_fetch.py           # SNI 被阻断时的取件通道
-│   ├── git_tunnel.py          # GitHub 本地 CONNECT 透传通道
+│   ├── git_tunnel.py          # GitHub 本地透传通道
 │   ├── push_skill.sh          # 文档改动强制推送
 │   ├── cleanup.py             # 收尾强制清理残留
 │   └── run_audit.sh / audit_skill.sh  # 技能文档结构审计
-├── .gitignore                 # 忽略本地敏感文件与现采缓存
+├── .gitignore                 # 忽略凭据与现采缓存
 └── README.md                  # 本文件
 ```
 
@@ -89,8 +92,9 @@ flomo-note/
 | `AGENTS.md` | 项目总则：全局约定与收口原则 |
 | `SKILL.md` | 执行细则：卡片格式、标签规则、SOP 流程、硬限清单（H1–Hn） |
 | `ENVIRONMENT.md` | 环境事实：平台、路径、token 来源、代理与推送通道 |
+| `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现 |
 | `sop_gate.py` | 流程闸门：代跑标签树核对 / 查重两路 / 复盘三路，校验验证留痕 |
-| `validate_memo.py` | 文本质检（格式、标签、来源、载体）+ 闸门凭证校验 |
+| `validate_memo.py` | 文本质检（格式、标签、来源、载体、字数）+ 闸门凭证校验 |
 
 ---
 

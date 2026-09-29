@@ -5,8 +5,8 @@
 经 SKILL 实测，可用 curl 直连 streamable-http 端点调工具。本脚本用纯标准库
 实现同一条通道，便于反复调用与脚本化，并把握手、SSE 解析、token 读取收敛到一处。
 
-token 来源优先级：环境变量 FLOMO_TOKEN > 项目根 .mcp.json 的
-mcpServers.flomo.headers.Authorization（.mcp.json 已 gitignore，不入库）。
+token 来源优先级：项目根 .mcp.json 的 mcpServers.flomo.headers.Authorization > 环境变量
+FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备，因其可能过期）。
 
 用法：
   python flomo_client.py <tool名> ['{"参数":值}']
@@ -27,6 +27,9 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from memo_util import concept_keywords, memo_signature  # noqa: E402
 
 ENDPOINT = "https://flomoapp.com/mcp"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -170,55 +173,23 @@ def _result_memos(result):
 
 
 def _dup_candidate_keywords(content):
-    """从卡片正文生成候选检索词。整行概念名含全角标点时 flomo 全文检索
-    常匹配失败（返回 0），必须额外生成短核心词。候选集：
-    概念名去标点后的最长连续中文字段 / 首行标签的二级词 / 概念名去标点全串。
+    """从卡片正文生成候选检索词（委托 memo_util.concept_keywords）。
+
+    历史实现内联于此；现收敛到 memo_util 单一实现，避免与闸门/校验两处口径漂移。
     """
-    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
-    if not lines:
-        return []
-    tagline = lines[0]
-    concept = lines[1] if len(lines) > 1 else lines[0]
-    kws = []
-    # 概念名去标点（保留中英文与数字）
-    clean = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", concept)
-    if clean:
-        kws.append(clean)
-    # 概念名内最长连续中文段
-    zh = re.findall(r"[\u4e00-\u9fff]{4,}", concept)
-    if zh:
-        kws.append(max(zh, key=len))
-    # 标签二级词（#顶层/二级 的 二级）
-    m = re.search(r"#([^/\s]+)/([^\s]+)", tagline)
-    if m:
-        kws.append(m.group(2))
-    # 概念名去除标点后的前 8 个字符
-    if clean:
-        kws.append(clean[:8])
-    # 去重保序，限长
-    out = []
-    for k in kws:
-        if k and k not in out:
-            out.append(k)
-    return out[:4]
+    return concept_keywords(content, limit=4)
 
 
 def _memo_signature(text):
-    """取卡片稳定签名 = (首行标签行, 第二行概念名行)。
+    """取卡片稳定签名 = (首行标签行, 第二行概念名行)——委托 memo_util.memo_signature。
 
-    flomo 云端存储会对正文特殊字符做转义（反斜杠 u003e、反斜杠竖线 等），全文逐字比对必然失败；
-    而 search 返回的前两行即使正文被截断也始终完整，是可靠的重复判定依据。
-    已清空（content 为空白）或格式异常（不足两行）的卡返回 None，不参与判定。
+    保留本包装仅为兼容既有调用点；新代码应直接用 memo_util.memo_signature
+    （返回 dict，便于与闸门凭证的签名字段直接比对）。
     """
-    if not text:
+    sig = memo_signature(text)
+    if not sig:
         return None
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if len(lines) < 2:
-        return None
-    tagline, concept = lines[0], lines[1]
-    if not (tagline.startswith("#") and concept):
-        return None
-    return (tagline, concept)
+    return (sig["tagline"], sig["concept"])
 
 
 def _exact_content_dup(client, content):
