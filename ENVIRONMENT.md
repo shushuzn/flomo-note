@@ -12,7 +12,7 @@
 - 当前沙箱：Ubuntu 22.04 linux/amd64，root 用户，工作目录 `/workspace`。
 - Python：`python3`（3.11）；依赖用 `sudo pip3 install <包>` 或 `sudo uv pip install --system <包>`。
 - 技能安装位置：`~/.codebuddy/skills/flomo-note/`（含 `SKILL.md`、`AGENTS.md`、`scripts/`）。
-- 历史记录：本技能早期曾在 Windows 环境运行，脚本内可能残留 Windows 路径（如 `C:/Users/.../.workbuddy/binaries/python/...`）。**若脚本报路径不存在，按当前平台改 `python3`，不要照抄 Windows 路径。**
+- 脚本已做**平台自适应**：`run_audit.sh` / `push_skill.sh` 自动探测 `$PYTHON_BIN` → `python3` → `python`；仅 Windows(Git Bash) 才启用 Git 目录 PATH 修正与 `gh.exe` 凭据助手。跨平台无需改脚本，必要时用 `PYTHON_BIN=...` 显式指定解释器。
 
 ---
 
