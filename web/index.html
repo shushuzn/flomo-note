@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flomo-note · 控制台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h9L20 9.5v9A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5z"/>
+          <path d="M14 4v6h6"/><path d="M8 14h8"/><path d="M8 17h5"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">flomo-note</div>
+        <div class="brand-sub">项目控制台</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-view="pipeline">
+        <span class="nav-dot"></span>九步管线
+      </button>
+      <button class="nav-item" data-view="limits">
+        <span class="nav-dot"></span>硬限清单
+      </button>
+      <button class="nav-item" data-view="scripts">
+        <span class="nav-dot"></span>脚本与回归
+      </button>
+      <button class="nav-item" data-view="tags">
+        <span class="nav-dot"></span>标签树
+      </button>
+      <button class="nav-item" data-view="docs">
+        <span class="nav-dot"></span>文档
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="badge badge-quiet" id="conn-badge">
+        <span class="badge-dot"></span><span id="conn-text">连接中…</span>
+      </div>
+      <p class="foot-note">只读服务<br>不接触云端与笔记内容</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 class="page-title" id="page-title">九步管线</h1>
+        <p class="page-sub" id="page-sub">从抓取到写云的强制执行顺序</p>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" id="btn-refresh" title="重新读取仓库数据">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/>
+          </svg>
+          刷新
+        </button>
+      </div>
+    </header>
+
+    <section class="stats" id="stats"></section>
+
+    <div class="view" id="view"></div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

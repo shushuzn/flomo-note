@@ -8,9 +8,11 @@ tag_tree.txt
 .sop_gate/
 .workbuddy/
 
-# 写卡中间态：待校验正文，以及历轮留存的草稿副本（memo_body_*.txt）
+# 写卡中间态与验证产物：待校验正文、历轮草稿副本、当轮抓取件与冒烟脚本
+# （`_tmp_*` 由 cleanup.py 按近轮窗口清理，属瞬时产物，一律不入库）
 memo_body*.txt
 tmp_*
+_tmp_*
 
 # 依赖与日志
 node_modules/
