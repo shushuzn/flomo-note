@@ -26,6 +26,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cleanup import SCAN as _CLEANUP_SCAN  # noqa: E402  素材口径同源，不另写一份
+
 # 日期形态。用 \d 书写，脚本自身不含真实日期字面量，故不会自命中。
 # 月 / 日分支一律「两位在前」（1[0-2] 先于 0?[1-9]、3[01]/[12]\d 先于 0?[1-9]），
 # 否则交替优先会让 '26' 只匹配到 '2'，命中结果被截短。
@@ -53,8 +56,33 @@ DOC_SUFFIXES = {".md", ".py", ".sh"}
 SCRIPT_SUFFIXES = {".py", ".sh"}
 # 任何技能文档都不豁免日期扫描——H28 是严格禁止，无例外。
 # ENVIRONMENT.md 同样受日期（ERR）与叙事词（WARN）双重约束：
-# 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的」。
+# 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的"。
 EXEMPT_NAMES: set[str] = set()
+
+
+def _transient_patterns():
+    """项目根下的**瞬时产物** glob，取自 `cleanup.SCAN`（唯一实现，不另写一份）。
+
+    这些是抓取件 / 写卡草稿 / 请求回执：按 H24 只在近轮窗口内存活、由 cleanup
+    按轮回收，既不入库、也不是我们写下的文档。H28 管的是「技能文档禁写日期」，
+    拿抓来的**别人写的**原文（含发布日期、变更日志）当违规报出，是在放一条
+    并不存在的违规——它不指任何人，却会让人以为仓库文档违规，真实文档的违规
+    反而被这条噪声淹没。故按产物属性排除，而非按文件名开后门。
+    """
+    out = []
+    for base, pats in _CLEANUP_SCAN:
+        if Path(base) == Path(__file__).resolve().parent.parent:
+            out.extend(pats)
+    return tuple(out)
+
+
+TRANSIENT_PATTERNS = _transient_patterns()
+
+
+def is_transient(name: str) -> bool:
+    """文件名是否属项目根下的瞬时产物（抓取件 / 草稿 / 回执）。"""
+    from fnmatch import fnmatch
+    return any(fnmatch(name, pat) for pat in TRANSIENT_PATTERNS)
 
 
 def iter_targets(root: Path):
@@ -65,11 +93,16 @@ def iter_targets(root: Path):
     而实际技能目录名不同，导致 SKILL.md/AGENTS.md/README.md 全部漏检，
     H28 自检"0 错"实为假通过）。
     若 `--root` 指向的目录本身即技能根（含 scripts/），同样能正确覆盖。
+    项目根下的瞬时产物（`_tmp_*` / `memo_body*.txt`，见 `TRANSIENT_PATTERNS`）
+    一律不扫：它们是抓取件与写卡草稿，不是我们写下的文档，拿其中别人写的
+    日期当 H28 违规报出属于报假警。
     """
     seen = set()
 
     def fresh(p: Path) -> bool:
         if not p.is_file() or "__pycache__" in p.parts:
+            return False
+        if is_transient(p.name):
             return False
         rp = p.resolve()
         if rp in seen:
