@@ -29,7 +29,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import body_hash, memo_signature, signature_key  # noqa: E402
+from memo_util import (  # noqa: E402
+    body_hash, memo_signature, signature_key, slice_qualifiers,
+)
 
 ERR, WARN = [], []
 
@@ -56,6 +58,26 @@ def err(msg):
 
 def warn(msg):
     WARN.append(msg)
+
+
+def concept_name_index(lines):
+    """返回概念名所在行号；取不到返回 None。
+
+    概念名 = 标签段之后的首个非空行。**必须兼容两种形态**：本地草稿第 2 行
+    就是概念名（无空行），而 flomo 云端回读的正文第 2 行常被存储层插入空行、
+    概念名落到第 3 行。
+
+    单一来源：来源检测（5.6）与切片限定检测（5.8）都取概念名，若各写一份
+    定位逻辑，一旦只改其中一处，同一张卡就会在两条规则上得到**不一致**的
+    概念名定位（一条认为第2 行是、另一条不认为），判错结果随之自相矛盾。
+    故只此一处实现，两处共用。
+    """
+    if not lines or len(lines) < 2:
+        return None
+    for j in range(1, min(len(lines), 4)):
+        if lines[j].strip():
+            return j
+    return None
 
 
 def _is_table_row(s):
@@ -426,36 +448,30 @@ def check(content):
 
     # 概念名称行（第 2 行）同样禁来源：捕获「XXX（江苏“风腐一体”通报）」
     # 「XXX（中央纪委国家监委通报）」这类把通报方写进概念名的形态（H16）。
-    # 注意：flomo 云端回读的正文第 2 行常为空行（存储层自动插空行），概念名实际落在第 3 行；
-    # 故这里取「标签段之后、首个非空行」作为概念名候选，兼容本地草稿（无空行）与云端（有空行）两种形态。
-    if len(lines) > 1:
-        name_idx = None
-        for j in range(1, min(len(lines), 4)):
-            if lines[j].strip():
-                name_idx = j
-                break
-        if name_idx is not None:
-            name_line = lines[name_idx].strip()
-            nm = source_lead.search(name_line) or source_bare.search(name_line)
-            if not nm:
-                for grp in bracket_re.findall(name_line):
-                    inner = grp.strip("（）()").strip()
-                    if not inner:
-                        continue
-                    # 括号内是来源主体（中央纪委国家监委 / 济南纪委监委 …）
-                    mm = re.search(source_org, inner)
-                    if mm:
-                        nm = mm
-                        break
-                    # 括号内以来源类词结尾（广西通报 / 江苏“风腐一体”通报 / 媒体披露 …）
-                    # 概念名括号只应写概念补充说明，出现这类词即视为标注通报方/来源。
-                    if re.search(r"(?:通报|报道|消息|披露|公布|发布|来源)$", inner):
-                        nm = re.match(r".*", inner)
-                        break
-            if nm:
-                err(f"第 {name_idx + 1} 行概念名称含来源/通报方「{nm.group(0).strip()}」——"
-                    f"概念名只写概念或事件本身，禁止在括号或任何位置标注报道方 / 通报方（H16）。"
-                    f"请删除括号内来源后只留概念名")
+    # 概念名行号由 concept_name_index 统一给出（兼容本地草稿无空行与云端回读有空格行两种形态）。
+    name_idx = concept_name_index(lines)
+    if name_idx is not None:
+        name_line = lines[name_idx].strip()
+        nm = source_lead.search(name_line) or source_bare.search(name_line)
+        if not nm:
+            for grp in bracket_re.findall(name_line):
+                inner = grp.strip("（）()").strip()
+                if not inner:
+                    continue
+                # 括号内是来源主体（中央纪委国家监委 / 济南纪委监委 …）
+                mm = re.search(source_org, inner)
+                if mm:
+                    nm = mm
+                    break
+                # 括号内以来源类词结尾（广西通报 / 江苏“风腐一体”通报 / 媒体披露 …）
+                # 概念名括号只应写概念补充说明，出现这类词即视为标注通报方/来源。
+                if re.search(r"(?:通报|报道|消息|披露|公布|发布|来源)$", inner):
+                    nm = re.match(r".*", inner)
+                    break
+        if nm:
+            err(f"第 {name_idx + 1} 行概念名称含来源/通报方「{nm.group(0).strip()}」——"
+                f"概念名只写概念或事件本身，禁止在括号或任何位置标注报道方 / 通报方（H16）。"
+                f"请删除括号内来源后只留概念名")
 
     # 5.7) 模板前缀回显检测（ERR）
     # 「结论先行：」是 SKILL H14 的条目名（写给执行者的格式指令），被原样回显即成为卡片内容；
@@ -486,107 +502,22 @@ def check(content):
 
     # 5.8) 概念名不得带**切片限定**（H6b）
     # 签名（首行标签 + 第二行概念名）是幂等查重与闸门凭证的共同依据。
-    # 概念名一旦带上时点，同一对象就会因名字不同被切成平行卡：签名不等 → 幂等与查重
-    # 对它同时失效。故概念名只命名「什么东西」，不命名「什么时候的它」。
-    # 实测（2026-10 全库 1206 张）：带此类限定者238 张（19.7%），其中 103 张概念名
-    # 本身简短却带限定（如「Hermes Agent v0.21.4 发布」「Claude Opus 5.5 发布」）。
+    # 概念名须标识**对象本身**，不得标识对象的某个**切片**——时间、版本、阶段号、
+    # 代次、轮次、地域语种、事件动作都是同一类切片，判据不看单词本身，看**是否
+    # 可剥离的限定结构**（切片能独立剥离，对象名不能）。
     #
-    # 误伤防护（这三条是本项能否进写的关键，逐一说明理由）：
-    #   a) 4 位年份：只拦 19xx/20xx 形态的数字串。对象名里的数字（Qwen3、Grok 2.0、
-    #      iPhone 17、MiMo-V2.6）不含 4 位年份，不受影响。
-    #   b) 版本号：只拦紧跟字母/中文的语义化版本（v0.21.4、2.0 版、V2.1），
-    #      且要求形如「v+数字(.数字)*」或「数字.数字 + 版」；纯数字型号（Transcribe 2.0）
-    #      若无 v/版 字样不判——它可能是对象名的一部分。
-    #   c) 发布动作：只拦**结尾**的「发布/上线/推送/推出/开源/发布」等动词。
-    #      概念名中间出现这些词（如「开源模型」「发布计划」）不判。
-    #   d) 相对时间词（最新/近期/当前）：概念名用它们必然随时间失效，一律 ERR。
-    #   e) 序数（第七代/第五代/第六代）：代次是产品对象的稳定识别符，但对「同一对象
-    #      的不同代」会切开签名。判WARN 而非 ERR：代次常是对象名必需部分
-    #      （LPDDR6、第七代 TPU），不容易改写。
-    #   f) 括号内的年份限定（如「双曲熵（Ramírez-Belman 等 2026）」）：判 ERR——
-    #      来源型括号已在 5.6 判 ERR，这里补的是括号内纯时间限定（切片的一类）。
-    if len(lines) > 1:
-        cname_idx = None
-        for j in range(1, min(len(lines), 4)):
-            if lines[j].strip():
-                cname_idx = j
-                break
-        if cname_idx is not None:
-            cname = lines[cname_idx].strip()
-            hits = []
-
-            # 判据（H6b）：概念名须标识**对象本身**，不得标识对象的某个**切片**。
-            # 「切片限定」是一类，不按类型分级——时间只是其中最常见的一种，
-            # 与版本、代次、批次、地域同属「对象 + 切片」这一结构。
-            # 早先版本把年份/季度判ERR 而代次只 WARN，那是**以时间为轴**：
-            # 同属切片却待遇不同，且时间一被特判，判据就绑死在时间上，
-            # 下一种切片（公测批次、轮次、地域变体）出现时规则即失效。
-            # 现按统一口径：可机械识别的切片一律 ERR。
-            #
-            # 误伤防护（逐条给出理由，均经真实样本实测）：
-            #  - 4 位年份只拦 19xx/20xx：对象名里的数字（Qwen3、Transcribe 2.0、iPhone 17）
-            #    不含4 位年份，不受影响。
-            #  - 语义化版本号只拦 v+数字(.数字)* 与「数字.数字 + 版」：纯数字型号若不带
-            #    v/版 字样，可能是对象名的一部分（Transcribe 2.0、Grok 2.0），不判。
-            #  - 代次序数与轮次同样 ERR（不再给代次开 WARN 例外）：它们同样是切片。
-            #    若某对象名确实以代次为稳定识别（如 LPDDR6），该对象本身应以其产品线
-            #    命名（"LPDDR 内存标准"），把代次写进要点。
-            #  - 地域/语种切片只拦「中文版/英文版/欧洲版/国内版」这类**版本后缀形态**，
-            #    不拦概念词本身含地名的（如"京东物流""北交所"——地名是对象的一部分）。
-
-            # 切片 1：时间（年份、年月、年月日、季度、相对时间词）
-            m_year = re.search(
-                r"(?<!\d)(?:19|20)\d{2}"
-                r"(?:\s*[-/年]\s*(?:\d{1,2}(?:\s*[-/月]\s*\d{1,2})?)?)?", cname)
-            if m_year:
-                hits.append(("年份/日期", m_year.group(0)))
-            m_q = re.search(r"(?<![A-Za-z0-9])[Qq]\s?[1-4](?![0-9])", cname)
-            if m_q:
-                hits.append(("季度", m_q.group(0)))
-            m_rel = re.search(
-                r"最新|近期|当前|如今|今日|本日|本周|本月|今年|去年|目前|现阶段", cname)
-            if m_rel:
-                hits.append(("相对时间词", m_rel.group(0)))
-
-            # 切片 2：版本（语义化版本号、RC/公测/beta/preview 阶段词）
-            # 阶段词只拦「数字 + 阶段词」这一**可剥离的限定结构**（v2 / RC2 / Preview 3），
-            # 不拦裸阶段词：`Step 5 Preview 大模型`（阶跃星辰的模型代号含 Preview）、
-            # `Grok Voice Transcribe` 等形态里，阶段词是**对象名自身的一部分**。
-            # 依据：切片限定能独立剥离而对象名不能——判据看结构，不看单词本身。
-            m_ver = re.search(
-                r"(?<![A-Za-z0-9])[vV]\s?\d+(?:\.\d+)+|"
-                r"\d+(?:\.\d+)+\s*(?:版|版本)|"
-                r"(?<![A-Za-z0-9])(?:RC|rc|Beta|beta|alpha|Alpha|preview|Preview)"
-                r"\s*\d+(?![0-9])", cname)
-            if m_ver:
-                hits.append(("版本/阶段", m_ver.group(0).strip()))
-
-            # 切片 3：代次 / 轮次 / 期次
-            m_ord = re.search(
-                r"第\s*[0-9一二三四五六七八九十]+\s*(?:代|版|阶段|期|轮|届|批|期数)", cname)
-            if m_ord:
-                hits.append(("代次/轮次", m_ord.group(0)))
-
-            # 切片 4：地域 / 语种版本后缀（只拦明确的后缀形态）
-            m_geo = re.search(
-                r"(?<![A-Za-z0-9])(?:中文版|英文版|国内版|海外版|欧洲版|亚洲版|美版|日版|韩版)"
-                r"(?![A-Za-z0-9])", cname)
-            if m_geo:
-                hits.append(("地域/语种版本", m_geo.group(0)))
-
-            # 切片 5：事件动作（结尾动词——标识「某次动作」而非对象）
-            m_act = re.search(
-                r"(?:发布|上线|推送|推出|开源|释出|发布新版|举办|召开|夺冠|夺标|获奖|上线开源)\s*$",
-                cname)
-            if m_act:
-                hits.append(("事件动作", m_act.group(0)))
-
-            if hits:
-                detail = "、".join(f"{k}「{v}」" for k, v in hits)
-                err(f"第 {cname_idx + 1} 行概念名称含切片限定（{detail}）——"
-                    f"概念名须标识**对象本身**，不标识对象的某个切片。"
-                    f"时间、版本、代次、批次、轮次、地域语种、事件动作都是同一类切片，"
-                    f"不是特例。取该对象的稳定指称作概念名，切片信息写进正文要点（H6b）")
+    # 识别走 memo_util.slice_qualifiers（与存量取证脚本同源）：切片识别若有两套
+    # 正则，改一侧会让另一侧静默失配，而失配只表现为「统计数字对不上」，很难察觉。
+    # 概念名行号由 concept_name_index 统一给出（与 5.6 来源检测共用同一实现）。
+    cname_idx = concept_name_index(lines)
+    if cname_idx is not None:
+        hits = slice_qualifiers(lines[cname_idx].strip())
+        if hits:
+            detail = "、".join(f"{k}「{v}」" for k, v in hits)
+            err(f"第 {cname_idx + 1} 行概念名称含切片限定（{detail}）——"
+                f"概念名须标识**对象本身**，不标识对象的某个切片。"
+                f"时间、版本、代次、批次、轮次、地域语种、事件动作都是同一类切片，"
+                f"不是特例。取该对象的稳定指称作概念名，切片信息写进正文要点（H6b）")
 
     # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
     # 预印本卡须基于正文写作（SKILL 流程第 1 步「预印本正文优先」）：只抓 arXiv /abs/ 之类摘要页，
