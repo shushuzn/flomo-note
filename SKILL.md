@@ -334,7 +334,6 @@ flomo 存储会转义特殊字符（`>`、`|` 存成 `\u003e`、`\|`），本地
 - `scripts/tag_tree_sync.py` — 标签树本地快照的现采重写与核对（见「标签树本地留存」）。
 - `scripts/scan_concept_duplication.py` — 概念名取证：抹掉时间/版本/序数后归一化，**找出被限定切成平行卡的同名簇**（H6b 的取证工具，只读）。
 - `scripts/scan_qualified_concepts.py` — 概念名取证：统计概念名里带**切片限定**（时间/版本/阶段号/代次/轮次/地域语种/事件动作）的卡占比（H6b 定量依据，只读）。两者共用同一份标签解析与取卡实现。
-- `scripts/audit_existing_memos.py` — **存量卡合规普查**（H14–H17 + H6b，只读）：读本地快照逐卡跑质检，按违规类型分组并报计数，供裁定存量处置方案。配套 `scripts/_snapshot_all_memos.py` 现采全库正文存快照——**迭代质检口径时不必反复打云端**。两者只读，不写云端、不改任何卡。
 
 > 其余脚本（`memo_util.py` 公共实现、各测试用例、`run_tests.sh` 一键回归、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
 
