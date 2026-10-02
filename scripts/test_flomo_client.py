@@ -77,6 +77,24 @@ def run_norm_cases():
     check("_norm_body 行内空白差异不得掩盖非空白差异",
           FC._norm_body("容器端口 3000") != FC._norm_body("容器端口 3001"))
 
+    # Markdown 元字符转义：flomo 存储层存的是转义后的文本（与 H6 同一事实）。
+    # 少了这条还原，任何含下标的卡（数学公式最典型）回读验收 100% 误报失败。
+    check("_norm_body 下划线转义不影响判定（数学卡含下标是常态）",
+          FC._norm_body("τ_r^a 收敛到 T")
+          == FC._norm_body("τ\\_r^a 收敛到 T"),
+          repr(FC._norm_body("τ\\_r^a 收敛到 T")))
+    check("_norm_body 竖线与方括号转义不影响判定",
+          FC._norm_body("|〈a − b〉| ≤ C") == FC._norm_body("\\|〈a − b〉\\| ≤ C"),
+          repr(FC._norm_body("\\|〈a − b〉\\| ≤ C")))
+    check("_norm_body 反斜杠自身被转义不影响判定",
+          FC._norm_body("∫(M\\E) T") == FC._norm_body("∫(M\\\\E) T"),
+          repr(FC._norm_body("∫(M\\\\E) T")))
+    check("_norm_body 转义宽容不得掩盖公式内容被改（下标数字变了必须暴露）",
+          FC._norm_body("(1 + |k|)^(-6)") != FC._norm_body("(1 + |k|)^(-8)"),
+          repr(FC._norm_body("(1 + |k|)^(-6)")))
+    check("_norm_body 转义宽容不得掩盖非元字符被改",
+          FC._norm_body("λ₀(P_k) ≥ c") != FC._norm_body("λ₀(P_k) ≥ d"))
+
 
 def run_readback_cases():
     """readback_check 的五类判定。"""
@@ -103,6 +121,17 @@ def run_readback_cases():
           not FC.readback_check(
               FakeClient([{"id": "M1", "content": cloud_code.replace("`code`", "`coda`")}]),
               "M1", local_code)[0])
+
+    # 1d) 云端把 Markdown 元字符存成转义形态→ 仍判过（含下标的数学卡否则全误报失败）
+    local_math = BODY.replace("要点一", "τ_r^a 与 ‖T‖_ω")
+    cloud_math = local_math.replace("τ_r^a", "τ\\_r^a").replace("‖T‖_ω", "‖T‖\\_ω")
+    check("云端转义的下划线不影响判定",
+          FC.readback_check(FakeClient([{"id": "M1", "content": cloud_math}]), "M1", local_math)[0],
+          cloud_math.replace("\n", "\\n"))
+    check("转义宽容不得掩盖下标内容被改",
+          not FC.readback_check(
+              FakeClient([{"id": "M1", "content": cloud_math.replace("‖T‖\\_ω", "‖T‖\\_0")}]),
+              "M1", local_math)[0])
 
     # 2) 内容不一致 → 判失败，且给出字数与首个差异位置（可定位）
     c = FakeClient([{"id": "M1", "content": BODY.replace("要点一", "要点二")}])
