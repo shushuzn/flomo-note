@@ -219,6 +219,41 @@ def run_slice_qualifiers():
         check(f"{fn} 不自带切片正则", local is None)
 
 
+def run_concept_name_index():
+    """概念名行号定位：**窗口边界**是判据的一部分，必须钉住。
+
+    这条定位是验证侧（质检2 / 5.6 / 5.8）与提取侧（memo_util.memo_signature）
+    共同的地基。窗口一旦被放宽，**后果不报错、只静默失效**：把正文首行读成
+    概念名 → 凭空造出一个签名 → 「标签后压根没有概念名」这种真违规被判为合规。
+
+    故这里把两种真实形态与**窗口外的正文**都钉死。
+    """
+    import validate_memo as VM
+
+    # ① 本地草稿形态：概念名紧跟标签段（无空行）
+    check("本地草稿形态取到 index 1",
+          VM.concept_name_index(["#AI/大模型", "某模型", "", "正文。"]) == 1)
+    # ② 云端回读形态：存储层在标签段后插一个空行，概念名落到 index 2
+    check("云端回读形态取到 index 2",
+          VM.concept_name_index(["#AI/大模型", "", "某模型", "", "正文。"]) == 2)
+    # ③ **窗口边界**：index 3 起是正文，不得被读成概念名
+    check("index 3 的正文不被读成概念名（标签后无概念名→None）",
+          VM.concept_name_index(["#AI/大模型", "", "", "正文。"]) is None)
+    # ④ 只有标签行
+    check("仅标签行取不到概念名",
+          VM.concept_name_index(["#AI/大模型"]) is None)
+    check("空输入安全", VM.concept_name_index([]) is None)
+
+    # 与提取侧的口径差是**有意**的（提取侧宽、验证侧严），此处显式记录该差：
+    # memo_signature 按「前两个非空行」取，会把正文首行顶上来；它服务查重/凭证，
+    # 宽松些不至于让正常卡取不到签名，故不改它——但也不许因此把验证侧放宽。
+    sig = MU.memo_signature("#AI/大模型\n\n\n正文首行。\n")
+    check("提取侧 memo_signature 仍宽松取到（口径差，有意）",
+          sig is not None and sig["concept"] == "正文首行。")
+    check("验证侧对同一输入判取不到（口径差，有意）",
+          VM.concept_name_index("#AI/大模型\n\n\n正文首行。\n".splitlines()) is None)
+
+
 if __name__ == "__main__":
     run_signature()
     run_key()
@@ -228,6 +263,7 @@ if __name__ == "__main__":
     run_tag_leaves()
     run_tag_tree_snapshot()
     run_slice_qualifiers()
+    run_concept_name_index()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)
