@@ -12,8 +12,9 @@
 #
 # 环境变量（按需覆盖）:
 #   SOUNDING_PY   审计用 Python（默认托管 python 3.13）
-#   SOUNDING_TMP  sounding 目录：指向已存在的副本即复用、跳过克隆（可离线跑），
+#   SOUNDING_TMP  sounding 目录：指向已存在的**可用**副本即复用、跳过克隆（可离线跑），
 #                 且本脚本不再删除该目录；不设时自动 mktemp 并在结束时清理。
+#                 「可用」按能否 import sounding.cli 实测判定，残缺副本会被清掉重克隆。
 #
 # 离线用法（github.com 不可达时）:
 #   curl -sSL -o /tmp/sounding.tar.gz \
@@ -88,9 +89,27 @@ run_audit() {
   return 0
 }
 
-# 准备 sounding：已有可用副本则复用（可离线），否则克隆
-if [ -d "$SOUNDING_TMP/src/sounding" ]; then
+# 准备 sounding：已有**可用**副本则复用（可离线），否则克隆。
+# 可用性必须实测导入，不能只看目录存在——残留目录（源文件已失、只剩 __pycache__）
+# 会被当成可复用副本直接跳过克隆，随后 `-m sounding.cli` 报 "No module named"，
+# 看起来像"审计未通过"，实则是副本残缺：既误导结论，也让 audit 通道整体不可用。
+sounding_usable() {
+  [ -d "$SOUNDING_TMP/src/sounding" ] || return 1
+  ( cd "$SOUNDING_TMP" && PYTHONPATH="$SOUNDING_TMP_WIN/src" "$PYTHON" \
+      -c 'import sounding.cli' >/dev/null 2>&1 )
+}
+
+if sounding_usable; then
   echo "复用已有 sounding 副本 $SOUNDING_TMP（跳过克隆）"
+elif [ -d "$SOUNDING_TMP/src/sounding" ]; then
+  echo "sounding 副本 $SOUNDING_TMP 残缺（无法导入 sounding.cli），改用干净副本 ..."
+  rm -rf "$SOUNDING_TMP"
+  echo "克隆 sounding 到 $SOUNDING_TMP ..."
+  git clone --depth 1 https://github.com/alinotfoundbtw/sounding.git "$SOUNDING_TMP" \
+    || { echo "sounding 克隆失败，请检查网络/路径"; \
+         echo "  github.com 不可达时可用 codeload 离线包（见脚本头部注释），"; \
+         echo "  再以 SOUNDING_TMP=<副本目录> 重跑本脚本。"; exit 1; }
+  sounding_usable || { echo "克隆后仍无法导入 sounding.cli，副本不完整" >&2; exit 1; }
 elif [ -d "$SOUNDING_TMP/.git" ]; then
   echo "已有 git 仓库但缺 src/sounding，尝试更新 ..."
   git -C "$SOUNDING_TMP" pull --depth 1 || echo "  !! 更新失败，按现有内容继续"

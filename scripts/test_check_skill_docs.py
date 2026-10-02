@@ -63,6 +63,13 @@ CASES = [
      {"README.md": f"# 说明\n\n{DASH} 发布。\n"}, 1, 0),
     ("技能根下夹空行样本不误伤",
      {SKILL: "# 规则\n\n\n只写规则。\n"}, 0, 0),
+    # 瞬时产物（抓取件 / 写卡草稿）不是技能文档：其中别人写的日期不是 H28 违规。
+    # 真实事故：项目根下的 _tmp_*.md 抓取件被当技能文档扫出 ERR，污染夹具精确计数，
+    # 使 test_check_skill_docs 两条用例在真实工作区里失败——而那些日期根本不是我们写的。
+    ("根下抓取件含日期不判错",
+     {"_tmp_src.md": f"# External\n\nreleased {DASH}.\n"}, 0, 0),
+    ("根下写卡草稿含日期不判错",
+     {"memo_body_x.txt": f"要点：\n\n{DASH} 实测。\n"}, 0, 0),
 ]
 
 
@@ -107,6 +114,13 @@ def run_real_tree_case():
     print(f"{'PASS' if ok else 'FAIL'}  真实技能根扫描覆盖维护文档"
           f"（缺 {sorted(missing)}）" if missing
           else "PASS  真实技能根扫描覆盖维护文档")
+    # 瞬时产物不得进扫描目标：工作区里常驻抓取件，它们含别人写的日期，
+    # 进来就会报假警并让本文件的精确计数断言随工作区状态漂移。
+    leaked = sorted(n for n in names if CD.is_transient(n))
+    ok &= not leaked
+    print(f"{'PASS' if not leaked else 'FAIL'}  真实技能根扫描排除瞬时产物"
+          f"（混入 {leaked}）" if leaked
+          else "PASS  真实技能根扫描排除瞬时产物")
     return ok
 
 
