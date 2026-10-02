@@ -13,47 +13,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient  # noqa: E402
+from memo_util import memo_signature, slice_qualifiers  # noqa: E402  单一来源
 
-# 概念名里出现即视为「带切片限定」的形态（H6b：概念名须标识对象本身，不标识切片）。
-# **时间只是切片的一类**，与版本、代次、轮次、地域、事件动作平级——早先这里只列时间类
-# 形态、把「限定」窄化成「时间限定」，等于让判据以时间为轴。
-SLICE_PATTERNS = [
-    # —— 时间切片 ——
-    (r"20\d{2}\s*年?", "年份"),
-    (r"\d{1,2}\s*月\s*\d{1,2}\s*日?", "月日"),
-    (r"(?<![A-Za-z0-9])[QqEe]\s?[1-4](?![0-9])", "季度"),
-    (r"(19|20)\d{2}\s*[-~到至]\s*(19|20)?\d{2}", "年份区间"),
-    (r"(最新|近期|当前|如今|今日|本日|本周|本月|今年|去年|目前|现阶段)", "相对时间词"),
-    (r"[（(]\s*(19|20)\d{2}\s*[)）]", "括号年份"),
-    # —— 版本切片 ——
-    (r"(?<![A-Za-z0-9])[vV]\s?\d+(\.\d+)+", "版本号"),
-    (r"\d+(\.\d+)+\s*(版|版本)", "版本号"),
-    (r"(?<![A-Za-z0-9])(?:RC|rc|Beta|beta|alpha|Alpha|preview|Preview)\s*\d+(?![0-9])", "阶段号"),
-    # —— 代次/轮次/批次切片 ——
-    (r"(第\s*[0-9一二三四五六七八九十]+\s*(版|代|阶段|期|轮|届|批))", "序数"),
-    # —— 地域/语种切片 ——
-    (r"(?<![A-Za-z0-9])(中文版|英文版|国内版|海外版|欧洲版|亚洲版|美版|日版|韩版)(?![A-Za-z0-9])", "地域版本"),
-    # —— 事件切片 ——
-    (r"(发布|推出|上线|更新|回顾|总结|盘点|举办|召开|夺冠|夺标|获奖)\s*$", "动作结尾"),
-]
+# 切片识别**走 memo_util.slice_qualifiers**（与质检拦截 5.8 同源）：
+# 两侧各写一套正则时，改一侧会让另一侧静默失配——而失配只表现为「统计数字对不上」，
+# 很难被察觉。本脚本只负责「取样 + 计数」，不另立识别口径。
 
 
 def classify(name):
-    hits = []
-    for pat, label in SLICE_PATTERNS:
-        if re.search(pat, name):
-            hits.append(label)
-    return hits
+    """返回命中的切片限定标签（去重保序）。"""
+    seen = []
+    for lbl, _ in slice_qualifiers(name):
+        if lbl not in seen:
+            seen.append(lbl)
+    return seen
 
 
 def concept_of(content):
-    """取第二行概念名（签名构成部分）。"""
-    lines = (content or "").split("\n")
-    for ln in lines[:4]:
-        s = ln.strip()
-        if s and not s.startswith("#"):
-            return s
-    return ""
+    """取概念名（签名构成部分）。走 memo_util.memo_signature，与幂等查重、闸门凭证同源。"""
+    sig = memo_signature(content)
+    return sig["concept"] if sig else ""
 
 
 def resolve_tags(argv):

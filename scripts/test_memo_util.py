@@ -6,6 +6,7 @@ validate_memo 三处共用；本文件确保这条公共口径被独立锁住。
 退出码 0 = 全部通过。
 """
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -156,6 +157,68 @@ def run_tag_tree_snapshot():
     check("count_snapshot 空输入为 (0, 0)", MU.count_snapshot([]) == (0, 0))
 
 
+def run_slice_qualifiers():
+    """切片限定识别（H6b）：拦截面与放行面都要钉住。
+
+    这批用例是**两侧同源契约**的锁：质检拦截（validate_memo 5.8）与存量取证
+    （scan_qualified_concepts）都调用本实现。若有人图省事在调用方另写一套正则，
+    两侧会静默失配——失配只表现为「统计数字对不上」，不会被任何单侧用例发现。
+    故除功能用例外，另加一条源码扫描断言两侧确实共用本实现。
+    """
+    # 应命中：各类切片
+    must_hit = [
+        "某模型 2026 年度财报", "某市场 Q3 格局", "最新的大模型进展",
+        "某工具 v0.21.4", "某工具 2.0 版本", "某模型 RC2 预览",
+        "谷歌第七代TPU", "某赛事第 3 轮", "某项目首期上线",
+        "某产品中文版", "某基准赛夺冠", "某大会 举办",
+    ]
+    for n in must_hit:
+        check(f"切片命中：{n}", len(MU.slice_qualifiers(n)) > 0)
+
+    # 不应命中：对象名自身含数字/型号/地名/阶段词
+    must_miss = [
+        "Grok Voice Transcribe 2.0 语音转文本模型", "阶跃星辰 Step 5 Preview 大模型",
+        "LPDDR6 低功耗内存", "iPhone 17 Pro", "华为 Mate 40 系列",
+        "Qwen3 与 Qwen3.5 的对比", "Claude Opus 4.6 与 Opus 4.8 的对比",
+        "京东物流履约时效", "北交所改革试点", "混合专家模型 MoE 架构",
+        "Python 3.14 新特性", "比特币与以太坊", "开源模型的安全对齐",
+    ]
+    for n in must_miss:
+        check(f"不误伤：{n}", MU.slice_qualifiers(n) == [])
+
+    # 返回结构：[(标签, 命中文本)]，供错误文案指名具体切片
+    h = MU.slice_qualifiers("某工具 v0.21.4")
+    check("返回 (标签, 命中文本) 二元组", len(h) == 1 and h[0][1] == "v0.21.4")
+    check("空串返回 []", MU.slice_qualifiers("") == [])
+    check("None 返回 []（不抛异常）", MU.slice_qualifiers(None) == [])
+
+    # 作用域：只扫概念名的**标题部分**。「标题：摘要」形态（H14 另判概念名写成整句）
+    # 里的摘要用词不得被误判成概念名的切片——判据作用域错了会让合规卡因摘要用词被拦。
+    check("摘要里的当前不误判",
+          MU.slice_qualifiers("某模型：当前能力边界与今日实践") == [])
+    check("摘要里的近日不误判",
+          MU.slice_qualifiers("某论文的核心论点：给长程 agent 以近日表现") == [])
+    check("标题里的切片照常命中（冒号前）",
+          MU.slice_qualifiers("某工具 v0.21.4：一次更新") != [])
+    check("concept_head 基本形态",
+          MU.concept_head("某模型") == "某模型")
+    check("concept_head 遇冒号截断",
+          MU.concept_head("某模型：摘要") == "某模型")
+    check("concept_head 空/None 安全",
+          MU.concept_head("") == "" and MU.concept_head(None) == "")
+
+    # 两侧同源契约：调用方不得自带切片正则
+    root = Path(__file__).resolve().parent
+    for fn in ("validate_memo.py", "scan_qualified_concepts.py",
+               "scan_concept_duplication.py"):
+        src = (root / fn).read_text(encoding="utf-8")
+        has_import = "slice_qualifiers" in src
+        # 本地正则特征：20\d{2} 年份类、相对时间词枚举、Qq 季度类
+        local = re.search(r'最新\|近期\|当前|(?:19\|20)\\d\{2\}|\[Qq\]\\s\?\[1-4\]', src)
+        check(f"{fn} 使用共享实现", has_import)
+        check(f"{fn} 不自带切片正则", local is None)
+
+
 if __name__ == "__main__":
     run_signature()
     run_key()
@@ -164,6 +227,7 @@ if __name__ == "__main__":
     run_keywords_of_concept()
     run_tag_leaves()
     run_tag_tree_snapshot()
+    run_slice_qualifiers()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)
