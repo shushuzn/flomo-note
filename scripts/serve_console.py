@@ -4,8 +4,7 @@
 控制台把云端 MCP 的能力接出来，分四个视图呈现：
   - 云端笔记（主视图）：搜索 / 按标签 / 起止日期 / 来源 / 是否含标签 / 今日回顾，
     点开读全文，抽屉里带「相关笔记」与多选取全文，另有新建与编辑；
-  - 标签：本地快照分组速览 + 云端实时标签树（可前缀 / 深度 / 条数）+ 标签名搜索
-    + 标签重命名；
+  - 标签：云端实时标签树（可前缀 / 深度 / 条数）+ 标签名搜索 + 标签重命名；
   - 参考：记忆文档 / 用户画像 / 格式规范 / 标签规范四份云端文本；
   - 能力：云端 MCP 工具清单（读写工具分别标注是否接出）。
 
@@ -43,7 +42,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from console_cloud import CloudError, CloudReader, cloud_status  # noqa: E402
-from console_data import collect_all, load_tagtree  # noqa: E402
+from console_data import collect_all  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
@@ -138,7 +137,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
         routes = {
             "/api/overview": lambda: {**collect_all(REPO_ROOT), "cloud": cloud_status()},
-            "/api/tagtree": lambda: load_tagtree(REPO_ROOT),
         }
         cloud_routes = {
             "/api/cloud/memos": lambda r: r.list_memos(

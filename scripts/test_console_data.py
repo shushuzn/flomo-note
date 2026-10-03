@@ -91,17 +91,9 @@ SKILL_FIXTURE = """# 标题
 治理正文。
 """
 
-TAG_FIXTURE = """# total=4
-# 甲
-  甲/一
-  甲/二
-# 乙
-乙/
-  乙/三
-"""
 
 
-def make_repo(tmp: Path, with_tag=True, skill=SKILL_FIXTURE, tag=TAG_FIXTURE):
+def make_repo(tmp: Path, skill=SKILL_FIXTURE):
     (tmp / "SKILL.md").write_text(skill, encoding="utf-8")
     (tmp / "AGENTS.md").write_text("# 总则\n\n一句话。\n", encoding="utf-8")
     sdir = tmp / "scripts"
@@ -113,8 +105,6 @@ def make_repo(tmp: Path, with_tag=True, skill=SKILL_FIXTURE, tag=TAG_FIXTURE):
         "#!/usr/bin/env bash\n# tool_two — 演示脚本。\n#\n# 用法：bash tool_two.sh\nset -e\n", encoding="utf-8"
     )
     (sdir / "test_tool_one.py").write_text('"""用例。"""\n', encoding="utf-8")
-    if with_tag:
-        (tmp / "tag_tree.txt").write_text(tag, encoding="utf-8")
     return tmp
 
 
@@ -144,33 +134,6 @@ def run_pipeline(tmp: Path):
     check("节内引言不入步", all("按序执行" not in s["body"] for s in steps))
 
 
-def run_tagtree(tmp: Path):
-    t = C.load_tagtree(tmp)
-    check("标签树 total 抽取", t["total"] == 4, t["total"])
-    check("计数委托 memo_util（二级 3 + 裸顶层 1）", (t["leaves"], t["bare_count"]) == (3, 1),
-          (t["leaves"], t["bare_count"]))
-    check("列出数自洽", t["listed"] == 4 and t["consistent"] is True)
-    check("裸顶层识别", t["bare"] == ["乙"], t["bare"])
-    check("分组结构供展示", len(t["groups"]) == 2 and t["groups"][0]["children"] == ["甲/一", "甲/二"])
-    check("裸顶层分组带标记", t["groups"][1]["bare"] is True)
-
-    # 计数口径必须与 memo_util 一致（同源，不得本模块另算）
-    from memo_util import count_snapshot, snapshot_total
-    lines = (tmp / "tag_tree.txt").read_text(encoding="utf-8").splitlines()
-    check("与 memo_util 口径同源", (t["total"], t["leaves"], t["bare_count"])
-          == (snapshot_total(lines), *count_snapshot(lines)))
-
-    # 不一致时如实上报
-    (tmp / "tag_tree.txt").write_text("# total=99\n# 甲\n  甲/一\n", encoding="utf-8")
-    t2 = C.load_tagtree(tmp)
-    check("不一致时 consistent=False", t2["consistent"] is False and t2["listed"] == 1)
-
-    # 缺文件
-    empty = Path(tempfile.mkdtemp())
-    t3 = C.load_tagtree(empty)
-    check("缺快照时 present=False", t3["present"] is False and t3["total"] is None)
-
-
 def run_scripts(tmp: Path):
     scripts = C.load_scripts(tmp)
     by_name = {s["name"]: s for s in scripts}
@@ -187,8 +150,7 @@ def run_overview(tmp: Path):
     data = C.collect_all(tmp)
     st = data["stats"]
     check("统计字段齐全", set(st) >= {
-        "tags", "tag_groups", "tag_leaves", "tags_consistent", "steps",
-        "steps_blocking", "limits", "limits_core", "tools", "tests"})
+        "steps", "steps_blocking", "limits", "limits_core", "tools", "tests"})
     check("统计值与解析一致", st["steps"] == 3 and st["limits"] == 4
           and st["steps_blocking"] == 1 and st["tools"] == 2 and st["tests"] == 1)
     check("文档规模收集", {d["name"] for d in data["docs"]} == {"SKILL.md", "AGENTS.md"})
@@ -207,7 +169,6 @@ def main():
         run_pipeline(tmp)
         run_scripts(tmp)
         run_overview(tmp)
-        run_tagtree(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("---")

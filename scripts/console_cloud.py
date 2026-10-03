@@ -483,7 +483,7 @@ class CloudReader:
     def tag_tree(self, prefix: str | None = None, depth=None, limit=TAG_DEFAULT_LIMIT) -> dict:
         """云端标签树（可按前缀 / 深度 / 条数收窄）。
 
-        与本地快照（`tag_tree.txt`）的区别：这里是**现采**，不依赖快照是否最新；
+        云端是标签树的唯一事实源、本地不留快照，故此处只做现采。
         条数上限 1000，到顶时云端会给出提示，界面须如实转达。
         """
         n = _clamp(limit, TAG_DEFAULT_LIMIT, 1, TAG_MAX_LIMIT)

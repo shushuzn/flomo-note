@@ -208,28 +208,6 @@ def run_no_gate_cases():
     check("授权凭证正文指纹不符时降级失效（退出码 1）", _run() == 1)
 
 
-def run_local_tag_tree_cases():
-    """本地快照计数口径：二级行 + 裸顶层。
-
-    实现已收敛到 `memo_util.count_snapshot`（渲染端 `render_tag_tree` 同源），
-    闸门不再自带一份——两侧口径漂移会让快照永远判不自洽。
-    """
-    lines = [
-        "# total=3",
-        "# AI",
-        "  AI/物理AI",
-        "# 投资",
-        "投资/",
-        "  投资/一级市场",
-    ]
-    leaves, bare = GATE.count_snapshot(lines)
-    check("快照计数=二级行+裸顶层", (leaves, bare) == (2, 1))
-    check("计数口径取自 memo_util（单一实现）",
-          GATE.count_snapshot.__module__ == "memo_util")
-    check("首行 total 解析取自 memo_util",
-          GATE.snapshot_total(lines) == 3)
-
-
 def run_check_web_cases():
     """_check_web：留痕校验 + 「结论已落进正文」的落点校验（离线，只读文件）。"""
     import json as _json
@@ -490,7 +468,10 @@ def _tt(total, names):
 
 
 def run_tag_tree_net_cases():
-    """_tag_tree_total_and_count / _check_tag_tree（假 client，不联网）。"""
+    """_tag_tree_total_and_count（假 client，不联网）。
+
+    该函数仍被查重两路与复盘三路用于现采云端标签，与本地存储无关，保留。
+    """
     # 1) structuredContent 直取，且 limit 必须传 2000
     c = FakeClient(tag_tree=_tt(600, ["AI/物理AI", "投资/一级市场"]))
     total, tags = GATE._tag_tree_total_and_count(c)
@@ -507,46 +488,6 @@ def run_tag_tree_net_cases():
     # 3) 两者皆无 → (None, [])
     total, tags = GATE._tag_tree_total_and_count(FakeClient(tag_tree={}))
     check("tag_tree 无数据返回 None", total is None and tags == [])
-
-    # 4) total 缺失 → 判阻塞
-    b, n = [], []
-    GATE._check_tag_tree(FakeClient(tag_tree={"structuredContent": {"tags": []}}), b, n)
-    check("_check_tag_tree total 缺失判阻塞",
-          any("未取到 structuredContent.total" in x for x in b))
-
-    # 5) 快照自洽（total=3 = 二级行2 + 裸顶层1）→ 无阻塞
-    d = Path(tempfile.mkdtemp())
-    snap = d / "tag_tree.txt"
-    snap.write_text("# total=3\n# AI\n  AI/物理AI\n# 投资\n投资/\n  投资/一级市场\n",
-                    encoding="utf-8")
-    orig = GATE._local_tag_tree_paths
-    try:
-        GATE._local_tag_tree_paths = lambda: [snap]
-        b, n = [], []
-        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, ["AI/物理AI", "投资/一级市场"])), b, n)
-        check("_check_tag_tree 自洽通过", b == [] and any("二级行=2" in x for x in n))
-
-        # 6) 首行 total 与云端不一致 → 判阻塞
-        snap.write_text("# total=9\n# AI\n  AI/物理AI\n", encoding="utf-8")
-        b, n = [], []
-        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
-        check("_check_tag_tree total 不一致判阻塞",
-              any("与云端 total=3 不一致" in x for x in b))
-
-        # 7) 快照列出数与首行 total 不自洽 → 判阻塞
-        snap.write_text("# total=3\n# AI\n  AI/物理AI\n", encoding="utf-8")
-        b, n = [], []
-        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
-        check("_check_tag_tree 列出数不自洽判阻塞",
-              any("不自洽" in x for x in b))
-
-        # 8) 找不到任何快照 → 判阻塞
-        GATE._local_tag_tree_paths = lambda: [d / "nope.txt"]
-        b, n = [], []
-        GATE._check_tag_tree(FakeClient(tag_tree=_tt(3, [])), b, n)
-        check("_check_tag_tree 无快照判阻塞", any("未找到任何本地 tag_tree 快照" in x for x in b))
-    finally:
-        GATE._local_tag_tree_paths = orig
 
 
 def run_dedup_net_cases():
@@ -691,7 +632,6 @@ if __name__ == "__main__":
     run_assemble_gate_cases()
     run_concept_keyword_cases()
     run_no_gate_cases()
-    run_local_tag_tree_cases()
     run_tag_tree_net_cases()
     run_dedup_net_cases()
     run_review_net_cases()

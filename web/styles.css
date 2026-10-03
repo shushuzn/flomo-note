@@ -208,32 +208,12 @@ code {
 }
 .input:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
 
-.tgroup { border-bottom: 1px solid var(--line-soft); }
-.tgroup:last-child { border-bottom: 0; }
-.tgroup-head {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 11px 18px;
-  background: none; border: 0; cursor: pointer;
-  font: inherit; color: var(--ink); text-align: left;
-}
-.tgroup-head:hover { background: var(--surface-sunk); }
-.caret {
-  width: 7px; height: 7px; flex: none;
-  border-right: 1.6px solid var(--ink-faint);
-  border-bottom: 1.6px solid var(--ink-faint);
-  transform: rotate(-45deg); transition: transform .18s;
-}
-.tgroup.is-open .caret { transform: rotate(45deg); }
-.tgroup-name { font-weight: 500; }
-.tgroup-body { display: none; padding: 2px 18px 14px 40px; flex-wrap: wrap; gap: 6px; }
-.tgroup.is-open .tgroup-body { display: flex; }
 .chip {
   font-size: 12px;
   padding: 3px 9px; border-radius: 999px;
   background: var(--surface-sunk); border: 1px solid var(--line);
   color: var(--ink-soft);
 }
-.chip-bare { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
 mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; }
 
 /* 空态 / 骨架 */
