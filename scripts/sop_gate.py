@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """SOP 流程闸门 —— 把"靠自觉"的检查型步骤变成"必须留痕"。
 
-背景（事故复盘）：SOP 九步里的 ②验证（网络搜索）、④tag_tree 数量核对、
-⑤查重两路并查、⑧复盘三路现查，此前全靠执行者自觉，没有任何机械强制。
+背景（事故复盘）：SOP 九步里的 ②验证（网络搜索）、⑤查重两路并查、
+⑧复盘三路现查，此前全靠执行者自觉，没有任何机械强制。
 执行者跳过时，`validate_memo.py` 只校验卡片**文本格式**，完全无从发现
 "流程步骤没做"——于是出现"卡写对了但 SOP 漏做"的事故。
 
-本脚本把上述四个检查型步骤收敛为一次**代跑 + 出凭证**：
+本脚本把上述三个检查型步骤收敛为一次**代跑 + 出凭证**：
   - 脚本自己真去调 flomo 只读工具（tag_tree / memo_search / memo_recommended），
     以及校验调用方提供的 search 验证记录；
   - 全部通过后写一份 `.sop_gate/<signature>.json` 凭证；
@@ -70,11 +70,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, FlomoError, load_token, _result_memos  # noqa: E402
 from memo_util import (  # noqa: E402
     body_hash,
-    count_snapshot,
     keywords_of_concept,
     memo_signature,
     signature_key,
-    snapshot_total,
     tag_leaves,
 )
 
@@ -232,46 +230,6 @@ def _tag_tree_total_and_count(client):
             total = total if total is not None else inner.get("total")
             tags = tags if tags is not None else inner.get("tags")
     return total, tags or []
-
-
-def _local_tag_tree_paths():
-    """本地 tag_tree 快照可能存在的路径（历史口径不一，全部纳入比对）。"""
-    return [
-        PROJECT_ROOT / "tag_tree.txt",
-        SCRIPT_DIR / "tag_tree.txt",
-    ]
-
-
-def _check_tag_tree(client, blockers, notes):
-    """④ 标签树数量核对：云端 total 与本地快照必须自洽。"""
-    total, tags = _tag_tree_total_and_count(client)
-    if total is None:
-        blockers.append("tag_tree 现采未取到 structuredContent.total（工具返回异常）")
-        return
-    checked_any = False
-    for p in _local_tag_tree_paths():
-        if not p.exists():
-            continue
-        checked_any = True
-        head = p.read_text(encoding="utf-8-sig").splitlines()
-        local_total = snapshot_total(head)
-        leaves, bare = count_snapshot(head)
-        listed = leaves + bare
-        if local_total != total:
-            blockers.append(
-                f"{p.name} 首行 total={local_total} 与云端 total={total} 不一致——须现采整体重写"
-            )
-        if local_total is not None and listed != local_total:
-            blockers.append(
-                f"{p.name} 列出标签数 {listed}（二级行 {leaves} + 裸顶层 {bare}）"
-                f"与首行 total={local_total} 不自洽——须整体重写"
-            )
-        notes.append(
-            f"tag_tree 本地快照 {p.name}: total={local_total}, "
-            f"二级行={leaves}, 裸顶层={bare}, 云端 total={total}"
-        )
-    if not checked_any:
-        blockers.append("未找到任何本地 tag_tree 快照（须先现采并整体重写）")
 
 
 def _check_dedup(client, sig, blockers, notes):
@@ -439,7 +397,6 @@ def main():
     client = FlomoClient(token)
     client.init()
 
-    _check_tag_tree(client, blockers, notes)      # ④
     dedup = _check_dedup(client, sig, blockers, notes)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 

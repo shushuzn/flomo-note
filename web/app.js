@@ -9,7 +9,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const VIEW_META = {
   notes:     { title: "云端笔记", sub: "列 / 搜卡片：关键词 · 标签 · 起止日期 · 来源 · 是否含标签；点开读全文、相关笔记，或新建与编辑" },
-  tags:      { title: "标签", sub: "本地快照分组速览 + 云端实时标签树 + 标签名搜索 + 标签重命名" },
+  tags:      { title: "标签", sub: "云端实时标签树 + 标签名搜索 + 标签重命名" },
   reference: { title: "参考", sub: "云端返回的四份文本：记忆文档、用户画像、笔记格式规范、标签使用规范" },
   tools:     { title: "能力", sub: "云端 MCP 暴露的全部工具：读写均已接出，写工具标注写入前的门槛" },
 };
@@ -33,7 +33,6 @@ const state = {
   // 编辑器：mode=create|edit；raw=是否切到「完整卡片文本」直编
   editor: null,
   // 标签视图
-  tagQuery: "",
   liveTags: null,
   liveNames: null,
   renOld: "",
@@ -215,20 +214,14 @@ async function viewNotes() {
     renderStats([{ n: "—", l: "云端笔记" }]);
     return `<div class="card"><div class="empty">
       云端不可用：${esc(cloud.reason || "未知原因")}
-      <div class="hint">控制台靠项目内的凭证配置访问 flomo；凭证缺失时「标签」视图的本地快照部分仍可用。</div>
+      <div class="hint">控制台靠项目内的凭证配置访问 flomo。</div>
     </div></div>`;
   }
-
-  const tree = await get("tagtree");
-  const tagOptions = tree && tree.present
-    ? tree.groups.flatMap((g) => g.children).concat(tree.bare || [])
-    : [];
 
   const bar = `
     <div class="memo-bar">
       <input class="input" id="cloud-kw" placeholder="搜索正文或标签…" value="${esc(state.cloudQuery)}">
-      <input class="input" id="cloud-tag" list="cloud-tags" placeholder="标签（完整路径，如 AI/RAG）" value="${esc(state.cloudTag)}">
-      <datalist id="cloud-tags">${tagOptions.map((t) => `<option value="${esc(t)}"></option>`).join("")}</datalist>
+      <input class="input" id="cloud-tag" placeholder="标签（完整路径，如 AI/RAG）" value="${esc(state.cloudTag)}">
       <input class="input input-date" id="cloud-start" placeholder="起 YYYY-MM-DD" value="${esc(state.cloudStart)}">
       <input class="input input-date" id="cloud-end" placeholder="止 YYYY-MM-DD" value="${esc(state.cloudEnd)}">
       <input class="input input-sm" id="cloud-source" placeholder="来源 from" value="${esc(state.cloudSource)}">
@@ -255,7 +248,6 @@ async function viewNotes() {
 
   const memos = data.memos || [];
   renderStats([
-    { n: tree && tree.present ? tree.total : "—", l: "标签总数" },
     { n: memos.length,        l: "本次加载" },
     { n: cloud.max_limit ?? "—", l: "单次上限" },
     { n: "可读写",            l: "云端权限" },
@@ -620,66 +612,18 @@ function chipList(items, q = "") {
 }
 
 async function viewTags() {
-  const t = await get("tagtree");
-  if (!t.present) {
-    renderStats([{ n: "—", l: "标签总数" }]);
-    return `<div class="empty">未找到标签树快照（tag_tree.txt）</div>`;
-  }
-
-  renderStats([
-    { n: t.total,         l: "标签总数", alert: !t.consistent },
-    { n: t.listed,        l: "列出条目" },
-    { n: t.groups.length, l: "分组" },
-    { n: t.bare_count,    l: "裸顶层" },
-    { n: "现采",          l: "云端实时" },
-  ]);
-
-  const q = state.tagQuery.trim().toLowerCase();
-  const groups = t.groups
-    .map((g) => ({ ...g, children: g.children.filter((c) => !q || c.toLowerCase().includes(q)) }))
-    .filter((g) => !q || g.name.toLowerCase().includes(q) || g.children.length);
-
-  const snapshot = `
-    <div class="section-head">
-      <h2>本地快照</h2>
-      <span class="count">${esc(t.path || "tag_tree.txt")} · 分组速览（计数与闸门同源）</span>
-    </div>
-    <div class="tagtool">
-      <input class="input" id="tag-q" placeholder="搜索顶层或二级标签…" value="${esc(state.tagQuery)}">
-      <span class="badge ${t.consistent ? "badge-ok" : "badge-err"}">
-        列出 ${t.listed} / total ${t.total}${t.consistent ? " · 自洽" : " · 不一致"}
-      </span>
-      <span class="badge badge-quiet">${t.groups.length} 组 · ${t.bare_count} 裸顶层</span>
-    </div>
-    <div class="card">${
-      groups.length
-        ? groups.map((g) => `
-          <div class="tgroup" data-group="${esc(g.name)}">
-            <button class="tgroup-head">
-              <span class="caret"></span>
-              <span class="tgroup-name">${hl(g.name, q)}</span>
-              <span class="badge badge-quiet">${g.children.length}${g.bare ? " + 裸顶层" : ""}</span>
-            </button>
-            <div class="tgroup-body">
-              ${g.bare ? `<span class="chip chip-bare">${hl(g.name + "/", q)}</span>` : ""}
-              ${g.children.map((c) => `<span class="chip">${hl(c, q)}</span>`).join("")}
-            </div>
-          </div>`).join("")
-        : `<div class="empty">没有匹配的标签</div>`
-    }</div>`;
-
   const live = state.liveTags;
   const liveBody = live
     ? (live.error
         ? `<div class="empty">云端标签树读取失败：${esc(live.error)}</div>`
         : `${chipList(live.tags)}
            <div class="hint">云端共 ${esc(live.total ?? "—")} 个标签，本次返回 ${esc(live.returned ?? live.tags.length)} 个${live.truncated ? "（已截断，可用前缀 / 深度收窄）" : ""}${live.hint ? ` · ${esc(live.hint)}` : ""}</div>`)
-    : `<div class="empty">按「拉取」从云端现采标签树（不改动本地快照）</div>`;
+    : `<div class="empty">按「拉取」从云端现采标签树</div>`;
 
   const liveBlock = `
     <div class="section-head">
       <h2>云端实时标签树</h2>
-      <span class="count">现采 · 不依赖本地快照是否最新</span>
+      <span class="count">现采 · 云端为唯一事实源</span>
     </div>
     <div class="tagtool">
       <input class="input input-sm" id="live-prefix" placeholder="前缀，如 AI/" value="${esc(state.livePrefix)}">
@@ -734,7 +678,7 @@ async function viewTags() {
     </div>
     <div class="card card-pad">${renBody}</div>`;
 
-  return snapshot + liveBlock + nameBlock + renameBlock;
+  return liveBlock + nameBlock + renameBlock;
 }
 
 function hl(text, q) {
@@ -1062,7 +1006,7 @@ document.addEventListener("click", (e) => {
     state.refData = null;
     state.catalog = null;
     render();
-    toast("已重新读取云端与本地快照");
+    toast("已重新读取云端数据");
   }
 });
 
@@ -1141,15 +1085,6 @@ document.addEventListener("input", (e) => {
     case "cloud-source": state.cloudSource = e.target.value; return;
     case "live-prefix":  state.livePrefix = e.target.value; return;
     case "live-depth":   state.liveDepth = e.target.value; return;
-  }
-  if (e.target.id === "tag-q") {
-    state.tagQuery = e.target.value;
-    const pos = e.target.selectionStart;
-    render().then(() => {
-      const box = $("#tag-q");
-      if (box) { box.focus(); box.setSelectionRange(pos, pos); }
-      if (state.tagQuery) $$(".tgroup").forEach((g) => g.classList.add("is-open"));
-    });
   }
 });
 

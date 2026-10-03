@@ -4,7 +4,6 @@
 .env
 
 # 现采缓存 / 中间态：每次现采刷新，不入库
-tag_tree.txt
 .sop_gate/
 .workbuddy/
 

@@ -119,44 +119,6 @@ def run_tag_leaves():
           MU.tag_leaves("#科技/机器人）。") == [("科技", "机器人")])
 
 
-def run_tag_tree_snapshot():
-    """快照的渲染与计数必须同源：渲染端产出多少条，计数端就该读出多少条。
-
-    这两端分别被同步脚本与闸门使用，任一侧口径漂移都会让快照永远"判不自洽"。
-    """
-    tags = ["科技/机器人", "科技/安全", "投资/一级市场", "投资/"]
-    text = MU.render_tag_tree(tags, 4)
-    lines = text.splitlines()
-
-    check("首行为 total", lines[0] == "# total=4")
-    leaves, bare = MU.count_snapshot(lines)
-    check("渲染与计数同源（二级 3 + 裸顶层 1 == total）", leaves == 3 and bare == 1)
-    check("顶层分组标题行不计数", "# 科技" in lines and "# 投资" in lines)
-    check("裸顶层行不缩进且带斜杠", "投资/" in lines)
-    check("二级行缩进", any(ln.startswith("  ") for ln in lines))
-    check("round-trip 恒等（渲染后再计数 == total）",
-          sum(MU.count_snapshot(MU.render_tag_tree(tags, 4).splitlines())) == 4)
-
-    check("字典形态 tags 与字符串形态等价",
-          MU.render_tag_tree([{"name": "科技/机器人"}], 1)
-          == MU.render_tag_tree(["科技/机器人"], 1))
-
-    t2 = MU.render_tag_tree(["", None, {"name": None}, "科技/机器人"], 1)
-    check("空名与非字符串被忽略", sum(MU.count_snapshot(t2.splitlines())) == 1)
-    check("重复标签不重复成行",
-          sum(MU.count_snapshot(
-              MU.render_tag_tree(["科技/机器人", "科技/机器人"], 1).splitlines())) == 1)
-
-    t3 = MU.render_tag_tree(["科技/安全/邮件"], 1)
-    check("三级名原样保留（不擅自降级）", "  科技/安全/邮件" in t3.splitlines())
-    check("三级名仍计 1 条", sum(MU.count_snapshot(t3.splitlines())) == 1)
-
-    check("snapshot_total 取首行数字", MU.snapshot_total(["# total=596"]) == 596)
-    check("snapshot_total 空输入为 None", MU.snapshot_total([]) is None)
-    check("snapshot_total 无数字为 None", MU.snapshot_total(["# total=x"]) is None)
-    check("count_snapshot 空输入为 (0, 0)", MU.count_snapshot([]) == (0, 0))
-
-
 def run_slice_qualifiers():
     """切片限定识别（H6b）：拦截面与放行面都要钉住。
 
@@ -226,7 +188,6 @@ if __name__ == "__main__":
     run_keywords()
     run_keywords_of_concept()
     run_tag_leaves()
-    run_tag_tree_snapshot()
     run_slice_qualifiers()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")

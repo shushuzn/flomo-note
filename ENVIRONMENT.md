@@ -108,6 +108,5 @@ python scripts/sni_fetch.py <url> <out_path>
 - 中间文件（抓取原文、草稿、请求 JSON、被替换的旧卡全文）写在 `/root/.codebuddy/artifact/<会话 id>/`，用完不即时全删，须保留最近若干轮（保留规则见 SKILL.md）。
 - 临时请求 JSON 可放 `/tmp/`，同样不要在当轮立刻删。
 - 最终交付物（需要用户看的）才写 `/workspace`。
-- 标签树本地快照：`scripts/tag_tree.txt`（现采缓存，已 gitignore）。
 - 流程闸门凭证：`.sop_gate/<sig_key>.json`（现采中间态，已 gitignore）。
 - 验证留痕（第 2 步网络搜索记录）：写卡时按 `scripts/sop_gate.py` 用法说明落盘，供闸门读取；属当轮中间文件。

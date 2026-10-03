@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """console_data.py — 项目控制台的数据抽取（离线、只读、无第三方依赖）。
 
-控制台界面只看两件事：**云端笔记**（由 `console_cloud.py` 负责）与**标签树**。
-本模块提供本地侧的两类数据：标签树快照的分组解析（供界面展示），以及 `SKILL.md`
-与 `scripts/` 的解析结果（硬限条数、管线步数、脚本清单等，汇入 `/api/overview`
-的统计字段）。这些文件格式各不相同，解析一律收敛到本模块单一实现——
-`serve_console.py` 只负责 HTTP 与静态文件，不重复任何解析逻辑（口径只留一处，
-避免两侧漂移）。
+控制台界面只看两件事：**云端笔记**（由 `console_cloud.py` 负责）与**标签**。
+本模块提供本地侧数据：`SKILL.md` 与 `scripts/` 的解析结果（硬限条数、管线步数、
+脚本清单等，汇入 `/api/overview` 的统计字段）。这些文件格式各不相同，解析一律
+收敛到本模块单一实现——`serve_console.py` 只负责 HTTP 与静态文件，不重复任何
+解析逻辑（口径只留一处，避免两侧漂移）。
 
-**边界**：本模块只读技能文档、脚本目录与标签树快照，不发起任何网络请求。
+**边界**：本模块只读技能文档与脚本目录，不发起任何网络请求。
 云端侧由 `console_cloud.py` 单独负责（token 与只读白名单都在那一层），两者互不越界；
 `.sop_gate/`（闸门凭证）两侧都不读，笔记正文也不经本模块。
 
@@ -23,9 +22,6 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import count_snapshot, snapshot_total  # noqa: E402
-
 # 控制台展示的技能文档（存在才收）
 DOC_FILES = ("SKILL.md", "AGENTS.md", "ENVIRONMENT.md", "README.md")
 
@@ -39,9 +35,6 @@ _HR_RE = re.compile(r"^-{3,}\s*$")
 _XREF_RE = re.compile(r"^>\s*\*\*H\d+")
 # 流程小节：`### 1. 抓取`
 _STEP_RE = re.compile(r"^###\s+(\d+)\.\s*(.+?)\s*$")
-# 顶层标签标题行 / 裸顶层 / 缩进二级
-_GROUP_LINE_RE = re.compile(r"^#\s+(.+?)\s*$")
-_BARE_RE = re.compile(r"^([^\s#].*?)/\s*$")
 
 
 def _read(p: Path) -> str:
@@ -165,74 +158,6 @@ def load_pipeline(root: Path):
 
 
 # --------------------------------------------------------------------------- #
-# 标签树快照
-# --------------------------------------------------------------------------- #
-def load_tagtree(root: Path):
-    """解析标签树本地快照（计数**委托 `memo_util` 唯一口径**，本模块不另实现）。
-
-    格式（见 SKILL「标签树本地留存」）：首行 `# total=N`；其后 `# 顶层名` 起一组，
-    缩进行为二级；裸顶层（有顶层无二级）单独成行、不缩进。
-
-    分组结构只用于界面展示；「列出数」一律取 `memo_util.count_snapshot`——
-    控制台与闸门、同步脚本同源，避免口径漂移。
-    """
-    for cand in (root / "tag_tree.txt", root / "scripts" / "tag_tree.txt"):
-        if cand.is_file():
-            path = cand
-            break
-    else:
-        return {
-            "total": None,
-            "groups": [],
-            "listed": None,
-            "leaves": None,
-            "bare": [],
-            "present": False,
-            "consistent": False,
-        }
-
-    lines = _read(path).splitlines()
-    total = snapshot_total(lines)
-    leaves, bare_count = count_snapshot(lines)
-
-    groups = []
-    cur = None
-    for ln in lines[1:]:
-        if not ln.strip():
-            continue
-        gm = _GROUP_LINE_RE.match(ln)
-        if gm:
-            cur = {"name": gm.group(1), "children": [], "bare": False}
-            groups.append(cur)
-            continue
-        if ln[:1] in (" ", "\t"):
-            if cur is not None:
-                cur["children"].append(ln.strip())
-            continue
-        bm = _BARE_RE.match(ln)
-        if bm:
-            if cur is not None:
-                cur["bare"] = True
-            continue
-        # 兜底：既非分组也非缩进，按顶层处理
-        groups.append({"name": ln.strip(), "children": [], "bare": False})
-        cur = groups[-1]
-
-    listed = leaves + bare_count
-    return {
-        "total": total,
-        "groups": groups,
-        "leaves": leaves,
-        "bare_count": bare_count,
-        "bare": [g["name"] for g in groups if g["bare"]],
-        "listed": listed,
-        "present": True,
-        "consistent": total is not None and listed == total,
-        "path": path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path),
-    }
-
-
-# --------------------------------------------------------------------------- #
 # 脚本清单
 # --------------------------------------------------------------------------- #
 def _summary(p: Path) -> str:
@@ -306,7 +231,6 @@ def collect_all(root) -> dict:
     limits = load_limits(root)
     steps = load_pipeline(root)
     scripts = load_scripts(root)
-    tag = load_tagtree(root)
     docs = load_docs(root)
 
     return {
@@ -315,10 +239,6 @@ def collect_all(root) -> dict:
             "tagline": "极简云端卡片笔记技能 — 把网页、文章、想法整理成一条条 flomo memo",
         },
         "stats": {
-            "tags": tag["total"],
-            "tag_groups": len(tag["groups"]),
-            "tag_leaves": tag["leaves"],
-            "tags_consistent": tag["consistent"],
             "steps": len(steps),
             "steps_blocking": sum(1 for s in steps if s["blocking"]),
             "limits": len(limits),

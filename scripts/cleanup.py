@@ -17,7 +17,6 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
     覆盖（0 = 关闭窗口，全部参与清理）。
 
 保留项（绝不删）：
-  - 标签树快照 `tag_tree.txt`（现采缓存，不入库）
   - `.workbuddy/trash/*`（历史备份包，即归档目标本身）
   - 临时目录内的他项目旧件（`arxiv_test.xml`、`arxiv_vibe.xml`）
   - 临时目录内的活动工作区（`flomo-push` 仓库镜像、`sounding_flomo` 审计目录）
@@ -87,9 +86,7 @@ for _t in _TMP_CANDIDATES:
     ]))
 
 # 显式保留（命中 glob 也不删）：键为所在目录，值为文件名集合
-KEEP = {
-    PROJECT_ROOT: {"tag_tree.txt"},
-}
+KEEP = {}
 for _t in _TMP_CANDIDATES:
     # sounding_flomo：审计工具保留目录；flomo-push：仓库活动镜像（推送用，勿删）
     KEEP[_t] = {"arxiv_test.xml", "arxiv_vibe.xml", "sounding_flomo", "flomo-push"}
