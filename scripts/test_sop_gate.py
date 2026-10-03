@@ -635,6 +635,55 @@ def run_review_net_cases():
     check("_check_review 无锚判阻塞", any("无法取锚" in x for x in b) and got is None)
 
 
+def run_usage_consistency_cases():
+    """docstring「用法」段的参数声明必须与 argparse 实现一致，双向都查。
+
+    背景（真实事故）：usage 里写了 `[--search-kw k1 ...]`，但 argparse 根本没有
+    这个参数——照 usage 传会报 `unrecognized arguments`；反过来 `--out`/`--anchor-id`
+    /`--allow-no-gate` 三个真实存在的参数又没写进 usage。usage 是手写的、参数由代码
+    定义，两处独立维护必然漂移，故用本用例把它焊死。
+
+    解析要点（此处踩过一次坑，别再改回去）：
+      - 只取「用法」标题**到下一个空行**为止，段后那几行说明文字不属于声明。
+        用 `用法.*?\\n(.*?)\\n\\n` 会因 `.*?` 跨行回溯把说明一并吞进捕获组。
+      - 逐行剔除纯注释行，避免说明句里出现的参数名被当成声明。
+    """
+    doc = GATE.__doc__ or ""
+    lines = doc.splitlines()
+    declared = set()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip().startswith("用法"))
+    except StopIteration:
+        check("usage 段存在且可提取", False, "docstring 里找不到「用法」标题行")
+        return
+
+    for ln in lines[start + 1:]:
+        stripped = ln.strip()
+        if not stripped:
+            if declared:
+                break  # 声明区结束
+            continue
+        if stripped.startswith("#"):
+            continue
+        if not stripped.startswith("python"):
+            continue
+        # 只认命令行本体，剥掉行尾注释（注释里出现的参数名不算声明）
+        body = stripped.split("#", 1)[0]
+        declared |= set(re.findall(r"--[a-z][a-z0-9\-]*", body))
+
+    real = {"--" + x for x in re.findall(
+        r"add_argument\(\s*[\"']--([a-z0-9\-]+)", Path(GATE.__file__).read_text(encoding="utf-8"))}
+
+    check("usage 段解析出声明", bool(declared), f"解析结果为空，用例本身失效")
+
+    ghost = sorted(declared - real)
+    check("usage 无幽灵参数（声明了但 argparse 没有）", not ghost, f"幽灵参数：{ghost}")
+
+    undocumented = sorted(real - declared)
+    check("usage 无未文档化参数（argparse 有但 usage 没写）", not undocumented,
+          f"未文档化：{undocumented}")
+
+
 if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
@@ -646,6 +695,7 @@ if __name__ == "__main__":
     run_tag_tree_net_cases()
     run_dedup_net_cases()
     run_review_net_cases()
+    run_usage_consistency_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)
