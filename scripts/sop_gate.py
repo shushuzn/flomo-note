@@ -14,9 +14,15 @@
 
 于是"漏做"在物理上不再可能：没跑闸门 → 没有凭证 → 写云被判 ERR。
 
-用法：
-  python sop_gate.py --memo <卡片正文路径> --verify <验证记录JSON> [--search-kw k1 --search-kw k2 ...]
-  python sop_gate.py --memo <卡片正文路径> --verify <验证记录JSON> --skip-web   # 非术语卡，显式声明无需验证
+用法（参数与 argparse 实现保持一致，改动其一必须同步另一处）：
+  python sop_gate.py --memo <正文路径> --verify <验证记录JSON>
+  python sop_gate.py --memo <正文路径> --skip-web        # 非术语卡，显式声明无需第 2 步验证
+  python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
+  python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
+  python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
+
+  查重关键词由脚本自行从概念名派生（见 `_check_dedup` 的 `keywords_of_concept`），
+  无需也无法由调用方传入——本脚本**不提供** `--search-kw` 参数。
 
 验证记录 JSON 结构（由调用方在完成第 2 步网络搜索后手工落盘）：
   {
