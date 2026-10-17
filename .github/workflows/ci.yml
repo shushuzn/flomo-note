@@ -1,0 +1,30 @@
+name: CI
+
+# 目的只有一个：把「改完脚本忘了跑用例」从靠自觉变成每次推送都会被检查。
+# 跑的就是本地那条命令（scripts/run_tests.sh），不在 CI 里另写一套判据——
+# 两套判据必然分叉，分叉之后就没人知道到底哪个算过。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 用例全部是标准库 + 桩客户端，不读 token、不联网（已实测：移走 .mcp.json 后
+      # 13 套仍全过），因此这里**不配任何 secrets**。若哪天有人给用例加了真实凭据依赖，
+      # 这一步会直接红——那正是要暴露的问题，不要靠加 secret 掩盖。
+      - name: 离线回归（用例 + 技能文档纪律）
+        run: bash scripts/run_tests.sh
