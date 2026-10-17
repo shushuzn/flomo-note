@@ -175,10 +175,48 @@ def run_write_path_cases():
           'arguments.get("content")' in m)
 
 
+def run_brief_cases():
+    """--brief 压缩列表回包，但绝不能把 batch_get 的全文截掉（H1 的后门）。"""
+    memos = [
+        {"id": "M1", "word_count": 420, "tags": ["科技/虚拟化"],
+         "content": "#科技/虚拟化\n沙箱平台\n\n" + "很长的正文。" * 200},
+    ]
+    payload = {"structuredContent": {"memos": memos}}
+    text = FC.brief_text("memo_search", payload)
+    check("brief 列出 id / 字数 / 标签 / 概念名",
+          "M1" in text and "420 字" in text and "科技/虚拟化" in text and "沙箱平台" in text)
+    check("brief 不携带正文长文本（省体积的正是这部分）", "很长的正文。" not in text)
+
+    full = FC.brief_text("memo_batch_get", payload)
+    check("batch_get 走全文分支（正文完整保留）", "很长的正文。" * 3 in full)
+    check("batch_get 分支标注未截断", "未截断" in full)
+
+    tree = FC.brief_text("tag_tree", {"structuredContent": {"total": 665, "tags": ["A/1", "A/2"]}})
+    check("tag_tree 给 total 与 returned", "total=665" in tree and "returned=2" in tree)
+
+    w = FC.brief_text("memo_create", {"structuredContent": {"id": "M2", "word_count": 700,
+                                                            "tags": ["文化/影视"]}})
+    check("写回包只给 id/字数/标签与载体标记", "id=M2" in w and "link=" in w)
+
+    check("不可压缩形态返回 None（退回完整 JSON）",
+          FC.brief_text("whatever", {"structuredContent": {"foo": 1}}) is None)
+    # 只解析 content[].text 的回包形态
+    alt = {"content": [{"type": "text", "text": json.dumps(
+        {"memos": memos}, ensure_ascii=False)}]}
+    check("兼容 content[].text 回包形态", "M1" in (FC.brief_text("memo_search", alt) or ""))
+
+    # 结构锁定：main 里 --brief 只影响打印，不得跳过后面的 id 校验与回读验收
+    src = (SCRIPT_DIR / "flomo_client.py").read_text(encoding="utf-8")
+    main_src = src[src.index("def main():"):]
+    check("brief 不短路写后回读验收", "readback_check(client, created_id" in main_src)
+    check("brief 通过剥离参数实现，不改工具名解析", 'a != "--brief"' in main_src)
+
+
 if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
     run_write_path_cases()
+    run_brief_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

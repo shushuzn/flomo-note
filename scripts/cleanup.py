@@ -23,13 +23,23 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
   - 落在近轮窗口内的全部项（见上）
 
 删除范围（文件与目录一并处理）：
-  - 项目根：`_tmp_*`、`memo_body*.txt`（写卡草稿，内容已入云）
+  - 项目根：`_tmp_*`、`tmp_*`、`memo_body*.txt`（写卡草稿，内容已入云）
+    **`tmp_*` 与 `_tmp_*` 是同义词**：两者都属历轮写卡/审查的瞬时产物，
+    `.gitignore` 早已把两类一并忽略。此前项目根规则只列 `_tmp_*`，导致
+    365 个 `tmp_*` 文件长期堆在根目录，且 `--verify` 复用同一份 SCAN，
+    报出的「残留 = 0」与事实不符（校验器与被校验对象用了两套口径）。
+    两处口径必须同源，新增前缀时同时改 `SCAN` 与本段说明。
   - 临时目录：抓取件（`arxiv_*` / `ithome_*`）、flomo 包与备份（`flomo_*` /
               `flomo-note*`）、sounding 链（`sounding_*` / `sounding.tgz`）、
               历轮中间产物（`h15*` / `kilo_removed_archive` / `*_body.txt` /
               `*_create.json` / `*_update.txt` / `*_upd.json` / `all_memos.json` /
               `agi_*`），显式排除上述保留项
   - `.workbuddy/lb_out/`：`*_create.json`、`*_memo.txt`、`*.err`
+
+保留策略（每轮清理后顺带执行，防无界增长）：
+  - `.workbuddy/trash/` 只留最近 `ARCHIVE_KEEP` 个 `temp-cleanup-*.tar.gz`
+  - `.sop_gate/` 删除修改时间超过 `GATE_CRED_MAX_AGE_HOURS` 的凭证
+    （凭证本身有效期 6 小时，超期文件只占地方、不可能再被放行）
 
 用法：
   python scripts/cleanup.py                    # 执行清理（默认）
@@ -63,7 +73,7 @@ if _LEGACY_TMP.is_dir() and _LEGACY_TMP not in _TMP_CANDIDATES:
 # 临时目录规则按"本项目产物特征"覆盖，而非零散白名单——白名单漏项会让
 # `--verify` 在残留尚存时误报「残留 = 0」（曾漏掉目录形态的中间产物）。
 SCAN = [
-    (PROJECT_ROOT, ["_tmp_*", "memo_body*.txt"]),
+    (PROJECT_ROOT, ["_tmp_*", "tmp_*", "memo_body*.txt"]),
     (LB_OUT, ["*_create.json", "*_memo.txt", "*.err"]),
 ]
 for _t in _TMP_CANDIDATES:
@@ -96,6 +106,13 @@ for _t in _TMP_CANDIDATES:
 # 不参与清理；窗口之外的才属「与近轮无关的历史残留」。0 = 关闭窗口（全部参与清理）。
 # 窗口值属脚本参数，随环境调整时只改此处或走 --keep-minutes，文档不复述。
 RECENT_WINDOW_MINUTES = 24 * 60
+
+# 保留策略：清理只保证「本轮残留归零」，不解决「归档与凭证长期累积」。
+# 实测 19 天留下 126 个归档（42 MB）、150 份凭证（1.3 MB，有效期仅 6 小时）。
+# 二者都是可再生的中间态，按数量/时长收敛，避免工作区无界膨胀。
+GATE_DIR = PROJECT_ROOT / ".sop_gate"
+ARCHIVE_KEEP = 10                    # trash 里保留最近多少个归档案
+GATE_CRED_MAX_AGE_HOURS = 24         # 凭证文件保留时长（凭证本身 6 小时失效）
 
 
 def _arcname(p: Path) -> str:
@@ -165,6 +182,48 @@ def verify(keep_minutes=None):
     return collect(keep_minutes)
 
 
+def prune(keep_archives=ARCHIVE_KEEP, cred_max_age_hours=GATE_CRED_MAX_AGE_HOURS,
+          dry_run=False):
+    """收敛归档与凭证：trash 只留最近 N 个包，过期凭证删除。
+
+    两条都只碰**可再生中间态**：归档包里的文件早已删除、凭证 6 小时即失效。
+    删除前不归档（否则归档目录自身会再膨胀一轮），但会打印被删项供核对。
+    返回 (删掉的归档案列表, 删掉的凭证列表)。
+    """
+    gone_archives, gone_creds = [], []
+
+    if TRASH_DIR.is_dir():
+        arcs = sorted(
+            TRASH_DIR.glob("temp-cleanup-*.tar.gz"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for p in arcs[keep_archives:]:
+            if not dry_run:
+                try:
+                    p.unlink()
+                except OSError:
+                    continue
+            gone_archives.append(p)
+
+    if GATE_DIR.is_dir():
+        cutoff = time.time() - cred_max_age_hours * 3600
+        for p in sorted(GATE_DIR.glob("*.json")):
+            try:
+                if p.stat().st_mtime >= cutoff:
+                    continue
+            except OSError:
+                continue
+            if not dry_run:
+                try:
+                    p.unlink()
+                except OSError:
+                    continue
+            gone_creds.append(p)
+
+    return gone_archives, gone_creds
+
+
 def list_rules():
     """打印当前生效的扫描/保留规则，供文档指向本脚本自描述（勿在文档里复述清单）。"""
     print("[cleanup] 扫描规则（基准目录 → glob 模式）：")
@@ -178,6 +237,23 @@ def list_rules():
             print(f"  {base}: {', '.join(sorted(names))}")
     print("[cleanup] 归档目录:", TRASH_DIR)
     print(f"[cleanup] 近轮窗口: 窗口内（mtime ≥ now - {RECENT_WINDOW_MINUTES} 分钟）的项保留，不参与清理")
+    print(f"[cleanup] 保留策略: trash 留最近 {ARCHIVE_KEEP} 个归档；"
+          f"{GATE_DIR} 删除超过 {GATE_CRED_MAX_AGE_HOURS} 小时的凭证")
+
+
+def _report_prune(gone_archives, gone_creds, dry_run):
+    verb = "将删除" if dry_run else "已删除"
+    if not gone_archives and not gone_creds:
+        print("[cleanup] 保留策略：归档与凭证均未超限，无需收敛")
+        return
+    print(f"[cleanup] 保留策略：{verb} {len(gone_archives)} 个旧归档、"
+          f"{len(gone_creds)} 份过期凭证")
+    for p in gone_archives:
+        print(f"  归档 {p.name}")
+    for p in gone_creds[:5]:
+        print(f"  凭证 {p.name}")
+    if len(gone_creds) > 5:
+        print(f"  凭证 ……另有 {len(gone_creds) - 5} 份")
 
 
 def main():
@@ -212,10 +288,12 @@ def main():
 
     if args.dry_run:
         print("[cleanup] --dry-run，未删除")
+        _report_prune(*prune(dry_run=True), dry_run=True)
         return
 
     if not candidates:
         print("[cleanup] 无残留，无需清理")
+        _report_prune(*prune(dry_run=False), dry_run=False)
         return
 
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
@@ -240,6 +318,7 @@ def main():
     left = verify(args.keep_minutes)
     assert len(left) == 0, f"复核失败，残留 {len(left)} 个"
     print(f"[cleanup] 已归档 {archive}（顶层 {members} 个），删除并复核残留 = 0，OK")
+    _report_prune(*prune(dry_run=False), dry_run=False)
 
 
 if __name__ == "__main__":

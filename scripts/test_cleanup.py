@@ -85,6 +85,19 @@ def run_scan_pattern_cases():
     check("SCAN 仍覆盖 kilo_removed_archive", _matches("kilo_removed_archive"))
     # 写卡草稿：内容已入云，落入窗口外即应清理（H26/H27）
     check("SCAN 覆盖 memo_body*.txt", _matches("memo_body.txt") and _matches("memo_body_A.txt"))
+    # `tmp_*` 与 `_tmp_*` 同义：两种前缀都真实出现过（曾只列 `_tmp_*`，
+    # 365 个 `tmp_*` 永不清理，而 --verify 复用同一 SCAN 故报「残留=0」）。
+    root_pats = [pat for base, pats in clean.SCAN
+                 if base == clean.PROJECT_ROOT for pat in pats]
+    check("项目根规则覆盖 tmp_*", "tmp_*" in root_pats)
+    check("项目根规则覆盖 _tmp_*", "_tmp_*" in root_pats)
+    # 同源断言：.gitignore 认定不入库的前缀，cleanup 必须同样认得，
+    # 否则「版本库干净」与「工作区干净」会长期背离而无人发现。
+    ignored = [ln.strip() for ln in (clean.PROJECT_ROOT / ".gitignore")
+               .read_text(encoding="utf-8").splitlines()]
+    tmp_prefixes = [ln for ln in ignored if ln in ("tmp_*", "_tmp_*")]
+    check(".gitignore 与 SCAN 对临时前缀口径一致",
+          bool(tmp_prefixes) and all(p in root_pats for p in tmp_prefixes))
     # 真正无需保留的项不该被任何规则命中（sounding_*/_tmp_* 属"命中但被 KEEP 挡住"，另论）
     check("SCAN 未误命中 flomo-push",
           not any(fnmatch.fnmatch("flomo-push", pat) for pat in pats))
@@ -208,6 +221,45 @@ def run_archive_cases():
     check("归档成员名不含反斜杠", not any("\\" in n for n in have))
 
 
+def run_prune_cases():
+    """保留策略：归档按数量收敛、凭证按时长收敛，dry-run 不动文件。"""
+    base = Path(tempfile.mkdtemp())
+    trash = base / "trash"
+    gate = base / "gate"
+    trash.mkdir()
+    gate.mkdir()
+
+    now = time.time()
+    for i in range(12):
+        p = trash / f"temp-cleanup-2026010{i}-000000.tar.gz"
+        p.write_text("x", encoding="utf-8")
+        os.utime(p, (now - (12 - i) * 60, now - (12 - i) * 60))
+    old_cred = gate / "old.json"
+    new_cred = gate / "new.json"
+    old_cred.write_text("{}", encoding="utf-8")
+    new_cred.write_text("{}", encoding="utf-8")
+    os.utime(old_cred, (now - 48 * 3600, now - 48 * 3600))
+
+    C.TRASH_DIR, C.GATE_DIR = trash, gate
+    try:
+        dry_a, dry_c = C.prune(dry_run=True)
+        check("dry-run 只报不动（归档仍在）",
+              len(dry_a) == 2 and len(list(trash.glob("*.tar.gz"))) == 12)
+        check("dry-run 只报不动（凭证仍在）", len(dry_c) == 1 and old_cred.exists())
+
+        gone_a, gone_c = C.prune(dry_run=False)
+        remain = sorted(p.name for p in trash.glob("*.tar.gz"))
+        check("归档只留最近 10 个", len(remain) == 10 and len(gone_a) == 2)
+        check("删的是最旧的两个", {p.name for p in gone_a}
+              == {"temp-cleanup-20260100-000000.tar.gz",
+                  "temp-cleanup-20260101-000000.tar.gz"})
+        check("超期凭证被删、未超期保留",
+              len(gone_c) == 1 and not old_cred.exists() and new_cred.exists())
+    finally:
+        C.TRASH_DIR = C.PROJECT_ROOT / ".workbuddy" / "trash"
+        C.GATE_DIR = C.PROJECT_ROOT / ".sop_gate"
+
+
 if __name__ == "__main__":
     run_collect_cases()
     run_scan_pattern_cases()
@@ -216,6 +268,7 @@ if __name__ == "__main__":
     run_recent_window_cases()
     run_arcname_cases()
     run_archive_cases()
+    run_prune_cases()
     print("---")
     ok = all(RESULTS)
     print("全部通过" if ok else "存在失败用例")
