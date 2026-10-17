@@ -121,4 +121,4 @@ python scripts/sni_fetch.py <url> <out_path>
 - 流程闸门凭证：`.sop_gate/<sig_key>.json`（现采中间态，已 gitignore）。凭证有效期 6 小时，`cleanup.py` 顺带删除超过 24 小时的旧凭证，`trash` 只留最近 10 个归档包。
 - **本机（Windows）实际布局**：中间文件写在项目根 `_tmp/`；该目录**可能被上一轮清理移除**，`curl -o _tmp/...` 前须先 `mkdir -p _tmp`，否则报「No such file or directory」而被误判为网络故障。根目录的 `tmp_*` 与 `_tmp_*` 同义，均由 `cleanup.py` 按近轮窗口回收。
 - 验证留痕（第 2 步网络搜索记录）：写卡时按 `scripts/sop_gate.py` 用法说明落盘，供闸门读取；属当轮中间文件。
-- `feeds.opml`：**素材来源**订阅清单（Fluent Reader 导出的 OPML，四项 RSS：Hacker News 最新、中新网滚动、IT之家、DEV Community），供挑素材时兜底扫一遍；不是运行依赖，任何脚本都不读它，删了也不影响流程。
+- `feeds.opml`：本机的**阅读器导出**（Fluent Reader 的订阅清单，四项 RSS：Hacker News 最新、中新网滚动、IT之家、DEV Community），只用于挑素材时顺手扫一遍。**与技能本体无关、已 gitignore、不追进入库**；任何脚本都不读它，删了也不影响流程。
