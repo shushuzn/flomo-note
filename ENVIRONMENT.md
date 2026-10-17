@@ -38,6 +38,8 @@ env -u http_proxy -u https_proxy git -c http.proxy="" -c https.proxy="" ls-remot
 
 通则沿用同样方式执行后续命令。
 
+**连本机服务也一样要绕代理**（实测踩过）：本机 `HTTP_PROXY`/`HTTPS_PROXY` 指向 `127.0.0.1:4609`，`curl http://127.0.0.1:<端口>/…` 会被代理接管，返回代理自己的 `502 upstream connect failed`——看起来像「服务起不来」，实际是请求根本没直连。测本机控制台用 `curl --noproxy '*'`，脚本里用 `http.client` 直连（它不走代理），或清掉 `*_proxy` 环境变量再起子进程。
+
 ### GitHub 域名与 DNS
 
 沙箱 DNS 会把 GitHub 相关域名劫持到保留段假 IP（`198.18.0.x`，非真实地址），表现为 TLS 立即失败。**需在 `/etc/hosts` 写真实 IP**。
