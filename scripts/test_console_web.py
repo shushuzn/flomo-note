@@ -19,9 +19,11 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 HTML = REPO / "web" / "index.html"
 CSS = REPO / "web" / "styles.css"
 JS = REPO / "web" / "app.js"
@@ -145,6 +147,34 @@ def main() -> int:
           f"服务独有 {sorted(post_routes - cloudpost)} / 前端独有 {sorted(cloudpost - post_routes)}")
     check("服务不引 subprocess / shutil（执行外部程序不在服务层）",
           not re.search(r"^\s*import (subprocess|shutil)", server, re.M))
+
+    # ---- 8. 截断必须显式声明（上限可以设，静默截断不行） ------------------- #
+    # 同一页的其他位置都标了「已截断」（列表卡、标签树）；工具台与多选取全文若只切数字
+    # 不提示（JSON 兜底切字符数、批量取全文切条数），用户会把半份结果当全份。
+    # 故这里钉三件事：上限是具名常量、提示与上限同时存在、提示挂在真实的判据上。
+    tool_result = re.search(r"function toolResult\(r\)\s*\{(.*?)\n\}", js, re.S)
+    tr_body = tool_result.group(1) if tool_result else ""
+    check("工具台 JSON 兜底有具名上限常量", re.search(r"const TOOL_JSON_LIMIT = \d+;", js) is not None)
+    check("工具台超限时显式标注已截断并给出总数",
+          re.search(r"cut \?", tr_body) is not None and "已截断" in tr_body
+          and "TOOL_JSON_LIMIT" in tr_body and "jsonText.length" in tr_body,
+          tr_body[-160:].replace("\n", " "))
+    check("工具台不再裸切 4000（硬编码 slice 清零）", "slice(0, 4000)" not in js)
+
+    batch_open = re.search(r"async function openBatch\(\)\s*\{(.*?)\n\}", js, re.S)
+    ob_body = batch_open.group(1) if batch_open else ""
+    check("批量取全文使用具名上限常量（无魔法数）",
+          "slice(0, BATCH_LIMIT)" in ob_body and "slice(0, 10)" not in ob_body, ob_body[:120].replace("\n", " "))
+    check("批量超上限时告知用户少取了几条",
+          re.search(r"data\.dropped\s*\?", ob_body) is not None and "本次未取" in ob_body,
+          ob_body[:200].replace("\n", " "))
+    # 跨层：前端上限必须与服务侧 console_cloud.BATCH_MAX 一致，
+    # 否则服务侧改到 12 而前端仍按 10 切，界面会声称「都取回了」而实际少两张。
+    import console_cloud as _CC
+    m_limit = re.search(r"const BATCH_LIMIT = (\d+);", js)
+    js_limit = int(m_limit.group(1)) if m_limit else -1
+    check("前端批量上限与服务侧 BATCH_MAX 一致",
+          js_limit == _CC.BATCH_MAX, f"前端 {js_limit} / 服务 {_CC.BATCH_MAX}")
 
     total = len(_RESULTS)
     failed = sum(1 for r in _RESULTS if not r)

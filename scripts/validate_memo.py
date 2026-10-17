@@ -760,8 +760,18 @@ def check_gate(content):
                 "须重跑 scripts/sop_gate.py 再写云")
     else:
         err("SOP 闸门凭证缺少正文指纹（body_hash）——凭证格式过旧，须重跑 sop_gate.py")
+    # 过期：**取不到过期时间不等于永不过期**。此前只判 `isinstance(exp, int) and exp < now`，
+    # 于是把 expires_at 删掉（或写成字符串）就得到一份永不失效的凭证——与 body_hash
+    # 缺字段即阻断的处置不对称，实际开出一条绕过 6 小时时效的路径。凭证是我们自己生成的
+    # 产物（sop_gate 必写该字段），缺字段只可能是旧格式或被改过，一律按「须重跑」处理。
     exp = gate.get("expires_at")
-    if isinstance(exp, int) and exp < int(time.time()):
+    if exp is None:
+        err("SOP 闸门凭证缺少过期时间（expires_at）——凭证格式过旧，无法确认现查时效，"
+            "须重跑 scripts/sop_gate.py")
+    elif not isinstance(exp, int) or isinstance(exp, bool):
+        err(f"SOP 闸门凭证的过期时间不是整数时间戳（expires_at={exp!r}）——"
+            f"凭证被改过，须重跑 scripts/sop_gate.py")
+    elif exp < int(time.time()):
         err("SOP 闸门凭证已过期——须重新执行 scripts/sop_gate.py 现查")
     web = gate.get("web") or {}
     if not web.get("web_skipped") and not web.get("searched"):

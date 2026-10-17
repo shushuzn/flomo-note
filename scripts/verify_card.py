@@ -124,10 +124,22 @@ def run(memo_id: str, client=None):
     # 正文常以换行收尾，直接取 lines[-1] 会得到空串——「末行」是人读首尾时的
     # 落点，给空串等于误导（曾据此误判末句为逗号收尾）。取最后一个非空行。
     nonempty = [ln.strip() for ln in lines if ln.strip()]
+
+    # 字数对账：H11 ④ 要的是「实测字数」，比的是一份本地草稿。而云端回读的字符数
+    # 天然含两层平台自有差异——渲染层补的空行、存储层对 Markdown 元字符做的反斜杠
+    # 转义（`[Z][I]=[V]` 存成 `\[Z\]\[I\]\[V\]`）。直接报 `len(原始回读)` 会系统性地
+    # 大于草稿，差额由这两层决定而非内容——实测卡 34 差 7 个字符，只能靠人当场算账。
+    # 故报**还原转义后**的字符数作对账口径，并把差额来源分别列出。
+    escapes = FC._MD_ESCAPES.findall(norm)
+    plain = FC._MD_ESCAPES.sub(r"\1", norm)
+
     info = {
         "id": memo.get("id", memo_id),
         "word_count": memo.get("word_count"),
-        "chars": len(raw),
+        "chars": len(plain),
+        "chars_raw": len(raw),
+        "escapes": len(escapes),
+        "render_pad": len(raw) - len(norm),
         "lines": len(nonempty),
         "tags": memo.get("tags") or [],
         "first": first,
@@ -163,6 +175,14 @@ def main(argv=None) -> int:
 
     print(f"[verify] {info['id']} | 标签 {' '.join(info['tags']) or '-'} | "
           f"字数 {info['word_count']} | 字符 {info['chars']} | 行数 {info['lines']}")
+    if info["chars_raw"] != info["chars"]:
+        parts = []
+        if info["render_pad"]:
+            parts.append(f"渲染补行 {info['render_pad']}")
+        if info["escapes"]:
+            parts.append(f"存储转义 {info['escapes']} 处")
+        print(f"  （云端原样 {info['chars_raw']} 字符 = 正文 {info['chars']} + "
+              f"{' + '.join(parts)}；对草稿请比「字符」这一项）")
     if info["render_padded"]:
         print("  （云端回读在标签段后多一个空行，属渲染层行为，结构判断已按本地形态还原）")
     print(f"  首行 {info['first']}")

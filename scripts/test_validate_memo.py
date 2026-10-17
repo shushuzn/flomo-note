@@ -508,6 +508,58 @@ def run_no_gate_auth_cases():
     return ok
 
 
+def run_gate_expiry_cases():
+    """凭证时效：**取不到过期时间不等于永不过期**。
+
+    过期检查原本写成 `isinstance(exp, int) and exp < now`，删掉 expires_at 就得到一份
+    永不失效的凭证，而同一份凭证删掉 body_hash 却会被拦——两条本应对称的「凭证自身
+    是否可信」检查里，只有一条会失败。凭证由 sop_gate 生成（必写该字段），缺字段只
+    可能是旧格式或被改过，一律按「须重跑」处理。
+    """
+    import json as _json
+    import tempfile
+    from pathlib import Path
+    from memo_util import body_hash, signature_key
+
+    BODY = "#数学/泛函方程\n某概念\n\n正文结论句。\n"
+    sig = VM._signature_of(BODY)
+    sk = signature_key(sig)
+    ok = True
+    orig_dir = VM.GATE_DIR
+
+    def _check(gate_obj):
+        tmp = Path(tempfile.mkdtemp())
+        VM.GATE_DIR = tmp
+        (tmp / f"{sk}.json").write_text(_json.dumps(gate_obj, ensure_ascii=False), encoding="utf-8")
+        VM.ERR.clear()
+        VM.WARN.clear()
+        VM.check_gate(BODY)
+        errs = list(VM.ERR)
+        VM.GATE_DIR = orig_dir
+        return errs
+
+    base = {"signature": sig, "sig_key": sk, "body_hash": body_hash(BODY),
+            "web": {"searched": True}}
+
+    cases = [
+        ("缺 expires_at 须判错（不得视为永不过期）", {}, True),
+        ("expires_at 非整数须判错", {"expires_at": "9999999999"}, True),
+        ("expires_at 为布尔值不得当作有效时间戳", {"expires_at": True}, True),
+        ("已过期须判错", {"expires_at": 1000}, True),
+        ("未来时间戳不误伤", {"expires_at": 9999999999}, False),
+    ]
+    try:
+        for label, extra, want_err in cases:
+            errs = _check({**base, **extra})
+            same = (len(errs) > 0) == want_err
+            ok &= same
+            print(f"{'PASS' if same else 'FAIL'}  check_gate {label}"
+                  + ("" if same else f"（得到 {errs[:1]}）"))
+    finally:
+        VM.GATE_DIR = orig_dir
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_loader_cases())
@@ -515,6 +567,7 @@ if __name__ == "__main__":
     results.append(run_content_from_json_cases())
     results.append(run_gate_cases())
     results.append(run_no_gate_auth_cases())
+    results.append(run_gate_expiry_cases())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)
