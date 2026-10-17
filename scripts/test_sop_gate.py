@@ -454,7 +454,13 @@ class FakeClient:
         if name == "tag_tree":
             return self._tag_tree
         if name == "memo_search":
-            kw = (args or {}).get("keywords", "")
+            a = args or {}
+            # 标签路用 `tag:` 前缀单独开键，避免与关键词路串味——同一份预设里
+            # 关键词命中 0 而标签簇有卡，是本组用例要构造的核心场景。
+            if a.get("tag"):
+                return self._search.get("tag:" + a["tag"],
+                                        {"structuredContent": {"memos": []}})
+            kw = a.get("keywords", "")
             return self._search.get(kw, {"structuredContent": {"memos": []}})
         if name == "memo_recommended":
             return self._recommended
@@ -570,10 +576,38 @@ def run_review_net_cases():
     check("_check_review 关键词命中作锚", b == [] and got and got["anchor"] == "HIT1")
     check("_check_review anchor_source 记命中来源", got and "命中首条" in got["anchor_source"])
 
-    # 3) 既无 id 又无命中 → 判阻塞且返回 None
+    # 3) 关键词无命中，但本卡标签簇里有卡 → 退到同簇首条作锚（不阻塞）
+    #    背景：卡 32 就撞上这种情况——概念名全新，关键词 0 命中，闸门直接阻塞，
+    #    只能手工 `--anchor-id` 指同簇的卡。人工本来就会这么做，故收进脚本。
+    c = FakeClient(
+        search={"tag:科技/机器人": {"structuredContent": {"memos": [{"id": "TAG1"}]}}},
+        recommended={"structuredContent": {"memos": [{"id": "R9"}]}},
+    )
+    b, n = [], []
+    got = GATE._check_review(c, sig, b, n)
+    check("_check_review 关键词无命中退到标签簇取锚", b == [] and got and got["anchor"] == "TAG1")
+    check("_check_review 标签簇取锚如实标注来源",
+          got and "标签簇" in got["anchor_source"] and "关键词无命中" in got["anchor_source"])
+    check("_check_review 标签路查询带完整路径",
+          any(k == "memo_search" and a.get("tag") == "科技/机器人" for k, a in c.calls))
+    check("_check_review 取锚过程留痕（关键词命中数）",
+          any("取锚检索" in x and "0 条" in x for x in n), str(n))
+
+    # 4) 关键词与标签簇两路皆空 → 阻塞，且文案必须给出出路（不靠人去翻 argparse）
     b, n = [], []
     got = GATE._check_review(FakeClient(), sig, b, n)
     check("_check_review 无锚判阻塞", any("无法取锚" in x for x in b) and got is None)
+    check("_check_review 阻塞文案给出 --anchor-id 出路",
+          any("--anchor-id" in x for x in b), str(b))
+    check("_check_review 阻塞文案点名实际查过的标签簇",
+          any("科技/机器人" in x for x in b), str(b))
+
+    # 5) 显式 anchor 优先于两种自动取锚（不额外发检索请求）
+    c = FakeClient(search={}, recommended={"structuredContent": {"memos": []}})
+    b, n = [], []
+    GATE._check_review(c, sig, b, n, anchor_id="GIVEN")
+    check("_check_review 显式锚优先，不发多余检索",
+          [k for k, _ in c.calls] == ["memo_recommended"], str(c.calls))
 
 
 def run_usage_consistency_cases():
