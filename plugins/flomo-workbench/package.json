@@ -1,0 +1,23 @@
+{
+  "name": "@local/flomo-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "flomo-note 技能的三个工作模式（写卡 / 治理 / 体检）与脚本薄壳工具",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
