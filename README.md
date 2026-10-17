@@ -4,6 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/shushuzn/flomo-note/actions/workflows/ci.yml/badge.svg)](https://github.com/shushuzn/flomo-note/actions/workflows/ci.yml)
 
 ---
 
@@ -96,9 +97,12 @@ flomo-note/
 │   ├── run_audit.sh / audit_skill.sh    # 技能文档结构审计
 │   ├── run_tests.sh           # 一键跑全部离线回归
 │   └── test_*.py              # 各脚本配套回归用例
-├── .gitignore                 # 忽略凭据与现采缓存
+├── .github/workflows/ci.yml   # 每次推送/PR 跑同一条 run_tests.sh（不配 secrets）
+├── .gitignore                 # 忽略凭据、本机私有导出与现采缓存
 └── README.md                  # 本文件
 ```
+
+> 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后 13 套仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。
 
 | 文件 | 职责 |
 |------|------|
