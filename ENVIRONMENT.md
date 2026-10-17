@@ -13,6 +13,8 @@
 - Python：`python3`（3.11）；依赖用 `sudo pip3 install <包>` 或 `sudo uv pip install --system <包>`。
 - 技能安装位置：`~/.codebuddy/skills/flomo-note/`（含 `SKILL.md`、`AGENTS.md`、`scripts/`）。
 - **注意**：本文件其余各节的路径（`/workspace`、`/root/.codebuddy/...`）记录的是 Linux 沙箱形态；当前会话实际运行在 Windows 本机（工作目录 `D:/OpenClaw/flomo-note`，Python 3.13.12 托管版，bash 为 Git Bash）。两处冲突时以实测为准，并把实测结果补进本节。
+- Python 实测（`python --version`）：**3.14.6**（Windows 托管版），与上面记的 3.11 / 3.13.12 均不一致，以实测为准。
+- 跑回归用例须带 UTF-8 模式：本机 PowerShell 控制台默认 GBK 代码页，`python scripts/test_*.py` 打印中文或用 `♯`(U+266F) 之类字符时会被 GBK 编码失败崩在**打印阶段**——断言其实全过，现象酷似逻辑失败。先 `$env:PYTHONUTF8=1`（或 `PYTHONIOENCODING=utf-8`）再跑；`bash scripts/run_tests.sh` 同样受此影响。
 - 脚本已做**平台自适应**：`run_audit.sh` / `push_skill.sh` 自动探测 `$PYTHON_BIN` → `python3` → `python`；仅 Windows(Git Bash) 才启用 Git 目录 PATH 修正与 `gh.exe` 凭据助手。跨平台无需改脚本，必要时用 `PYTHON_BIN=...` 显式指定解释器。
 
 ---
@@ -122,3 +124,39 @@ python scripts/sni_fetch.py <url> <out_path>
 - **本机（Windows）实际布局**：中间文件写在项目根 `_tmp/`；该目录**可能被上一轮清理移除**，`curl -o _tmp/...` 前须先 `mkdir -p _tmp`，否则报「No such file or directory」而被误判为网络故障。根目录的 `tmp_*` 与 `_tmp_*` 同义，均由 `cleanup.py` 按近轮窗口回收。
 - 验证留痕（第 2 步网络搜索记录）：写卡时按 `scripts/sop_gate.py` 用法说明落盘，供闸门读取；属当轮中间文件。
 - `feeds.opml`：本机的**阅读器导出**（Fluent Reader 的订阅清单，四项 RSS：Hacker News 最新、中新网滚动、IT之家、DEV Community），只用于挑素材时顺手扫一遍。**与技能本体无关、已 gitignore、不追进入库**；任何脚本都不读它，删了也不影响流程。
+
+---
+
+## 技能注册（DeepSeek Harness）
+
+`SKILL.md` 在仓库根，**不在** dsh 技能提供者的默认扫描根内（它只认
+`<projectRoot>/.dsh/skills/<name>/SKILL.md` 与 `<projectRoot>/.agents/skills/<name>/SKILL.md`；
+`projectRoot` 取最近含 `.git` 的祖先，本仓库即自身）。不注册时，会话的技能目录里
+看不到本技能，只能靠人肉去读仓库根的文件。注册方式（本机，一次性）：
+
+```powershell
+New-Item -ItemType Directory -Force -Path .dsh\skills
+New-Item -ItemType Junction -Path .dsh\skills\flomo-note -Target $PWD
+```
+
+- 联接目标是**仓库根本身**，因此 `scripts/`、`AGENTS.md`、`ENVIRONMENT.md` 一并落在
+  技能的 resource base 里，`SKILL.md` 中的相对路径按 base 解析即可命中。
+- `.dsh/` 已 gitignore：联接是**指针不是副本**，`SKILL.md` 仍只在仓库根定义一次；
+  且 git 检出会把联接写成纯文本文件，反而造出"两个 skill"，故绝不上库。
+- 换机器 / 重建：删掉 `.dsh` 后按上面两行重跑；提供者带目录监视，不用重启。
+- 验证：`Test-Path .dsh\skills\flomo-note\SKILL.md` 为 True，且新会话技能目录出现 `flomo-note`。
+- 实测副作用：无。`glob` / `grep` 均不穿目录联接，不会出现 `.dsh\...` 重复路径。
+
+---
+
+## Windows 沙箱权限（本机）
+
+工作区根目录缺少所有者写权限时，**所有 shell 通道一进工作区就失败**（`pwsh` 与
+terminal 均报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<工作区>)`，
+换 workdir 无效，因为 workspace-write 策略总要给工作区根授权），而 `read` /
+`write` / `edit` 文件工具不受影响——现象是"文件能改、命令不能跑"。
+
+修复用 dsh 的 `diagnose-windows-sandbox-acl` 技能跑一条诊断修复命令（给当前登录用户
+在缺失处补完全控制条目，保留所有者与既有拒绝项，改动前先落备份）。报告目录：
+`D:\OpenClaw\flomo-note-acl-out\`（含 `acl-report-*.jsonl` 与 `acl-backup-*.json` /
+`.ps1` 回滚脚本，报告末尾的 ROLLBACK 行即撤销命令）。修完须重跑原先被挡的操作确认。
