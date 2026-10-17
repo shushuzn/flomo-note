@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 卡片本体：首行标签段（短）+ 第二行概念名（长）的抽象 -->
+  <rect x="8" y="6" width="40" height="46" rx="6" fill="#ffffff" stroke="#247bbf" stroke-width="3"/>
+  <rect x="15" y="15" width="16" height="4" rx="2" fill="#247bbf"/>
+  <rect x="15" y="25" width="26" height="4" rx="2" fill="#9dc3e6"/>
+  <rect x="15" y="33" width="21" height="4" rx="2" fill="#c9c9c9"/>
+  <rect x="15" y="41" width="24" height="4" rx="2" fill="#c9c9c9"/>
+  <!-- 对勾徽标：写云前必过两道闸门 -->
+  <circle cx="45" cy="45" r="13" fill="#2e9e6b" stroke="#ffffff" stroke-width="3"/>
+  <path d="M38.5 45.5 L43.5 50.5 L52 40.5" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

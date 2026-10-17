@@ -160,3 +160,29 @@ terminal 均报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<工作区>)
 在缺失处补完全控制条目，保留所有者与既有拒绝项，改动前先落备份）。报告目录：
 `D:\OpenClaw\flomo-note-acl-out\`（含 `acl-report-*.jsonl` 与 `acl-backup-*.json` /
 `.ps1` 回滚脚本，报告末尾的 ROLLBACK 行即撤销命令）。修完须重跑原先被挡的操作确认。
+
+---
+
+## flomo 工作台（DSH 插件）
+
+`plugins/flomo-workbench/` 是本地 Cordis bundle：源在仓库里，已用 `plugin_manager`
+的 `install_bundle` 装进当前 profile（profile 的 `node_modules/@local/flomo-workbench`
+是指向该目录的联接，改源文件即改生效代码，但**模块只在 Harness 启动时加载一次**，
+改 `index.js` 后须重启进程）。它提供三个 agent 预设，在新会话的预设控件里选：
+
+| 预设 | 模式 | 工具面 |
+|---|---|---|
+| `flomo-write` | 写卡 | 全量：web + fs + shell + flomo_read / flomo_scan / flomo_gate / flomo_validate / flomo_write |
+| `flomo-tidy` | 治理 | 同上，但**不挂 web 工具**（治理不抓新素材） |
+| `flomo-audit` | 体检 | **不注册写工具**、fs 只读、不挂 web |
+
+- 模式切换：`/flomo write | tidy | audit`（走 `agentPresets.select`，与预设控件同一条路）。
+- 五个工具全是 `scripts/*.py` 的薄壳：一次调用 = 一次脚本执行，**不含第二套口径**；
+  写工具会先跑 `validate_memo.py`（格式 + 闸门凭证），不过则一个字节都不发云端。
+- 模式不写在配置里：插件用 `ctx.agentPresets.composedPreset(ctx)` 判断所在预设；
+  取不到时 fail-closed（不注册写工具），日志里会写明原因。
+- 换机器重建：`plugins/` 随仓库走，只需再装一次——`plugin_manager` `install_bundle`，
+  target 传 `plugins/flomo-workbench` 的绝对路径。
+- 离线自检（不装插件也能验证插件逻辑与脚本链路，会真的打一次 tag_tree 只读）：
+  `node _tmp/probe_plugin.mjs`。该探针是临时产物、不入库；要固化为常驻回归需另走
+  脚本改动的配套用例流程。

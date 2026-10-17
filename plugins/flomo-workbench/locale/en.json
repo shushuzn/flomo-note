@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "flomo Workbench",
+    "description": "Three flomo-note modes (write / tidy / audit). Tools are thin wrappers over the repo's existing scripts; the audit mode registers no write tools at all."
+  }
+}

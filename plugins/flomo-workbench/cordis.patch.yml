@@ -1,0 +1,214 @@
+# flomo-workbench —— flomo-note 技能的三个工作模式（写卡 / 治理 / 体检）。
+#
+# 约定：
+#   1. 只 insert 新 preset 行，不覆盖 preset-standard / preset-minimal / preset-cordis。
+#      代价是 shipped 预设基线将来若新增插件，这里不会自动跟随，需要时手动同步——
+#      这是声明式 preset 的固有性质，不是疏漏。
+#   2. 三个模式挂同一个 Host 插件 @local/flomo-workbench。它按**所在 preset**
+#      （ctx.agentPresets.composedPreset）决定注册哪些工具：体检模式不注册写工具，
+#      于是「写云」这个动作在体检会话的工具层根本不存在，而不是靠提示词劝它别写。
+#   3. persona 的 prefix 只做**读法路由**（读 SKILL.md 哪几节、边界是什么），
+#      绝不复制 SKILL.md 的规则正文——细则唯一来源是 SKILL.md，与项目自己的
+#      「硬限只定义一次」同构。
+- insert:
+    # ================= 模式一：写卡（默认） =================
+    - id: preset-flomo-write
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: flomo-write
+        name: flomo 写卡
+        description: 单卡全流程九步：抓取→验证→提炼→定标签→查重→写作→自检→复盘→更新
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你在 flomo 写卡模式：把用户给的链接、文章、想法整理成云端 flomo 卡片，一事一卡。
+                全局纪律见 AGENTS.md（已在上下文）；可执行细则的唯一来源是 SKILL.md，用 skill 工具按需加载，不得凭记忆执行。
+                写云免确认，但每张卡必须先过两道闸门（flomo_gate + flomo_validate 均要通过）再 flomo_write；
+                一次只处理一张卡，禁止把多次调用串成一批。
+          - id: flomo-workbench
+            name: '@local/flomo-workbench'
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    # ================= 模式二：治理 =================
+    - id: preset-flomo-tidy
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: flomo-tidy
+        name: flomo 治理
+        description: 复盘、归并、拆解、补挂既有卡片；不抓取新素材
+        order: 21
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你在 flomo 治理模式：复盘、归并、拆解、补挂、清空既有卡片，不抓取任何新素材（本会话未挂 web 工具）。
+                全局纪律见 AGENTS.md；细则唯一来源是 SKILL.md，必读二节 D 组（H20–H24）、H8–H11、三节 8–9、四节，按需读一节纪律 1 与 H23。
+                任何标签簇名前必须 tag_tree 现采，禁止凭记忆或旧日志引用；更新前必先回读原卡全文。
+                固定输出：治理报告——主卡 id、合并后实测字数、被清空源卡 id、标签复查结果；无待办时明示本轮无 memo 需更新。
+          - id: flomo-workbench
+            name: '@local/flomo-workbench'
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    # ================= 模式三：体检（只读） =================
+    - id: preset-flomo-audit
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: flomo-audit
+        name: flomo 体检
+        description: 只读云端与仓库扫描脚本，产出问题报告；本模式不注册写工具
+        order: 22
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你在 flomo 体检模式：只读云端与仓库扫描脚本，产出问题报告。本会话不挂 web 工具、文件系统只读，
+                且 flomo 写工具根本未注册——没有写云入口，需要写云时先用 /flomo write 切模式。
+                全局纪律见 AGENTS.md；细则唯一来源是 SKILL.md，必读二节 A/B 组与附录扫描口径。
+                固定输出：体检报告——问题分级，每条给出现测依据（memo id / 标签 / 实测字数）；
+                建议落点仅限标签聚类、补挂、归并，严禁提议改动 SKILL.md / AGENTS.md / 词表 / 脚本。
+          - id: flomo-workbench
+            name: '@local/flomo-workbench'
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: true
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
