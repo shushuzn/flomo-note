@@ -274,20 +274,50 @@ def _check_review(client, sig, blockers, notes, anchor_id=None):
 
     服务端 `memo_recommended` 的 `id` 为**必填**（传别的键会报 unexpected
     additional properties，不传 id 会报 missing properties: ["id"]）——
-    它按指定卡返回相关推荐。写云前本卡尚不存在，故以关键词检索命中的首条
-    卡作锚；确无任何命中（全新主题）则以最近更新的卡兜底，并留痕 anchor 来源。
+    它按指定卡返回相关推荐。写云前本卡尚不存在，故必须借一张已有卡作锚。
+
+    取锚顺序（每一步都写进 notes，凭证里的 anchor_source 标明实际来源）：
+      ① 调用方显式给 `--anchor-id`（更新已有卡时就是本卡 id）；
+      ② 概念名派生关键词检索，命中首条；
+      ③ 关键词全无命中时，退到本卡标签簇（`#主/子`）取该簇首条——全新主题
+         照字面常常搜不到，但同簇里必有语义近邻，这正是人工处置时的做法。
+      ④ 以上都取不到才阻塞，并在文案里写明出路。
+
+    **不拿「最近更新的卡」兜底**：那种锚与本卡无关，交回来的邻居也是无关卡的，
+    等于把「没做过复盘」记成「复盘过了」——凭证会撒谎，比阻塞更坏。
     """
     anchor, anchor_src = anchor_id, "调用方提供"
+    kws = keywords_of_concept(sig["concept"], limit=2)
+    tried = []
     if not anchor:
-        for kw in keywords_of_concept(sig["concept"], limit=2):
+        for kw in kws:
             res = client.tool("memo_search", {"keywords": kw, "limit": 1})
             memos = _result_memos(res)
+            tried.append(f"关键词「{kw}」{len(memos)} 条")
             if memos:
                 anchor = memos[0].get("id")
                 anchor_src = f"关键词「{kw}」命中首条"
                 break
+        notes.append("复盘·取锚检索：" + "、".join(tried or ["无可派生关键词"]))
+    leaves = tag_leaves(sig["tagline"])
     if not anchor:
-        blockers.append("复盘第 ⑧ 步无法取锚：既未提供本卡 id，关键词检索也无任何命中")
+        for top, leaf in leaves:
+            path = f"{top}/{leaf}"
+            res = client.tool("memo_search", {"tag": path, "limit": 1})
+            memos = _result_memos(res)
+            notes.append(f"复盘·取锚退到标签簇「{path}」：{len(memos)} 条")
+            if memos:
+                anchor = memos[0].get("id")
+                anchor_src = f"标签簇「{path}」首条（关键词无命中）"
+                break
+    if not anchor:
+        where = "、".join(f"`{t}/{l}`" for t, l in leaves) or "（首行无合法标签）"
+        blockers.append(
+            "复盘第 ⑧ 步无法取锚：未给 `--anchor-id`，关键词检索无命中，"
+            f"本卡标签簇 {where} 里也没有任何卡。"
+            "确属全新主题时用 `--anchor-id` 指定最接近的卡（可跨标签）；"
+            "否则先确认首行标签是否写错——标签写错会让查重与复盘两路同时空转"
+        )
         return None
     res = client.tool("memo_recommended", {"id": anchor, "limit": 20})
     recs = _result_memos(res)
