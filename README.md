@@ -85,6 +85,7 @@ flomo-note/
 │   ├── flomo_client.py        # flomo MCP 调用唯一入口
 │   ├── sop_gate.py            # SOP 流程闸门（代跑核对/查重/复盘，出凭证）
 │   ├── validate_memo.py       # 写云前文本质检 + 闸门凭证校验
+│   ├── verify_card.py         # 写云后回读全文自查（H11 的机器可判部分）
 │   ├── check_skill_docs.py    # 技能文档内容纪律自检
 │   ├── sni_fetch.py           # SNI 被阻断时的取件通道
 │   ├── extract_arxiv_html.py  # arXiv HTML 正文抽取
@@ -112,6 +113,7 @@ flomo-note/
 | `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现 |
 | `sop_gate.py` | 流程闸门：代跑查重两路 / 复盘三路，校验验证留痕 |
 | `validate_memo.py` | 文本质检（格式、标签、来源、载体、字数）+ 闸门凭证校验 |
+| `verify_card.py` | 写云后回读全文，做 H11 里可机械判的那部分（形态、占位符、实测字数），并列出脚本判不了的两项 |
 | `serve_console.py` + `web/` | 项目控制台：本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力） |
 | `console_cloud.py` | 控制台云端访问层：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收 |
 | `console_data.py` | 控制台读仓库：解析技能文档与脚本清单，产出统计字段 |

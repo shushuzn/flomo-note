@@ -7,12 +7,23 @@
 
 本用例把服务当黑盒：在随机空闲端口真启动 `serve_console.py`，用 `http.client`
 直连（不走系统代理——本机 HTTP_PROXY 会让 localhost 也过代理，curl 会返回代理
-自己的 502，看起来像服务坏了），断言四件事：
+自己的 502，看起来像服务坏了），断言六件事：
 
   1. 静态三件套真能取到（首页是 HTML 外壳，样式与脚本非空）；
   2. `/api/overview` 返回本地 JSON，且只报云端可用性、不把 token 带进响应体；
   3. 未知路径 404；`..` 逃逸的四种写法都拿不到仓库文件（不在 web/ 内即 403）；
-  4. 端口被占时第二个实例以退出码 2 拒绝启动（双实例会让页面内容时新时旧）。
+  4. 未知写路由 404 且给 JSON 错误体（不能只断连接、让前端干等）；
+  5. **通用执行入口 `/api/cloud/tool` 的安全边界**：写工具、空工具名、白名单外
+     工具一律被拒，畸形请求体给 400。这一层此前只有单元用例（直接调
+     `run_read_tool`）与前端源码正则，HTTP 路由本身一次真实请求都没打过——
+     路由若把 body 解析错，界面「执行」按钮会静默失败而所有用例照样绿。
+     判据用状态码自证：本机离线，真发出云端请求必因连不上而 502，拿到 422
+     即证明拒绝发生在 `_connect()` 之前，一个字节都没出网；
+  6. 端口被占时第二个实例以退出码 2 拒绝启动（双实例会让页面内容时新时旧）。
+
+**不测合法读工具的端到端执行**：那必然连云端，用完例换联网依赖不划算；
+参数传递与返回形态由 `test_console_cloud.py` 的 `run_read_tool_entry()`（假
+client）覆盖，两层各管一段。
 
 用法：python scripts/test_console_serve.py     退出码 0=全过，1=有失败。
 """
@@ -161,6 +172,35 @@ def main() -> int:
         code, ctype, text = request(port, "POST", "/api/cloud/nope", b"{}")
         ok = code == 404 and "application/json" in ctype and "error" in text
         check("未知写路由 404 且返回 JSON 错误", ok, f"{code} {ctype} {text[:80]}")
+
+        # 4b) 通用执行入口的安全边界：写工具不得从 `/api/cloud/tool` 穿透。
+        #     这一层此前只有控制台单元用例（`run_read_tool` 直接调用）与前端源码
+        #     正则，HTTP 路由本身一次真实请求都没打过——路由若把 body 解析错，
+        #     界面「执行」按钮会静默失败而所有用例照样绿。
+        #     判据用状态码本身证伪：本机离线，真发出云端请求必因连不上而 502；
+        #     拿到 422 即证明拒绝发生在 `_connect()` 之前，一个字节都没出网。
+        def post_json(payload):
+            return request(port, "POST", "/api/cloud/tool",
+                           json.dumps(payload, ensure_ascii=False).encode())
+
+        code, ctype, text = post_json({"name": "memo_create", "arguments": {"content": "x"}})
+        check("通用入口拒绝写工具（422 而非 502）",
+              code == 422 and "写工具不走通用入口" in text, f"{code} {text[:100]}")
+
+        code, _, text = post_json({"name": "memo_update", "arguments": {"id": "x"}})
+        check("写工具 update 同样被拒", code == 422 and "写工具" in text, f"{code} {text[:100]}")
+
+        code, _, text = post_json({"name": "", "arguments": {}})
+        check("缺工具名被拒", code == 422 and "缺少工具名" in text, f"{code} {text[:100]}")
+
+        code, _, text = post_json({"name": "delete_everything", "arguments": {}})
+        check("白名单外工具被拒", code == 422 and "白名单外工具" in text, f"{code} {text[:100]}")
+
+        # 4c) 畸形请求体：必须是有 JSON 错误体的 400，不能半路掐断连接
+        code, ctype, text = request(port, "POST", "/api/cloud/tool", b"{not json")
+        check("畸形 JSON 请求体返回 400 与错误体",
+              code == 400 and "application/json" in ctype and "error" in text,
+              f"{code} {ctype} {text[:80]}")
 
         # 5) 双实例：端口已被本进程占用，第二个实例应拒绝启动
         second = spawn(port)
