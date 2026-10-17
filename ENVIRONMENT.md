@@ -12,6 +12,7 @@
 - 当前沙箱：Ubuntu 22.04 linux/amd64，root 用户，工作目录 `/workspace`。
 - Python：`python3`（3.11）；依赖用 `sudo pip3 install <包>` 或 `sudo uv pip install --system <包>`。
 - 技能安装位置：`~/.codebuddy/skills/flomo-note/`（含 `SKILL.md`、`AGENTS.md`、`scripts/`）。
+- **注意**：本文件其余各节的路径（`/workspace`、`/root/.codebuddy/...`）记录的是 Linux 沙箱形态；当前会话实际运行在 Windows 本机（工作目录 `D:/OpenClaw/flomo-note`，Python 3.13.12 托管版，bash 为 Git Bash）。两处冲突时以实测为准，并把实测结果补进本节。
 - 脚本已做**平台自适应**：`run_audit.sh` / `push_skill.sh` 自动探测 `$PYTHON_BIN` → `python3` → `python`；仅 Windows(Git Bash) 才启用 Git 目录 PATH 修正与 `gh.exe` 凭据助手。跨平台无需改脚本，必要时用 `PYTHON_BIN=...` 显式指定解释器。
 
 ---
@@ -81,6 +82,13 @@ python scripts/sni_fetch.py <url> <out_path>
 
 原理：SNI 换成无关域名、HTTP `Host` 头保留目标域，Fastly 按 Host 路由故内容照常返回（自动跟随重定向、去 chunked/gzip）。
 
+### GitHub 正文抓取通道
+
+- `raw.githubusercontent.com`：TLS 握手直接失败（`curl` 退出码 35）。**不要据此判定 GitHub 不可用**。
+- `api.github.com`：可达，可取仓库元数据（默认分支、语言、许可、时间戳）。
+- `github.com` 仓库页：可达，README 以 `<article class="markdown-body">` 内嵌在 HTML 里。
+- 故取 README 全文的**优先级**为：仓库页 HTML 解析 > `api.github.com`（仅元数据）> `raw.githubusercontent.com`（常失败）。
+
 ### 隧道与取件的实测背景
 
 - **`git_tunnel.py` 的由来**：本机 DNS 曾把 `github.com` 解析到新加坡 Azure 段地址，该 IP 的 443 端口 TCP 超时；换 SNI、不发 SNI 均超时，判定为路由不通（非 SNI 关键字阻断）。因此改为把连接重定向到候选可达 IP，同时保持 SNI 与证书校验仍为 `github.com`；候选全失败则回落系统 DNS，避免候选表漂移后隧道对每次连接都回 502。
@@ -108,5 +116,6 @@ python scripts/sni_fetch.py <url> <out_path>
 - 中间文件（抓取原文、草稿、请求 JSON、被替换的旧卡全文）写在 `/root/.codebuddy/artifact/<会话 id>/`，用完不即时全删，须保留最近若干轮（保留规则见 SKILL.md）。
 - 临时请求 JSON 可放 `/tmp/`，同样不要在当轮立刻删。
 - 最终交付物（需要用户看的）才写 `/workspace`。
-- 流程闸门凭证：`.sop_gate/<sig_key>.json`（现采中间态，已 gitignore）。
+- 流程闸门凭证：`.sop_gate/<sig_key>.json`（现采中间态，已 gitignore）。凭证有效期 6 小时，`cleanup.py` 顺带删除超过 24 小时的旧凭证，`trash` 只留最近 10 个归档包。
+- **本机（Windows）实际布局**：中间文件写在项目根 `_tmp/`；该目录**可能被上一轮清理移除**，`curl -o _tmp/...` 前须先 `mkdir -p _tmp`，否则报「No such file or directory」而被误判为网络故障。根目录的 `tmp_*` 与 `_tmp_*` 同义，均由 `cleanup.py` 按近轮窗口回收。
 - 验证留痕（第 2 步网络搜索记录）：写卡时按 `scripts/sop_gate.py` 用法说明落盘，供闸门读取；属当轮中间文件。

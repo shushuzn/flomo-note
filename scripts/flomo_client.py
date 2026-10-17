@@ -9,12 +9,16 @@ token 来源优先级：项目根 .mcp.json 的 mcpServers.flomo.headers.Authori
 FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备，因其可能过期）。
 
 用法：
-  python flomo_client.py <tool名> ['{"参数":值}']
+  python flomo_client.py <tool名> ['{"参数":值}'] [--brief]
   示例：
   python flomo_client.py tag_tree
   python flomo_client.py memo_search '{"keywords":"政策性金融工具","limit":10}'
   python flomo_client.py get_format_guide
   python flomo_client.py memo_create '{"content":"正文..."}'   # 写操作一律免确认
+
+`--brief` 只压缩**列表型**回包（搜索/推荐/标签树）：给 id、字数、标签与前两行签名，
+正文不入表，省掉每次 27–55 KB 的原始 JSON。`memo_batch_get` 永远走全文分支、
+不截断——H1 禁的正是「用截断内容判断正文」。写操作的 id 校验与写后回读验收不受影响。
 
 权限纪律：所有工具（只读与写操作）均可直接调用，无需额外授权。
 写操作（memo_create / memo_update / tag_rename / tag_add）执行后直接报告结果。
@@ -177,6 +181,72 @@ def usage():
     return 2
 
 
+def brief_text(name, payload):
+    """把一次工具返回压成可核对的短表（供 `--brief`）。
+
+    用途只有一个：查重/复盘时「发现有哪些卡」。故只给 id、字数、标签与前两行签名，
+    正文不入表。**`memo_batch_get` 例外，走全文分支、绝不截断**——把截断内容包装成
+    便利功能，等于给 H1 开了一个后门（H1 禁的正是「用截断内容判断正文」）。
+
+    返回 None 表示这个形态不适合压缩，调用方应退回完整 JSON。
+    """
+    sc = (payload or {}).get("structuredContent") or {}
+    if not sc:
+        # 兼容只有 content[].text 的回包形态
+        for block in (payload or {}).get("content") or []:
+            try:
+                parsed = json.loads((block or {}).get("text") or "")
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and parsed:
+                sc = parsed
+                break
+    if not isinstance(sc, dict) or not sc:
+        return None
+
+    memos = sc.get("memos")
+    if isinstance(memos, list) and name != "memo_batch_get":
+        lines = [f"memos={len(memos)}"]
+        for m in memos:
+            content = m.get("content") or ""
+            sig = [ln.strip() for ln in content.splitlines() if ln.strip()][:2]
+            concept = sig[1] if len(sig) > 1 else (sig[0] if sig else "")
+            lines.append(
+                f"{m.get('id')} | {m.get('word_count')} 字 | "
+                f"{','.join(m.get('tags') or [])} | {concept[:40]}"
+            )
+        return "\n".join(lines)
+
+    if name == "memo_batch_get" and isinstance(memos, list):
+        lines = [f"memos={len(memos)}（全文，未截断）"]
+        for m in memos:
+            lines.append(
+                f"===== {m.get('id')} | {m.get('word_count')} 字 | "
+                f"{','.join(m.get('tags') or [])}"
+            )
+            lines.append(m.get("content") or "")
+        return "\n".join(lines)
+
+    tags = sc.get("tags")
+    # 顺序要紧：写操作/单卡回包同样带 `tags`，若先判 tags 会把一张卡渲染成标签树
+    # （实测 memo_create 回包即 {id, tags, word_count}，一度被误判）。
+    if sc.get("id"):
+        return (
+            f"id={sc.get('id')} | {sc.get('word_count')} 字 | "
+            f"{','.join(tags if isinstance(tags, list) else [])} | "
+            f"link={sc.get('has_link')} image={sc.get('has_image')}"
+        )
+
+    if isinstance(tags, list):
+        shown = tags if len(tags) <= 30 else tags[:20]
+        out = [f"total={sc.get('total')} returned={len(tags)}"] + [str(t) for t in shown]
+        if len(tags) > len(shown):
+            out.append(f"……另有 {len(tags) - len(shown)} 个（按前缀收窄或调大 limit）")
+        return "\n".join(out)
+
+    return None
+
+
 def _result_memos(result):
     """从 flomo 工具返回中提取 memos 列表。
 
@@ -302,7 +372,9 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
-    argv = sys.argv[1:]
+    raw_argv = sys.argv[1:]
+    brief = "--brief" in raw_argv
+    argv = [a for a in raw_argv if a != "--brief"]
     if not argv or argv[0] in ("-h", "--help", "help"):
         return usage()
     token, src = load_token()
@@ -326,7 +398,11 @@ def main():
             print(json.dumps({"idempotent": True, "reused_id": dup}, ensure_ascii=False))
             return 0
     result = client.tool(name, arguments)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    text = brief_text(name, result) if brief else None
+    if text is None:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(text)
     # 写操作后强制校验结构化 id，杜绝"看不到 id 就当成失败重发"导致的重复写。
     # flomo 成功响应中 id 位于 result.structuredContent.id（嵌套结构），
     # 取不到即视为失败，退出码非 0，下游自动化不会据此重试。
