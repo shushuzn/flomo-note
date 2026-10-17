@@ -11,11 +11,13 @@ from __future__ import annotations
 import io
 import json
 import sys
+import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import flomo_client as FC  # noqa: E402
 import verify_card as VC  # noqa: E402
 
 _RESULTS = []
@@ -174,29 +176,66 @@ def run_cases():
         VC._default_client = orig_default
     check("机械项失败时退出码为 1", rc2 == 1, str(rc2))
 
-    # 13) 字符对账：H11 ④ 的「实测字数」要能和本地草稿对得上。
-    #     云端回读天然比草稿多两类字符——渲染层补的空行、存储层对 Markdown 元字符
-    #     做的反斜杠转义。若直接报原始长度，差额会随卡里元字符多少而变（卡 34 差 7），
-    #     每张卡都要人当场算账；报「还原转义后」的长度才能一眼对账。
-    draft = ("#科技/安全\n"
-             "持有型会话凭证\n"
-             "\n"
-             "要点：\n"
-             "- 稠密系统 [Z][I]=[V] 与下标 a_i 一并入正文。\n")
-    stored_body = draft.replace("[", "\\[").replace("]", "\\]").replace("_", "\\_")
-    stored = stored_body.replace("#科技/安全\n", "#科技/安全\n\n", 1)   # 渲染层补的空行
-    checks, info = VC.run("TESTID", FakeClient(memo(stored)))
-    check("字符数按「还原转义后」口径，可与草稿逐字对账",
-          info["chars"] == len(draft), f"{info['chars']} vs 草稿 {len(draft)}")
-    check("原始字符数仍如实保留（不被抹掉）",
-          info["chars_raw"] == len(stored), f"{info.get('chars_raw')} vs 回读 {len(stored)}")
-    check("差额来源分别计数（渲染补行 / 存储转义）",
-          info["render_pad"] == 1 and info["escapes"] == 7,
-          f"pad={info.get('render_pad')} escapes={info.get('escapes')}")
-    # 反向：数字对得上就必须真对得上——草稿与回读差两个字符，口径立即可见差异
-    checks2, info2 = VC.run("TESTID", FakeClient(memo(stored.replace("正文", "正文内容"))))
-    check("草稿与回读真差两字时字符数随之变化",
-          info2["chars"] == len(draft) + 2, f"{info2['chars']} vs 草稿 {len(draft)}")
+    # 13) 与本地草稿的逐字比对：口径必须与写路径 readback_check 同源
+    #     （FC._norm_body：丢空行 / 还原转义 / 去行内水平空白）。假 client 要按
+    #     真实平台行为构造回读，共四层差异：渲染层在标签段后与「要点：」后补空行、
+    #     全角标点与行内代码之间插空格、存储层给 Markdown 元字符加反斜杠、草稿文件
+    #     末尾换行被修掉。
+    #     旧口径只还原了标签段后那一处，于是「要点：后无空行」的草稿（卡 37 形态）
+    #     报出的「正文 + 渲染补行」分解是错的，数字还靠「补行 +1」与「末换行 −1」
+    #     相互抵消蒙对——看起来对上了，其实一层都没核。
+    with tempfile.TemporaryDirectory(prefix="vc_test_") as td:
+        draft = ("#科技/安全\n"
+                 "持有型会话凭证\n"
+                 "\n"
+                 "要点：\n"
+                 "- 稠密系统 [Z][I]=[V] 与下标 a_i 一并入正文。\n")
+        stored = (draft
+                  .replace("[", "\\[").replace("]", "\\]").replace("_", "\\_")
+                  .replace("#科技/安全\n", "#科技/安全\n\n", 1)   # 渲染层：标签段后补行
+                  .replace("要点：\n", "要点：\n\n", 1)           # 渲染层：引导行后补行
+                  .rstrip("\n"))                                  # 存储层：修掉末尾换行
+        draft_path = Path(td) / "draft_tight.txt"
+        draft_path.write_text(draft, encoding="utf-8")
+        checks, info = VC.run("TESTID", FakeClient(memo(stored)), draft_path=str(draft_path))
+        ok, detail = by_name(checks)["与本地草稿逐字比对（同写路径口径）"]
+        check("要点后无空行的草稿：四层平台差异下仍逐字比对通过", ok, detail)
+        check("差额分解四类都有出处（转义 7 处 / 空行 2 / 行内空白两侧同去）",
+              info["escapes"] == 7 and info["blanks"] == 2 and info["spaces"] == 5,
+              f"esc={info['escapes']} blanks={info['blanks']} spaces={info['spaces']}")
+        # blanks=2 = 草稿自带的空行 1（概念名与「要点：」之间）+ 渲染层在「要点：」
+        # 后补的 1；标签段后那一处已在结构还原时删掉。spaces=5 是草稿自带的中英混排
+        # 空格（`- 稠密系统 [Z][I]=[V] 与下标 a_i 一并入正文。`），两侧同样去除，
+        # 不是平台插入的——标注为「口径去除」而非「平台差异」。
+        check("净字符与草稿同口径相等",
+              info["net"] == len(FC._norm_body(draft)),
+              f"{info['net']} vs {len(FC._norm_body(draft))}")
+        # 反向一：真差一个字，比对必须失败（判据要能当场证伪）
+        checks2, _ = VC.run("TESTID", FakeClient(memo(stored.replace("正文", "正文内容"))),
+                            draft_path=str(draft_path))
+        check("云端与草稿真差一字时比对判失败",
+              not by_name(checks2)["与本地草稿逐字比对（同写路径口径）"][0])
+        # 反向二：草稿「要点：」后本来就有空行（卡 38 形态），同样要通过——
+        #     口径不能反过来把草稿自己的空行当差异
+        draft2 = draft.replace("要点：\n", "要点：\n\n", 1)
+        draft2_path = Path(td) / "draft_loose.txt"
+        draft2_path.write_text(draft2, encoding="utf-8")
+        stored2 = (draft2
+                   .replace("[", "\\[").replace("]", "\\]").replace("_", "\\_")
+                   .replace("#科技/安全\n", "#科技/安全\n\n", 1)
+                   .rstrip("\n"))
+        checks3, _ = VC.run("TESTID", FakeClient(memo(stored2)), draft_path=str(draft2_path))
+        check("要点后有空行的草稿同样通过（不把草稿自有的空行判成差异）",
+              by_name(checks3)["与本地草稿逐字比对（同写路径口径）"][0])
+        # 反向三：draft 不一致时 main 退出码为 1
+        buf3 = io.StringIO()
+        try:
+            VC._default_client = lambda: FakeClient(memo(stored.replace("正文", "正文内容")))
+            with redirect_stdout(buf3):
+                rc3 = VC.main(["--id", "TESTID", "--draft", str(draft_path)])
+        finally:
+            VC._default_client = orig_default
+        check("草稿比对不过时退出码为 1", rc3 == 1, str(rc3))
 
 
 def main() -> int:

@@ -17,6 +17,10 @@
 用法：
   python scripts/verify_card.py --id MjYxMzk1MDg0
   python scripts/verify_card.py --id MjYxMzk1MDg0 --json   # 供自动化消费
+  python scripts/verify_card.py --id MjYxMzk1MDg0 --draft _tmp/memo_body_37.txt
+    # 追加一项机械比对：云端回读与本地草稿按写路径同口径（FC._norm_body：
+    # 丢空行 / 还原转义 / 去行内水平空白）逐字比。不传草稿时只报数字，
+    # 不假装对过账——「数字相等」曾靠两层平台差异相互抵消蒙对过（卡 37）。
 
 退出码：0 = 机械项全过；1 = 有机械项不过或回读失败。
 """
@@ -57,6 +61,15 @@ def _undo_render_blank(content: str):
 
     只删这一处，且三个条件同时成立才动手（首行是标签段 / 第二行空 / 第三行
     非空），避免把正文里的空行误当成渲染填充删掉。
+
+    **渲染层还会在「要点：」这类列表引导行后补空行**（见
+    `flomo_client._norm_body` 的 docstring）。这里刻意不还原它：草稿可能本来
+    就写了那个空行，回读里两种形态无法区分，删了就会把「草稿有的空行」删掉。
+    结构判断只需要概念名落在第二行，与这一处无关；**字符对账因此不能用
+    「还原后的长度」**——那会把平台差异算进内容（卡 37：数字靠「要点：补行
+    +1」与「末尾换行被修 −1」相互抵消蒙对，分解也是错的）。对账口径统一走
+    `FC._norm_body`：丢空行、还原转义、去行内水平空白，与写路径
+    `readback_check` 同源。
     """
     lines = content.split("\n")
     if (len(lines) > 2 and lines[0].strip().startswith("#")
@@ -87,8 +100,14 @@ def fetch(memo_id: str, client=None):
     return memos[0]
 
 
-def run(memo_id: str, client=None):
-    """返回 (检查项列表, 卡片元信息)。检查项为 (名称, 是否通过, 详情)。"""
+def run(memo_id: str, client=None, draft_path=None):
+    """返回 (检查项列表, 卡片元信息)。检查项为 (名称, 是否通过, 详情)。
+
+    `draft_path` 给本地草稿路径时，追加一项机械比对：把云端回读与草稿按
+    `FC._norm_body` 同口径归一化后逐字比（丢空行 / 还原转义 / 去行内水平
+    空白）——这三类差异都由平台层决定，不参与比对；行界与所有非转义字符
+    不宽容。不传草稿时只报数字，不假装对过账。
+    """
     memo = fetch(memo_id, client)
     content = memo.get("content") or ""
     raw = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -126,19 +145,32 @@ def run(memo_id: str, client=None):
     nonempty = [ln.strip() for ln in lines if ln.strip()]
 
     # 字数对账：H11 ④ 要的是「实测字数」，比的是一份本地草稿。而云端回读的字符数
-    # 天然含两层平台自有差异——渲染层补的空行、存储层对 Markdown 元字符做的反斜杠
-    # 转义（`[Z][I]=[V]` 存成 `\[Z\]\[I\]\[V\]`）。直接报 `len(原始回读)` 会系统性地
-    # 大于草稿，差额由这两层决定而非内容——实测卡 34 差 7 个字符，只能靠人当场算账。
-    # 故报**还原转义后**的字符数作对账口径，并把差额来源分别列出。
+    # 天然含四层平台自有差异——渲染层补的空行（标签段后 + 「要点：」后）、全角标点
+    # 与行内代码之间插入的空格、存储层对 Markdown 元字符的反斜杠转义
+    # （`[Z][I]=[V]` 存成 `\[Z\]\[I\]\[V\]`）、以及草稿文件末尾换行被修掉。
+    # 直接报 `len(原始回读)` 会系统性地大于草稿，差额由这几层决定而非内容——实测卡 34
+    # 差 7 个字符、卡 37 差 1 个，只能靠人当场算账，且旧口径只还原了第一层，卡 37 的
+    # 分解是错的（数字靠两层差异抵消蒙对）。故对账口径与写路径 `readback_check`
+    # 同源：`FC._norm_body`（丢空行 / 还原转义 / 去行内水平空白），四层差异分别列出。
     escapes = FC._MD_ESCAPES.findall(norm)
     plain = FC._MD_ESCAPES.sub(r"\1", norm)
+    kept_joined = "\n".join(ln for ln in plain.split("\n") if ln.strip())
+    net = FC._norm_body(raw)
+    # 空行 = 丢掉的空行占的换行（草稿自有的 + 渲染层补的，此处已分不清，也不该分）；
+    # 行内空白 = 口径去掉的水平空白（ mostly 是草稿自带的中英混排空格，两侧同去，
+    # 不是平台插入的——标注时不得写成「平台差异」）。
+    blank_chars = len(plain) - len(kept_joined)
+    space_chars = len(kept_joined) - len(net)
 
     info = {
         "id": memo.get("id", memo_id),
         "word_count": memo.get("word_count"),
         "chars": len(plain),
+        "net": len(net),
         "chars_raw": len(raw),
         "escapes": len(escapes),
+        "blanks": blank_chars,
+        "spaces": space_chars,
         "render_pad": len(raw) - len(norm),
         "lines": len(nonempty),
         "tags": memo.get("tags") or [],
@@ -146,19 +178,32 @@ def run(memo_id: str, client=None):
         "second": second,
         "tail": nonempty[-1] if nonempty else "",
         "render_padded": render_padded,
+        "draft_compared": bool(draft_path),
         "warnings": list(dict.fromkeys(VM.WARN)),
     }
+
+    if draft_path:
+        draft = Path(draft_path).read_text(encoding="utf-8")
+        a, b = FC._norm_body(draft), net
+        if a == b:
+            checks.append(("与本地草稿逐字比对（同写路径口径）", True, f"{len(b)} 字"))
+        else:
+            i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]),
+                     min(len(a), len(b)))
+            checks.append(("与本地草稿逐字比对（同写路径口径）", False,
+                           f"首个差异在第 {i + 1} 个字符（草稿 {len(a)} 字 / 云端 {len(b)} 字）"))
     return checks, info
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="写云后回读全文，做 H11 可机械判定的自查")
     ap.add_argument("--id", required=True, help="卡片 id（写云回包里的 id）")
+    ap.add_argument("--draft", help="本地草稿路径；给了就追加与草稿的逐字比对（同写路径口径）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（供自动化消费）")
     args = ap.parse_args(argv)
 
     try:
-        checks, info = run(args.id)
+        checks, info = run(args.id, draft_path=args.draft)
     except Exception as e:  # noqa: BLE001 — 回读失败只影响本次自查，转成退出码
         print(f"[verify] 回读失败：{type(e).__name__}: {e}", file=sys.stderr)
         return 1
@@ -174,15 +219,21 @@ def main(argv=None) -> int:
         return 0 if ok else 1
 
     print(f"[verify] {info['id']} | 标签 {' '.join(info['tags']) or '-'} | "
-          f"字数 {info['word_count']} | 字符 {info['chars']} | 行数 {info['lines']}")
-    if info["chars_raw"] != info["chars"]:
+          f"字数 {info['word_count']} | 净字符 {info['net']} | 行数 {info['lines']}")
+    if info["chars_raw"] != info["net"]:
         parts = []
-        if info["render_pad"]:
-            parts.append(f"渲染补行 {info['render_pad']}")
+        if info["blanks"]:
+            parts.append(f"空行 {info['blanks']}")
+        if info["spaces"]:
+            parts.append(f"行内空白 {info['spaces']}（两侧同去）")
         if info["escapes"]:
             parts.append(f"存储转义 {info['escapes']} 处")
-        print(f"  （云端原样 {info['chars_raw']} 字符 = 正文 {info['chars']} + "
-              f"{' + '.join(parts)}；对草稿请比「字符」这一项）")
+        print(f"  （云端原样 {info['chars_raw']} 字符 = 净内容 {info['net']} + "
+              f"{' + '.join(parts)}；净内容口径 = 丢空行/去行内空白/还原转义后）")
+    if info["draft_compared"]:
+        print("  （已与本地草稿逐字比对：行界与非转义字符不宽容，空行/行内空白/转义不参与）")
+    else:
+        print("  （未传 --draft：只报数字，未与草稿对账；要机械对账请加 --draft <草稿路径>）")
     if info["render_padded"]:
         print("  （云端回读在标签段后多一个空行，属渲染层行为，结构判断已按本地形态还原）")
     print(f"  首行 {info['first']}")
