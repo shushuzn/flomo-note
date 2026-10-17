@@ -376,6 +376,9 @@ def run_batch_and_related():
     sent = batch_fake.calls[-1][1]["ids"]
     check("批量上限截到 10", len(sent) == C.BATCH_MAX, str(len(sent)))
     check("批量回报请求数", out["requested"] == C.BATCH_MAX, str(out["requested"]))
+    # 上限是云端约束，但**被上限挡掉的条数必须如实报出**——否则界面只能说
+    # 「请求 10 条 · 取回 10 条」，用户选的 14 条就被静默并成 10 条。
+    check("批量报出被上限挡掉的条数", out["dropped"] == 4, str(out.get("dropped")))
     check("批量带回全文", out["count"] == C.BATCH_MAX and all("content" in m for m in out["memos"]))
     check("批量透出 omitted_ids", out["omitted_ids"] == ["m9"], str(out["omitted_ids"]))
 

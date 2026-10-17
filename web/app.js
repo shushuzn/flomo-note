@@ -7,6 +7,14 @@
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+/* 工具台结果里「原始 JSON 兜底展示」的字符上限。超过即截断，并在界面显式标注
+   （见 toolResult）——上限本身是需要的，静默截断才是缺陷。 */
+const TOOL_JSON_LIMIT = 4000;
+
+/* 多选取全文的单次上限，必须与服务侧 `console_cloud.BATCH_MAX` 一致
+   （test_console_web 有跨层对齐断言）。超出的条数由界面显式提示，不静默丢弃。 */
+const BATCH_LIMIT = 10;
+
 const VIEW_META = {
   notes:     { title: "云端笔记", sub: "列 / 搜卡片：关键词 · 标签 · 起止日期 · 来源 · 是否含标签；点开读全文、相关笔记，或新建与编辑" },
   tags:      { title: "标签", sub: "云端实时标签树 + 标签名搜索 + 标签重命名" },
@@ -265,12 +273,12 @@ async function viewNotes() {
     : failCard("没有匹配的笔记");
 
   const note = state.selectMode
-    ? `<div class="hint hint-foot">多选模式：点卡片可选中，选好后按下方按钮一次取回全文（云端单次上限 ${10} 条）。</div>`
+    ? `<div class="hint hint-foot">多选模式：点卡片可选中，选好后按下方按钮一次取回全文（云端单次上限 ${BATCH_LIMIT} 条）。</div>`
     : `<div class="hint hint-foot">点卡片读全文，可继续编辑或新建；写入须过格式与流程闸门，写完自动回读验收。</div>`;
 
   const picks = state.selectMode
     ? `<div class="batchbar">
-         <span class="batch-count">已选 ${state.selected.size} 条</span>
+         <span class="batch-count">已选 ${state.selected.size} 条${state.selected.size > BATCH_LIMIT ? `（单次最多 ${BATCH_LIMIT} 条，超出的请分次取回）` : ""}</span>
          <button class="btn btn-primary" id="btn-batch-open"${state.selected.size ? "" : " disabled"}>取回全文</button>
          <button class="btn" id="btn-batch-clear"${state.selected.size ? "" : " disabled"}>清空</button>
        </div>`
@@ -335,13 +343,15 @@ async function loadRelated(id) {
 }
 
 async function openBatch() {
-  const ids = [...state.selected].slice(0, 10);
+  const ids = [...state.selected].slice(0, BATCH_LIMIT);
   const dr = $("#drawer"), body = $("#drawer-body");
   $("#scrim").hidden = false;
   dr.classList.add("is-on");
   dr.setAttribute("aria-hidden", "false");
   $("#drawer-kind").textContent = "batch";
-  body.innerHTML = `<div class="empty">正在取回 ${ids.length} 条全文…</div>`;
+  const overflow = state.selected.size > ids.length
+    ? `（已选 ${state.selected.size} 条，单次最多 ${ids.length} 条）` : "";
+  body.innerHTML = `<div class="empty">正在取回 ${ids.length} 条全文…${overflow}</div>`;
   const data = await cloudApi(`/api/cloud/memos/batch?ids=${encodeURIComponent(ids.join(","))}`);
   if (data.error) {
     body.innerHTML = `<div class="empty">读取失败：${esc(data.error)}</div>`;
@@ -350,6 +360,7 @@ async function openBatch() {
   body.innerHTML = `
     <h2 class="drawer-title">多选取全文</h2>
     <div class="memo-meta">请求 ${esc(data.requested)} 条 · 取回 ${esc(data.count)} 条${data.omitted_ids?.length ? ` · 云端未给 ${esc(data.omitted_ids.length)} 条` : ""}</div>
+    ${data.dropped ? `<div class="hint">已选 ${esc(data.requested + data.dropped)} 条，单次最多取 ${esc(data.requested)} 条——超出上限的 ${esc(data.dropped)} 条本次未取，请分次取回。</div>` : ""}
     ${(data.memos || []).map((m) => `
       <section class="batch-item">
         <div class="memo-top">
@@ -859,7 +870,13 @@ function toolResult(r) {
         </article>`).join("")}</div>`;
   }
   if (r.text) return args + `<div class="tool-text">${memoHtml(r.text)}</div>`;
-  return args + `<pre class="gate-out">${esc(JSON.stringify(r.raw ?? {}, null, 2)).slice(0, 4000)}</pre>`;
+  // 原始 JSON 兜底展示：超长必须显式说明「只显示了前 N 字符」。
+  // 静默截断会让人把半份结果当全份（如标签树只看到一部分，误以为标签就这些）——
+  // 与页面其他位置的处理保持一致（列表卡、标签树都会标「已截断」）。
+  const jsonText = JSON.stringify(r.raw ?? {}, null, 2);
+  const cut = jsonText.length > TOOL_JSON_LIMIT;
+  return args + `<pre class="gate-out">${esc(jsonText.slice(0, TOOL_JSON_LIMIT))}</pre>`
+    + (cut ? `<div class="hint">结果共 ${jsonText.length} 字符，此处只显示前 ${TOOL_JSON_LIMIT} 字符（已截断）</div>` : "");
 }
 
 /* ---------- 渲染调度 ---------- */

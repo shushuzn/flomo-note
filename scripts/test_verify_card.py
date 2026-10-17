@@ -174,6 +174,30 @@ def run_cases():
         VC._default_client = orig_default
     check("机械项失败时退出码为 1", rc2 == 1, str(rc2))
 
+    # 13) 字符对账：H11 ④ 的「实测字数」要能和本地草稿对得上。
+    #     云端回读天然比草稿多两类字符——渲染层补的空行、存储层对 Markdown 元字符
+    #     做的反斜杠转义。若直接报原始长度，差额会随卡里元字符多少而变（卡 34 差 7），
+    #     每张卡都要人当场算账；报「还原转义后」的长度才能一眼对账。
+    draft = ("#科技/安全\n"
+             "持有型会话凭证\n"
+             "\n"
+             "要点：\n"
+             "- 稠密系统 [Z][I]=[V] 与下标 a_i 一并入正文。\n")
+    stored_body = draft.replace("[", "\\[").replace("]", "\\]").replace("_", "\\_")
+    stored = stored_body.replace("#科技/安全\n", "#科技/安全\n\n", 1)   # 渲染层补的空行
+    checks, info = VC.run("TESTID", FakeClient(memo(stored)))
+    check("字符数按「还原转义后」口径，可与草稿逐字对账",
+          info["chars"] == len(draft), f"{info['chars']} vs 草稿 {len(draft)}")
+    check("原始字符数仍如实保留（不被抹掉）",
+          info["chars_raw"] == len(stored), f"{info.get('chars_raw')} vs 回读 {len(stored)}")
+    check("差额来源分别计数（渲染补行 / 存储转义）",
+          info["render_pad"] == 1 and info["escapes"] == 7,
+          f"pad={info.get('render_pad')} escapes={info.get('escapes')}")
+    # 反向：数字对得上就必须真对得上——草稿与回读差两个字符，口径立即可见差异
+    checks2, info2 = VC.run("TESTID", FakeClient(memo(stored.replace("正文", "正文内容"))))
+    check("草稿与回读真差两字时字符数随之变化",
+          info2["chars"] == len(draft) + 2, f"{info2['chars']} vs 草稿 {len(draft)}")
+
 
 def main() -> int:
     run_cases()

@@ -450,8 +450,14 @@ class CloudReader:
         return {"memo": full_memo(memos[0]), "omitted_ids": list(_structured(result).get("omitted_ids") or [])}
 
     def memo_batch(self, ids) -> dict:
-        """批量取全文（多选对比用）。云端单次上限 10 条，超出部分忽略。"""
-        clean = [i for i in (ids or []) if i and str(i).strip()][:BATCH_MAX]
+        """批量取全文（多选对比用）。云端单次上限 10 条，超出部分忽略。
+
+        `dropped` 如实报出被上限挡掉的条数：上限本身是云端约束，不算缺陷，但**界面
+        若只说「请求 10 条 · 取回 10 条」，用户选的那 12 条就被静默并成 10 条**——
+        看起来一切正常，实际少了两张卡。由前端据此显式提示。
+        """
+        wanted = [i for i in (ids or []) if i and str(i).strip()]
+        clean = wanted[:BATCH_MAX]
         if not clean:
             raise CloudError("缺少 memo id")
         result = self.call("memo_batch_get", {"ids": clean})
@@ -459,6 +465,7 @@ class CloudReader:
         return {
             "count": len(memos),
             "requested": len(clean),
+            "dropped": max(0, len(wanted) - len(clean)),
             "memos": [full_memo(m) for m in memos],
             "omitted_ids": list(_structured(result).get("omitted_ids") or []),
         }
