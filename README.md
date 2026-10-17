@@ -2,6 +2,7 @@
 
 > 极简云端卡片笔记技能 — 把网页、文章、想法整理成一条条 flomo memo，直接写入云端账号。
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -297,5 +298,6 @@ graph LR
 
 ## License
 
-仓库当前未附带 `LICENSE` 文件，也未声明许可。此前 README 标注的 MIT 徽章指向一个不存在的文件，属错误陈述，已移除。
-若计划对外分发，请先选定许可并补上 `LICENSE`——这正是必须由维护者决定、不能由文档代填的一项。
+MIT License — 见 [LICENSE](LICENSE) 文件。
+
+此前徽章曾指向一个不存在的文件（属错误陈述），现 `LICENSE` 已补齐，徽章与文件一致。
