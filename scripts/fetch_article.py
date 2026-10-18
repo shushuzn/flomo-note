@@ -9,6 +9,14 @@
 **抓回仍须读回全文**：本脚本只负责把文本落到文件，不替调用方阅读——流程第 1 步的
 「抓回即读回」纪律不变，脚本末尾会打印下一步该读哪个文件。
 
+**首尾噪音裁掉，且裁了会说**：开头连续的元信息行（面包屑 / 标题行 / 日期 / 来源 /
+作者 / 责编 / 评论）与结尾的推荐位、相关文章、APP 下载、声明块，在落文件前裁掉；
+裁了几行、从哪句起、长度从多少变到多少，都打进 `[裁剪]` 行——不静默截断。
+`--min-chars` 只在抽取阶段判定，裁剪不会把合格页误判成失败页。
+
+**发布日期多一条兜底**：meta / `<time>` 取不到时，从正文的日期行里取（中文站常把
+发布时间单独成行、页面却不给 meta），并标明来源是「页面 meta」还是「正文兜底」。
+
 用法：
   python scripts/fetch_article.py <url> [--out PATH] [--min-chars N] [--timeout N]
   python scripts/fetch_article.py <url> --print          # 额外把正文打到 stdout（短文用）
@@ -79,6 +87,107 @@ _CANDIDATE_DIV = re.compile(
 )
 _ARTICLE = re.compile(r"<article\b[^>]*>(.*?)</article>", re.S | re.I)
 _MAIN = re.compile(r"<main\b[^>]*>(.*?)</main>", re.S | re.I)
+
+# ── 首尾噪音 ────────────────────────────────────────────────────────────────
+# 实测（IT之家一条手机资讯）：抽出的正文同时带着开头一串元信息（面包屑、标题、日期、
+# 来源、作者、责编、「评论：」）和结尾的「下载 APP / 相关文章 / 关键词」及六条无关
+# 标题。前者会让人误把站内导航当正文读，后者能整段污染提炼——两条都必须在落文件前
+# 裁掉，且**裁剪必须可见**（打印裁掉多少、从哪行起），不做静默截断。
+_LEAD_LABEL = re.compile(
+    r"^(?:来源|作者|责编|编辑|审核|评论|发布时间|发布日期|时间|日期|字号)\s*[：:]", re.I
+)
+_PURE_DATE = re.compile(
+    r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$"
+)
+_TAIL_MARKERS = re.compile(
+    r"^(?:下载.{0,24}(?:APP|App|app).*"
+    r"|相关(?:文章|阅读|推荐|链接|资讯|新闻)"
+    r"|推荐阅读|热门推荐|延伸阅读|猜你喜欢|相关产品"
+    r"|关键词\s*[：:]|责任编辑\s*[：:]|责编\s*[：:]"
+    r"|(?:免责)?声明\s*[：:]|版权声明.*|转载请注明.*|本文来自.*)$"
+)
+_TEXT_DATE = re.compile(
+    r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T]+(\d{1,2}:\d{2}(?::\d{2})?))?"
+)
+
+
+def _title_core(title: str) -> str:
+    """标题去掉站点后缀（`xxx - IT之家` / `xxx | 站点` / `xxx_站点`）。"""
+    core = re.split(r"\s+[-–—_|｜]\s+", title or "")[0]
+    return core.strip()
+
+
+def trim_lead_noise(text: str, title: str = "") -> tuple[str, int]:
+    """裁掉开头连续的元信息行（面包屑 / 标题行 / 日期 / 来源作者责编 / 评论）。
+
+    只从第一行起连续裁、最多看 15 行，遇到第一行正文即停——不按关键词全文删，
+    否则正文里出现「来源」二字的句子会被误伤。返回 (正文, 裁掉的行数)。
+    """
+    lines = text.split("\n")
+    core = _title_core(title)
+    idx = 0
+    limit = min(len(lines), 15)
+    while idx < limit:
+        s = lines[idx].strip()
+        if not s:
+            idx += 1
+            continue
+        is_meta = bool(
+            _LEAD_LABEL.match(s)
+            or _PURE_DATE.match(s)
+            or (core and (s == core or (len(s) >= 12 and core.startswith(s))))
+            or (len(s) <= 40 and (s.startswith("首页") or s.count(">") + s.count("›") >= 2))
+        )
+        if not is_meta:
+            break
+        idx += 1
+    return "\n".join(lines[idx:]).strip(), idx
+
+
+def trim_tail_noise(text: str, min_chars: int = DEFAULT_MIN_CHARS) -> tuple[str, str]:
+    """裁掉结尾的推荐位 / 相关文章 / APP 下载 / 声明块。
+
+    只在命中行的位置已过全文 40% 时裁（导航型「相关阅读」也可能出现在开头），
+    且裁后长度不得低于 `min_chars`——两条护栏都过才动，否则原样返回。
+    返回 (正文, 命中标记行)；未裁时标记为空串。
+    """
+    lines = text.split("\n")
+    filled = [i for i, ln in enumerate(lines) if ln.strip()]
+    if not filled:
+        return text, ""
+    for pos, i in enumerate(filled):
+        if pos < 0.4 * len(filled):
+            continue
+        if _TAIL_MARKERS.match(lines[i].strip()):
+            kept = "\n".join(lines[:i]).strip()
+            if len(kept) >= min_chars:
+                return kept, lines[i].strip()
+            return text, ""
+    return text, ""
+
+
+def find_published_in_text(text: str) -> str:
+    """正文里兜底找发布日期（页面无 meta / <time> 时用）。
+
+    先认「整行就是一个日期」的行（多数中文站把发布时间单独成行），再退到前 3 行
+    里出现的日期。都找不到返回空串——宁可报未取到，也不猜。
+    """
+    lines = [ln.strip() for ln in text.split("\n")[:15] if ln.strip()]
+    for line in lines:
+        if _PURE_DATE.match(line):
+            m = _TEXT_DATE.search(line)
+            if m:
+                return _fmt_date(m)
+    for line in lines[:3]:
+        m = _TEXT_DATE.search(line)
+        if m:
+            return _fmt_date(m)
+    return ""
+
+
+def _fmt_date(m: re.Match) -> str:
+    day = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return f"{day} {m.group(4)}" if m.group(4) else day
 
 
 def decode_html(body: bytes, content_type: str = "") -> str:
@@ -291,6 +400,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[预览] {body[:200]}", file=sys.stderr)
         return 2
 
+    # 发布日兜底：meta / <time> 都没有时，从正文的日期行取（裁剪会删掉该行，故先取）。
+    pub_src = "页面 meta"
+    if not meta["published"]:
+        found = find_published_in_text(body)
+        if found:
+            meta["published"], pub_src = found, "正文兜底"
+    raw_len = len(body)
+    body, lead_cut = trim_lead_noise(body, meta["title"])
+    body, tail_cut = trim_tail_noise(body, min_chars)
+
     if out is None:
         out = PROJECT_ROOT / "_tmp" / f"article_{_slug(url)}.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -298,8 +417,18 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[抓取] {url}")
     print(f"[标题] {meta['title'] or '(未取到)'}")
-    print(f"[发布] {meta['published'] or '(未取到)'}")
+    print(f"[发布] {meta['published'] or '(未取到)'}"
+          + (f"（{pub_src}）" if meta["published"] else ""))
     print(f"[正文] {len(body)} 字符（通道：{channel}）")
+    if lead_cut or tail_cut:
+        cuts = []
+        if lead_cut:
+            cuts.append(f"开头 {lead_cut} 行元信息")
+        if tail_cut:
+            cuts.append(f"结尾「{tail_cut[:18]}」起")
+        print(f"[裁剪] 原 {raw_len} 字符 → {len(body)}：{'、'.join(cuts)}")
+    else:
+        print("[裁剪] 无首尾噪音（原样保留）")
     print(f"[文件] {out}")
     print(f"[下一步] 读回全文：Read {out}（流程第 1 步纪律，未读回不得提炼）")
     if echo:
