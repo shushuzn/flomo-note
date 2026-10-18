@@ -74,6 +74,11 @@ if _LEGACY_TMP.is_dir() and _LEGACY_TMP not in _TMP_CANDIDATES:
 # `--verify` 在残留尚存时误报「残留 = 0」（曾漏掉目录形态的中间产物）。
 SCAN = [
     (PROJECT_ROOT, ["_tmp_*", "tmp_*", "memo_body*.txt"]),
+    # `_tmp/` 是写卡与改文档的实际工作区（草稿、请求体、抓取件都落这里）。
+    # 此前规则只写了 `_tmp_*`（前缀形态），**目录形态的 `_tmp/` 一个都匹配不上**——
+    # 实测堆了 580 个历轮中间产物，而 --verify 与清理共用这份 SCAN，
+    # 于是每轮都报「残留 0」：漏项让检查恒真，比不检查更坏。
+    (PROJECT_ROOT / "_tmp", ["*"]),
     (LB_OUT, ["*_create.json", "*_memo.txt", "*.err"]),
 ]
 for _t in _TMP_CANDIDATES:
