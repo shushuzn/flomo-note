@@ -322,7 +322,7 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 
 ### 1. 抓取
 - 主通道 webfetch；SPA / 清单站补 `curl -L -A "Mozilla/5.0"`；同名对象按域名、作者、用途消歧。
-- 通用网页优先 `python scripts/fetch_article.py <url>`：一次完成取页、判编码、抽正文、落 `_tmp/article_*.txt`，并打印标题 / 发布日期 / 字符数。退出码 2 = 抽取过短（多为 JS 渲染或反爬页），改走 webfetch / 镜像 / 预印本通道。**它只落文件、不替人阅读**——下面的「抓回即读回」照旧。
+- 通用网页优先 `python scripts/fetch_article.py <url>`：一次完成取页、判编码、抽正文、裁掉首尾噪音、落 `_tmp/article_*.txt`，并打印标题 / 发布日期（标明取自页面 meta 还是正文兜底）/ 字符数 / 裁剪情况。退出码 2 = 抽取过短（多为 JS 渲染或反爬页），改走 webfetch / 镜像 / 预印本通道。**它只落文件、不替人阅读**——下面的「抓回即读回」照旧；**裁剪行也照旧要读**，裁掉的只是面包屑与推荐位，判它有没有裁错仍靠读回。
 - **抓回即读回**：抽取成正文文件后必须读回全文，未读回不得进入提炼与写作（纪律 2）。
 - **预印本正文优先（阻塞）**：arXiv / bioRxiv / medRxiv / ChemRxiv / SSRN / OpenReview / ResearchGate 等，摘要页不作首选写作依据。先穷尽正文通道：
   - arXiv：`/abs/<id>` → `/html/<id>v<N>` → `https://ar5iv.labs.arxiv.org/html/<id>` → `/pdf/<id>`。
