@@ -70,7 +70,11 @@ def run_scan_pattern_cases():
     import fnmatch
 
     clean = _load("cleanup_scan_src", "cleanup.py")
-    pats = [pat for _base, _pats in clean.SCAN for pat in _pats]
+    # `_tmp/` 工作区用 `*` 全收：若混进下面的扁平面孔，所有 _matches() 会恒真
+    # （恒真的检查等于没有检查），故单独取出、只做专门断言。
+    _TMP_DIR = clean.PROJECT_ROOT / "_tmp"
+    pats = [pat for base, _pats in clean.SCAN if base != _TMP_DIR for pat in _pats]
+    tmp_dir_pats = [pat for base, _pats in clean.SCAN if base == _TMP_DIR for pat in _pats]
 
     def _matches(name):
         return any(fnmatch.fnmatch(name, pat) for pat in pats)
@@ -103,6 +107,8 @@ def run_scan_pattern_cases():
           not any(fnmatch.fnmatch("flomo-push", pat) for pat in pats))
     check("SCAN 未误命中 arxiv_test.xml",
           not any(fnmatch.fnmatch("arxiv_test.xml", pat) for pat in pats))
+    # `_tmp/` 目录形态此前一条规则都不命中，堆了 580 个历轮产物仍报「残留 0」
+    check("SCAN 覆盖 _tmp 工作区目录", bool(tmp_dir_pats))
 
 
 def run_collect_cases():
