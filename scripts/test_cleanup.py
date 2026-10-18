@@ -266,12 +266,36 @@ def run_prune_cases():
         C.GATE_DIR = C.PROJECT_ROOT / ".sop_gate"
 
 
+def run_window_boundary_cases():
+    """一轮里跨过窗口边界的项：collect 与 verify 必须共用同一个基准时刻。
+
+    实测缺陷：`_tmp/it_283.txt` 距 24 小时边界只差 1 秒，collect() 把它当近轮
+    跳过、没列进候选；打包 24 个文件耗掉几秒后 verify() 重新取 `time.time()`，
+    该项已出窗口 → 删除明明成功，却被断言判成「残留 1 个」。检查与被检查对象
+    用了两个时钟，等于让运行时长决定结论。
+    """
+    base = Path(tempfile.mkdtemp())
+    f = base / "b_edge.txt"
+    f.write_text("x", encoding="utf-8")
+    t0 = time.time()
+    edge = t0 - 24 * 3600 + 1  # 距边界 1 秒，仍在窗口内
+    os.utime(f, (edge, edge))
+
+    C.SCAN = [(base, ["b_edge.txt"])]
+    C.KEEP = {}
+    check("距边界 1 秒的项按近轮跳过", C.collect(24 * 60, now=t0) == [])
+    check("同一基准时刻下 verify 不误报残留", C.verify(24 * 60, now=t0) == [])
+    check("基准时刻后移 10 秒才成为候选（故必须共用 now）",
+          [p.name for p in C.collect(24 * 60, now=t0 + 10)] == ["b_edge.txt"])
+
+
 if __name__ == "__main__":
     run_collect_cases()
     run_scan_pattern_cases()
     run_verify_cases()
     run_force_remove_cases()
     run_recent_window_cases()
+    run_window_boundary_cases()
     run_arcname_cases()
     run_archive_cases()
     run_prune_cases()
