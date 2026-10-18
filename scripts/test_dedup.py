@@ -100,13 +100,59 @@ def test_id_dedup_and_batching():
         search_map={"甲": [card(i, f"概念{i}") for i in ids]},
         batch={i: card(i, f"概念{i}") for i in ids},
     )
-    code, out, _err = run(["--keywords", "甲"], client)
+    code, out, _err = run(["--keywords", "甲", "--max-full", "20"], client)
     batches = [c for c in client.calls if c[0] == "memo_batch_get"]
     check("12 张卡分两批取全文（单批 ≤10）",
           [len(b[1]["ids"]) for b in batches] == [10, 2],
           [len(b[1]["ids"]) for b in batches])
     check("去重后汇总 12 张", "[汇总] 唯一卡 12 张" in out, out[-200:])
     check("退出码 0（批处理路）", code == 0, code)
+
+
+def test_default_full_cap_is_explicit():
+    """默认 --max-full=8：超出部分不静默丢，必须列出 id 并给出 --ids 出口。"""
+    ids = [f"ID{i:02d}" for i in range(12)]
+    client = FakeClient(
+        search_map={"甲": [card(i, f"概念{i}") for i in ids]},
+        batch={i: card(i, f"概念{i}") for i in ids},
+    )
+    code, out, _err = run(["--keywords", "甲"], client)
+    batches = [c for c in client.calls if c[0] == "memo_batch_get"]
+    check("默认上限 8 张", sum(len(b[1]["ids"]) for b in batches) == 8,
+          [len(b[1]["ids"]) for b in batches])
+    check("超限有显式告警", "[告警] 超出 --max-full=8" in out, out[-400:])
+    check("未读的 id 逐个列出", "ID08" in out and "ID11" in out, out[-400:])
+    check("给出 --ids 出口", "--ids" in out, out[-400:])
+    check("汇总仍报全量 12 张（不把未读当不存在）",
+          "[汇总] 唯一卡 12 张" in out, out[-200:])
+    check("退出码 0", code == 0, code)
+
+
+def test_explicit_ids():
+    """--ids 点名读：不受 --max-full 与 --no-full 影响。"""
+    client = FakeClient(batch={"A": card("A", "概念甲"), "B": card("B", "概念乙")})
+    code, out, _err = run(["--ids", "A,B", "--no-full", "--max-full", "1"], client)
+    batches = [c for c in client.calls if c[0] == "memo_batch_get"]
+    check("--ids 一次取回点名的全部卡",
+          len(batches) == 1 and batches[0][1]["ids"] == ["A", "B"], batches)
+    check("--ids 输出全文（不受 --no-full 影响）", "正文内容" in out, out[:200])
+    check("--ids 计入汇总", "[汇总] 唯一卡 2 张" in out, out[-200:])
+    check("退出码 0", code == 0, code)
+
+
+def test_id_and_keywords_together():
+    """--id 与 --keywords 同给时两路都跑：此前 --id 会静默吞掉关键词路。"""
+    client = FakeClient(
+        recommended=[card("R1", "邻卡一")],
+        search_map={"甲": [card("A", "概念甲")]},
+        batch={"R1": card("R1", "邻卡一"), "A": card("A", "概念甲")},
+    )
+    code, out, _err = run(["--id", "SELF", "--keywords", "甲"], client)
+    names = [c[0] for c in client.calls]
+    check("两路都调用", "memo_recommended" in names and "memo_search" in names, names)
+    check("两路结果都取全文",
+          ("邻卡一" in out) and ("概念甲" in out), out[:400])
+    check("退出码 0", code == 0, code)
 
 
 def test_dedup_across_keywords():
@@ -153,8 +199,9 @@ def test_recommended_mode():
 
 if __name__ == "__main__":
     for fn in (test_per_keyword_calls, test_id_dedup_and_batching,
-               test_dedup_across_keywords, test_no_full, test_failure_not_empty,
-               test_recommended_mode):
+               test_default_full_cap_is_explicit, test_explicit_ids,
+               test_id_and_keywords_together, test_dedup_across_keywords,
+               test_no_full, test_failure_not_empty, test_recommended_mode):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

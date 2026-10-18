@@ -81,9 +81,29 @@ def test_hash_prefix_and_split():
     check("去 # 前缀与全角逗号分隔", code == 0 and out.count("✓") == 2, out)
 
 
+def test_grep_lists_matches():
+    code, out, _err = run(["--grep", "Agent|测试"], FakeClient(TAGS))
+    check("--grep 命中：退出码 0", code == 0, code)
+    check("--grep 列出匹配标签", "AI/AgentHarness" in out and "科技/测试" in out, out)
+    check("--grep 明确标为匹配清单", "[匹配]" in out, out)
+
+
+def test_grep_no_hit():
+    code, out, _err = run(["--grep", "根本不存在的词"], FakeClient(TAGS))
+    check("--grep 无命中：退出码 0（搜不到不是失败）", code == 0, code)
+    check("--grep 无命中：提示按 H18 判，不据搜不到就建簇", "H18" in out, out)
+
+
+def test_grep_with_tags():
+    code, out, _err = run(["--grep", "AI", "--tags", "AI/不存在"], FakeClient(TAGS))
+    check("--grep 与 --tags 并存：两段都输出", "[匹配]" in out and "不存在" in out, out)
+    check("--grep 与 --tags 并存：退出码仍按标签判定", code == 2, code)
+
+
 if __name__ == "__main__":
     for fn in (test_existing_ok, test_missing_tag, test_three_levels,
-               test_truncated_tree, test_hash_prefix_and_split):
+               test_truncated_tree, test_hash_prefix_and_split,
+               test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
