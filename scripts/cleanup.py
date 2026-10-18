@@ -151,15 +151,21 @@ def _force_remove(p: Path):
         pass
 
 
-def collect(keep_minutes=None, skipped=None):
+def collect(keep_minutes=None, skipped=None, now=None):
     """收集应清理的残留；修改时间落在近轮窗口内的项跳过（H24/H27）。
 
     `keep_minutes=None` 取默认窗口，0 表示关闭窗口。命中的近轮项追加进
     `skipped`（调用方传列表时），供打印可见性，不做静默放行。
+
+    `now` 是本轮的基准时刻：清理与复核必须共用同一个 cutoff。此前两处各调
+    `time.time()`，一轮里跨过窗口边界的项会出现「收集时还算近轮被跳过、几秒后
+    复核时已过期算残留」——打包 24 个文件耗掉的几秒就足以让删除成功被判成失败
+    （实测 it_283.txt 距边界 1 秒，清理报「残留 1 个」而文件根本没被列入候选）。
     """
     if keep_minutes is None:
         keep_minutes = RECENT_WINDOW_MINUTES
-    cutoff = time.time() - keep_minutes * 60 if keep_minutes > 0 else None
+    base = time.time() if now is None else now
+    cutoff = base - keep_minutes * 60 if keep_minutes > 0 else None
     candidates = []
     for base, patterns in SCAN:
         if not base.exists():
@@ -183,8 +189,8 @@ def collect(keep_minutes=None, skipped=None):
     return [Path(p) for p in uniq]
 
 
-def verify(keep_minutes=None):
-    return collect(keep_minutes)
+def verify(keep_minutes=None, now=None):
+    return collect(keep_minutes, now=now)
 
 
 def prune(keep_archives=ARCHIVE_KEEP, cred_max_age_hours=GATE_CRED_MAX_AGE_HOURS,
@@ -269,6 +275,8 @@ def main():
     ap.add_argument("--keep-minutes", type=int, default=RECENT_WINDOW_MINUTES,
                     help=f"近轮窗口（分钟）：窗口内视为近轮素材不清理；0 = 关闭窗口（默认 {RECENT_WINDOW_MINUTES}）")
     args = ap.parse_args()
+    # 本轮基准时刻：收集、复核共用（见 collect 的 now 参数说明）。
+    run_time = time.time()
 
     if args.list_rules:
         list_rules()
@@ -276,7 +284,7 @@ def main():
 
     if args.verify:
         skipped = []
-        left = collect(args.keep_minutes, skipped)
+        left = collect(args.keep_minutes, skipped, now=run_time)
         if left:
             print(f"[cleanup] 残留 {len(left)} 个（应清未清）：")
             for p in left:
@@ -286,7 +294,7 @@ def main():
         return
 
     skipped = []
-    candidates = collect(args.keep_minutes, skipped)
+    candidates = collect(args.keep_minutes, skipped, now=run_time)
     print(f"[cleanup] 待清理 {len(candidates)} 个（近轮素材保留 {len(skipped)} 个）：")
     for p in candidates:
         print(f"  {p}")
@@ -320,7 +328,7 @@ def main():
     for p in candidates:
         _force_remove(p)
 
-    left = verify(args.keep_minutes)
+    left = verify(args.keep_minutes, now=run_time)
     assert len(left) == 0, f"复核失败，残留 {len(left)} 个"
     print(f"[cleanup] 已归档 {archive}（顶层 {members} 个），删除并复核残留 = 0，OK")
     _report_prune(*prune(dry_run=False), dry_run=False)
