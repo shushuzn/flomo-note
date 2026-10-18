@@ -15,8 +15,11 @@
 用法：
   python scripts/dedup.py --keywords "智能体,agent,工具契约" [--tag "AI/Agent"] [--limit 10]
   python scripts/dedup.py --id <本卡 memo id> [--limit 10]     # 复盘路：memo_recommended
+  python scripts/dedup.py --ids ID1,ID2                         # 点名读这几张的全文（不受 --max-full 限制）
   python scripts/dedup.py ... --no-full                         # 只看命中清单，不取全文
-  python scripts/dedup.py ... --max-full 60                     # 全文卡片数上限（显式告警）
+  python scripts/dedup.py ... --max-full 20                     # 全文卡片数上限（默认 8，超出显式列出未读 id）
+
+`--id` 与 `--keywords`/`--tag` 可以同时给，两路都跑；此前 `--id` 会静默吞掉关键词那一路。
 
 退出码：
   0  成功（无命中也算成功，会明确打印「无命中」）
@@ -95,6 +98,7 @@ def fetch_full(client: FlomoClient, ids: list[str], max_full: int) -> None:
             f"   [告警] 超出 --max-full={max_full}，未取全文的 id（{len(skipped)} 张）："
             f"{', '.join(skipped)}"
         )
+        print("   [提示] 要点名读其中几张：--ids ID1,ID2（显式点名的不受此上限约束）")
     for i in range(0, len(target), BATCH_LIMIT):
         chunk = target[i:i + BATCH_LIMIT]
         res = client.tool("memo_batch_get", {"ids": chunk})
@@ -124,9 +128,10 @@ def main(argv: list[str] | None = None, client=None) -> int:
     keywords_raw = ""
     tag = ""
     anchor = ""
+    ids_raw = ""
     limit = 10
     full = True
-    max_full = 40
+    max_full = 8
     i = 0
     while i < len(args):
         a = args[i]
@@ -138,6 +143,9 @@ def main(argv: list[str] | None = None, client=None) -> int:
             i += 2
         elif a == "--id" and i + 1 < len(args):
             anchor = args[i + 1]
+            i += 2
+        elif a == "--ids" and i + 1 < len(args):
+            ids_raw = args[i + 1]
             i += 2
         elif a == "--limit" and i + 1 < len(args):
             limit = int(args[i + 1])
@@ -152,8 +160,8 @@ def main(argv: list[str] | None = None, client=None) -> int:
             print(f"[失败] 未知参数：{a}", file=sys.stderr)
             return 1
 
-    if not keywords_raw and not tag and not anchor:
-        print("[失败] 至少给 --keywords / --tag / --id 之一", file=sys.stderr)
+    if not keywords_raw and not tag and not anchor and not ids_raw:
+        print("[失败] 至少给 --keywords / --tag / --id / --ids 之一", file=sys.stderr)
         return 1
 
     if client is None:
@@ -162,7 +170,13 @@ def main(argv: list[str] | None = None, client=None) -> int:
         client.init()
 
     seen: list[str] = []
+    fetched: list[str] = []
+    explicit = split_keywords(ids_raw)
     try:
+        if explicit:
+            # 点名要读的卡一律读全：不受 --max-full 与 --no-full 影响
+            fetch_full(client, explicit, len(explicit))
+            fetched.extend(explicit)
         if anchor:
             # 复盘路：按本卡 id 定向推荐（memo_recommended 的参数名就是 id）
             res = client.tool("memo_recommended", {"id": anchor, "limit": limit})
@@ -173,7 +187,7 @@ def main(argv: list[str] | None = None, client=None) -> int:
             for m in memos:
                 print("   " + brief_line(m))
             collect(memos, seen)
-        else:
+        if keywords_raw or tag:
             keywords = split_keywords(keywords_raw)
             total = len(keywords) + (1 if tag else 0)
             idx = 0
@@ -194,12 +208,14 @@ def main(argv: list[str] | None = None, client=None) -> int:
         print("[注意] 查重没跑完不等于无命中，禁止据此进入判定或写云", file=sys.stderr)
         return 1
 
+    rest = [i for i in seen if i not in fetched]
     if full:
-        fetch_full(client, seen, max_full)
-    else:
-        print(f"\n[跳过全文] --no-full：{len(seen)} 张卡只列清单，未取正文")
+        fetch_full(client, rest, max_full)
+    elif rest:
+        print(f"\n[跳过全文] --no-full：{len(rest)} 张卡只列清单，未取正文")
 
-    print(f"\n[汇总] 唯一卡 {len(seen)} 张：{', '.join(seen) if seen else '无'}")
+    all_ids = fetched + rest
+    print(f"\n[汇总] 唯一卡 {len(all_ids)} 张：{', '.join(all_ids) if all_ids else '无'}")
     return 0
 
 

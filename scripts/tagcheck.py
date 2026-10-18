@@ -8,8 +8,10 @@
 用法：
   python scripts/tagcheck.py --tags "AI/Agent,科技/测试"
   python scripts/tagcheck.py --tags "#AI/Agent" --limit 2000
+  python scripts/tagcheck.py --grep "多语言|本地化"      # 只有标签名不确定时：先列出匹配的现有标签
 
 输出：逐个标签给 存在 / 层级 / 同顶层兄弟二级（供判断该复用还是新建更精准的二级）。
+`--grep` 只列匹配标签、不做判定（找不到就说明该新建，而不是「没有这个簇」就随便建）。
 只读，不建标签、不改标签。
 
 退出码：
@@ -19,6 +21,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +32,7 @@ from flomo_client import FlomoClient, FlomoError, load_token  # noqa: E402
 
 DEFAULT_LIMIT = 2000
 SIBLING_SHOW = 12
+GREP_SHOW = 60
 
 
 def split_tags(raw: str) -> list[str]:
@@ -87,12 +91,16 @@ def main(argv: list[str] | None = None, client=None) -> int:
         return 0
 
     raw_tags = ""
+    pattern = ""
     limit = DEFAULT_LIMIT
     i = 0
     while i < len(args):
         a = args[i]
         if a == "--tags" and i + 1 < len(args):
             raw_tags = args[i + 1]
+            i += 2
+        elif a == "--grep" and i + 1 < len(args):
+            pattern = args[i + 1]
             i += 2
         elif a == "--limit" and i + 1 < len(args):
             limit = int(args[i + 1])
@@ -102,8 +110,8 @@ def main(argv: list[str] | None = None, client=None) -> int:
             return 2
 
     tags_wanted = split_tags(raw_tags)
-    if not tags_wanted:
-        print("[失败] 未给 --tags", file=sys.stderr)
+    if not tags_wanted and not pattern:
+        print("[失败] 未给 --tags 或 --grep", file=sys.stderr)
         return 2
 
     try:
@@ -117,6 +125,23 @@ def main(argv: list[str] | None = None, client=None) -> int:
         return 1
 
     print(f"[标签树] {total} 个（limit={limit}，条数与 total 相符）")
+    if pattern:
+        try:
+            rx = re.compile(pattern, re.I)
+        except re.error as exc:
+            print(f"[失败] --grep 正则有误：{exc}", file=sys.stderr)
+            return 2
+        hits = [t for t in tags if rx.search(t)]
+        print(f"[匹配] 正则「{pattern}」命中 {len(hits)} 个")
+        for t in hits[:GREP_SHOW]:
+            print("   " + t)
+        if len(hits) > GREP_SHOW:
+            print(f"   …另 {len(hits) - GREP_SHOW} 个未列出（缩小 --grep 范围再看）")
+        if not hits:
+            print("   现有标签里没有匹配项；该新建还是换词再找，按 H18 判，不要据「搜不到」就建近义簇")
+        if not tags_wanted:
+            return 0
+
     bad = 0
     for tag in tags_wanted:
         info = inspect_tag(tag, tags)
