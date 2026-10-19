@@ -64,6 +64,16 @@ def test_missing_tag():
     check("缺失标签：指出可新建二级", "该顶层存在" in out, out)
 
 
+def test_missing_tag_leaf_only_tree():
+    # 真实 tag_tree 只返回叶子「顶层/二级」，顶层不会单独成条。
+    # 用例夹具若带裸顶层（如上 TAGS 里的 "AI"），这条误判就永远测不出来。
+    leaf_only = ["AI/Agent", "AI/AgentHarness", "科技/测试"]
+    code, out, _err = run(["--tags", "AI/不存在"], FakeClient(leaf_only))
+    check("只有叶子标签时：缺失二级不误报顶层缺失", "该顶层存在" in out, out)
+    check("只有叶子标签时：不提示连同顶层一起新建", "连同顶层一起新建" not in out, out)
+    check("只有叶子标签时：退出码仍为 2", code == 2, code)
+
+
 def test_three_levels():
     code, out, _err = run(["--tags", "AI/Agent/子级"], FakeClient(TAGS))
     check("三级标签：退出码 2", code == 2, code)
@@ -101,8 +111,8 @@ def test_grep_with_tags():
 
 
 if __name__ == "__main__":
-    for fn in (test_existing_ok, test_missing_tag, test_three_levels,
-               test_truncated_tree, test_hash_prefix_and_split,
+    for fn in (test_existing_ok, test_missing_tag, test_missing_tag_leaf_only_tree,
+               test_three_levels, test_truncated_tree, test_hash_prefix_and_split,
                test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags):
         fn()
     ok = all(RESULTS)

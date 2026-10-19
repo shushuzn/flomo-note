@@ -70,7 +70,10 @@ def inspect_tag(tag: str, tags: list[str]) -> dict:
         t for t in tags
         if t != tag and t.startswith(top + "/") and t.count("/") == 1
     ]
-    top_exists = any(t == top for t in tags)
+    # 标签树只返回叶子形态「顶层/二级」，顶层本身不会单独成条：
+    # 只比 t == top 会让任何"新建同顶层下的二级"都被误报成"顶层也不存在"，
+    # 与紧跟着列出的同顶层兄弟二级自相矛盾。有任一子标签即视为顶层存在。
+    top_exists = any(t == top or t.startswith(top + "/") for t in tags)
     return {
         "tag": tag,
         "depth_ok": depth_ok,
