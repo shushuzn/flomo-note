@@ -44,12 +44,23 @@ _UA = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
-# 站内专用抽取器：按顺序尝试，命中即用。
-# dev.to 的正文在 <div id="article-body">，正文容器结束后紧跟作者卡 / 评论区的 <div>，
-# 故以 `</div>\s*<div` 作右界——用平衡扫描反而会把整页吞进来（外层 div 未闭合计数）。
+# 站内专用抽取器。
+# dev.to 的正文在 `<div id="article-body">`。旧写法以 `</div>\s*<div` 作右界，
+# 理由是「用平衡扫描反而会把整页吞进来」——但真正的坑在另一边：正文里只要出现
+# 相邻两个 div（代码高亮块就是三层 div 套按钮 svg），那个边界就被当成容器结尾，
+# 后半个正文整段丢掉，且截断处落在代码块末尾，看起来像正常结束。WordPress 那篇
+# 因此只留下一半（Step 4 之后全丢）。现改为「定位起始标签 + 配平到容器结束」。
+_SITE_ANCHORS = [
+    re.compile(r'<div[^>]*\bid=["\']article-body["\'][^>]*>', re.S | re.I),
+]
+# 兜底右界规则：仅在配平块吞进了评论区（容器内出现评论节点）时使用——
+# 宁可截断，也不把评论区当正文。
 _SITE_PATTERNS = [
     re.compile(r'<div[^>]*\bid=["\']article-body["\'][^>]*>(.*?)</div>\s*<div', re.S | re.I),
 ]
+_COMMENT_NODE = re.compile(
+    r'id=["\']comments["\']|class=["\'][^"\']*\bcomment-list\b', re.I
+)
 
 _REMOVE_BLOCKS = re.compile(
     r"<(script|style|noscript|svg|nav|footer|aside|header|form|iframe|template|button)"
@@ -273,12 +284,21 @@ def extract(html: str) -> tuple[str, str]:
     通道顺序：站内专用 → <article> → <main> → 含正文语义的 div 里文本量最大者 → 整页。
     每次取块都按「文本量」和 `min_chars` 取舍，避免抽到只有一句导语的侧栏。
     """
+    for anchor in _SITE_ANCHORS:
+        m = anchor.search(html)
+        if m:
+            block = _balanced_div(html, m.start())
+            if not _COMMENT_NODE.search(block):
+                text = to_text(block)
+                if text:
+                    return text, "站内专用选择器"
+            break
     for pattern in _SITE_PATTERNS:
         m = pattern.search(html)
         if m:
             text = to_text(m.group(1))
             if text:
-                return text, "站内专用选择器"
+                return text, "站内专用选择器（右界兜底）"
     for label, pattern in (("<article>", _ARTICLE), ("<main>", _MAIN)):
         m = pattern.search(html)
         if m:

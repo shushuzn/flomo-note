@@ -86,6 +86,46 @@ def test_extract_article_and_div():
           channel == "语义 div 打分" and text.count("长正文") > 100, channel)
 
 
+def test_extract_site_pattern_nested_divs():
+    """正文内部的相邻 div 边界不得当作容器结束。
+
+    真实来源：WordPress+Traefik 那篇，Step 3 之后的代码高亮块是三层 div 套按钮 svg，
+    旧右界规则（`</div>\\s*<div`）在这里命中，后半篇（安装、加固、故障排查、备份）
+    整段消失，且截断点落在代码块末尾，看起来像正常结束。
+    """
+    first = "前半段正文" * 60
+    later = "后半段正文" * 60
+    html = (
+        "<html><body>"
+        '<div id="article-body">'
+        f"<p>{first}</p>"
+        '<div class="highlight"><div class="inner">docker compose ps</div></div>'
+        "\n\n"
+        '<div class="highlight"><div class="inner">curl -sI</div></div>'
+        f"<p>{later}</p>"
+        "</div>"
+        '<div class="author-card">作者卡</div>'
+        "</body></html>"
+    )
+    text, channel = FA.extract(html)
+    check("extract：正文里的相邻 div 不触发截断", later in text, text[-50:])
+    check("extract：配平后仍不吞作者卡", "作者卡" not in text, text[-50:])
+    check("extract：嵌套用例走主通道", channel == "站内专用选择器", channel)
+
+
+def test_extract_site_pattern_comment_fallback():
+    """配平块吞进评论区时，必须退回右界规则，不能把评论当正文。"""
+    html = (
+        '<div id="article-body"><p>' + "正文" * 80 + "</p>"
+        '<div class="wrap">'
+        '<div id="comments">评论区内容</div>'
+        '<div class="author-card">作者卡</div></div>'
+    )
+    text, channel = FA.extract(html)
+    check("extract：吞进评论区时降级到兜底通道",
+          channel != "站内专用选择器", channel)
+
+
 def test_balanced_div():
     html = '<div class="content"><div>内层</div>中间</div><div>外层后</div>'
     block = FA._balanced_div(html, 0)
@@ -165,6 +205,8 @@ def test_published_from_text():
 
 if __name__ == "__main__":
     for fn in (test_decode, test_to_text, test_extract_site_pattern,
+               test_extract_site_pattern_nested_divs,
+               test_extract_site_pattern_comment_fallback,
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
                test_published_from_text):
