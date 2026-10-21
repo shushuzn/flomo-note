@@ -6,11 +6,16 @@
     就放不出写请求），写路径上读工具同样拒；两个集合**分别恰等于**源码实际调用的
     工具（扫描锁定，不留无人使用的权限空位）；
   - **写闸门**：格式未过或流程凭证缺失时，`create_memo` / `update_memo` 直接抛错，
-    且**一个字节都不会发到云端**（断言桩客户端零调用）；
+    且**写请求一个字节都不会发到云端**（断言桩客户端零写调用；改卡按 H22 的那次
+    只读回读不算写）；
   - **写入与验收**：闸门放行后的调用参数、`memo_create` 回执里 id 的三种承载位置、
-    回执缺 id 时按签名回搜的兜底（标注 `id_inferred`）、写入后回读全文验收；
+    回执缺 id 时按签名回搜的兜底（标注 `id_inferred`）、写入后回读全文验收；回读取不到
+    全文时标 `matched=None` 而不是抛错（写已下发，抛错被当成失败重发就是重复卡）；
     更新路径必须**先回读原文**再写，回执里带出更新前的实测字数；
-  - **标签重命名**：`#` 前缀清洗、同名拒绝、规模上限钳制与空参报错；
+  - **标签重命名**：`#` 前缀清洗、空参 / 同名 / 原子树 / 非法字符的前置拒绝（均不触达
+    云端）、规模参数遇零/负数/布尔/非数字/超上限一律报错（不夹取、不回落默认值）、
+    回执按 `matched_memos` 与 `updated_memos` 读成 done / partial / needs_scale /
+    no_match / unknown / inconsistent，只有全量改完才算成功；
   - **检索条件**：`memo_search` 的全部入参（关键词 / 标签 / 起止日期 / 来源 / 是否含标签）
     透传与省略（未指定即不塞键），三态开关的取值判定；
   - **批量与相关**：批量全文的 10 条上限、空 id 丢弃与报错、相关笔记的排除同标签开关；
@@ -609,6 +614,230 @@ def run_read_tool_entry():
 
 
 # --------------------------------------------------------------------------- #
+# 标签重命名：前置校验、规模声明、回执读成结论
+# --------------------------------------------------------------------------- #
+def _rename_reader(payload=None, result=None):
+    """重命名专用桩：默认按 `structuredContent` 给回执，也可换整包结果。"""
+    body = result if result is not None else {"structuredContent": dict(payload or {})}
+    fake = FakeClient({"tag_rename": body})
+    return reader_for(fake)[0], fake
+
+
+def _rename_blocked(old, new, max_memos=None, want=""):
+    """跑一次重命名，返回「是否按预期被本地拦下且未触达云端」与细节。
+
+    `want` 可给多个片段：报错里每一个都得出现——只看其中一句会放过「说了但不能定位」。
+    """
+    wants = (want,) if isinstance(want, str) else tuple(want)
+    r, fake = _rename_reader()
+    try:
+        r.rename_tag(old, new, max_memos=max_memos)
+        return "未拦下", False
+    except C.CloudError as e:
+        got = "ok" if all(w and w in str(e) for w in wants) else str(e)
+        return got, fake.calls == []
+
+
+def run_tag_rename():
+    # 1) 本地能判的错不必发到云端——云端拒绝也只是一句报错，本地先说清是哪一项
+    for name, old, new, want in [
+        ("原标签为空", "", "AI", "不能为空"),
+        ("新标签只有空白", "AI", "   ", "不能为空"),
+        ("同名（# 前缀清洗后）", "#AI/RAG", "AI/RAG", "相同"),
+        ("新标签在原子树下", "AI", "AI/RAG", "子树"),
+    ]:
+        got, untouched = _rename_blocked(old, new, want=want)
+        check(f"重命名拒绝{name}", got == "ok", got)
+        check(f"重命名拒绝{name}：未发请求", untouched, got)
+
+    for name, new, char in [("空白", "人工 智能", " "), ("尖括号", "AI<x>", "<"), ("井号", "AI#x", "#")]:
+        got, untouched = _rename_blocked("AI", new, want=("不能包含空白", repr(char)))
+        check(f"重命名拒绝新标签含{name}", got == "ok" and untouched, got)
+
+    # 2) 规模参数：错就当错，不夹取、不回落默认值
+    for name, value in [("零", 0), ("负数", -3), ("布尔", True), ("非数字", "abc"), ("小数", "5.5")]:
+        got, untouched = _rename_blocked("AI", "人工智能", max_memos=value, want="max_memos")
+        check(f"重命名拒绝 max_memos 为{name}", got == "ok" and untouched, got)
+
+    got, untouched = _rename_blocked("AI", "人工智能", max_memos=C.TAG_RENAME_MAX + 1, want=str(C.TAG_RENAME_MAX))
+    check("超服务端上限直接拒（不静默夹取）", got == "ok" and untouched, got)
+
+    # 3) 参数形态：清洗 # 与两侧空白；字符串规模转整数；未声明就不塞键
+    r, fake = _rename_reader({"matched_memos": 3, "updated_memos": 3})
+    out = r.rename_tag("#AI/RAG ", " 学习/记忆 ", max_memos="900")
+    check("重命名清洗 # 与空白",
+          fake.calls[-1][1] == {"old_tag": "AI/RAG", "new_tag": "学习/记忆", "max_memos": 900},
+          str(fake.calls[-1][1]))
+    check("字符串规模转整数", out["max_memos_requested"] == 900, str(out["max_memos_requested"]))
+
+    r, fake = _rename_reader({"matched_memos": 1, "updated_memos": 1})
+    r.rename_tag("AI", "人工智能")
+    check("未声明规模不带 max_memos", "max_memos" not in fake.calls[-1][1], str(fake.calls[-1][1]))
+
+    # 4) 回执数字读成结论：只有「匹配到且全改完」才算成功
+    for name, payload, status, want in [
+        ("一条没写", {"matched_memos": 900, "updated_memos": 0}, "needs_scale", "max_memos=900"),
+        ("只改一部分", {"matched_memos": 900, "updated_memos": 500}, "partial", "另有 400 条"),
+        ("零匹配", {"matched_memos": 0, "updated_memos": 0}, "no_match", "标签名可能不存在"),
+        ("缺 updated_memos", {"matched_memos": 5}, "unknown", "不要当作已完成"),
+        ("实改多于匹配", {"matched_memos": 5, "updated_memos": 9}, "inconsistent", "自相矛盾"),
+    ]:
+        r, _fake = _rename_reader(payload)
+        out = r.rename_tag("AI", "人工智能")
+        check(f"重命名回执：{name} 判 {status}",
+              out["status"] == status and want in out["hint"], f"{out.get('status')} {out.get('hint')}")
+        check(f"重命名回执：{name} 不算成功", out["ok"] is False, str(out.get("ok")))
+
+    r, _fake = _rename_reader({"matched_memos": 12, "updated_memos": 12, "updated_tags": 2,
+                               "warnings": ["通知过滤将在后台异步更新"]})
+    out = r.rename_tag("AI", "人工智能")
+    check("重命名全量改完判完成", out["ok"] is True and out["status"] == "done", str(out.get("status")))
+    check("重命名告警原样转达", out["warnings"] == ["通知过滤将在后台异步更新"], str(out["warnings"]))
+    check("重命名带出标签表条数", out["updated_tags"] == 2, str(out.get("updated_tags")))
+
+    # 5) 回执只给 content[].text 里的内层 JSON 时，同样要能判出结论
+    r, fake = _rename_reader(result={"content": [{"type": "text",
+                                                  "text": '{"matched_memos": 2, "updated_memos": 2}'}]})
+    out = r.rename_tag("AI", "人工智能")
+    check("重命名回执内层 JSON 可解读", out["status"] == "done", str(out.get("status")))
+    check("重命名仍走写白名单",
+          fake.calls == [("tag_rename", {"old_tag": "AI", "new_tag": "人工智能"})], str(fake.calls))
+
+
+# --------------------------------------------------------------------------- #
+# 建卡 / 改卡：闸门放行之后的调用参数与回读验收
+# --------------------------------------------------------------------------- #
+CARD = "#AI/RAG\n\n向量检索的召回率\n\n衡量检索质量的指标。"
+OLD_CARD = "#AI/RAG\n\n旧标题\n\n旧正文。"
+
+
+class _PassGate(C.CloudReader):
+    """闸门恒过的读取器：本组只核「放行之后」的事，闸门判定本身另有断言。"""
+
+    def check_card(self, content):
+        return {"ok": True, "errors": []}
+
+    def gate_state(self, content):
+        return {"ok": True, "errors": []}
+
+
+class _FailCard(_PassGate):
+    def check_card(self, content):
+        return {"ok": False, "errors": ["缺概念名"]}
+
+
+class _FailGate(_PassGate):
+    def gate_state(self, content):
+        return {"ok": False, "errors": ["缺流程凭证"]}
+
+
+class _SeqClient(FakeClient):
+    """按调用次序给不同回执：写前回读与写后回读必须能返回不同正文。"""
+
+    def __init__(self, seq):
+        super().__init__()
+        self._seq = seq
+
+    def tool(self, name, arguments=None):
+        self.calls.append((name, arguments or {}))
+        queue = self._seq.get(name) or []
+        return queue.pop(0) if queue else wrap([])
+
+
+def run_write_paths():
+    # 闸门拦下时：报出待修项，且一个字节都不发云端
+    for cls, want in [(_FailCard, "格式闸门未过"), (_FailGate, "流程闸门未过")]:
+        fake = FakeClient()
+        r = cls(factory=lambda: fake)
+        try:
+            r.create_memo(CARD)
+            got = "未拦下"
+        except C.CloudError as e:
+            got = want if want in str(e) else str(e)
+        check(f"建卡被{want[:2]}拦下", got == want, got)
+        check(f"建卡被{want[:2]}拦下：未发请求", fake.calls == [], str(fake.calls))
+
+        # 改卡按 H22 必须先回读原文——那次是只读，被拦的是写请求本身
+        fake = FakeClient({"memo_batch_get": wrap([{"id": "M1", "content": OLD_CARD}])})
+        r = cls(factory=lambda: fake)
+        try:
+            r.update_memo("M1", CARD)
+            got = "未拦下"
+        except C.CloudError as e:
+            got = want if want in str(e) else str(e)
+        check(f"改卡被{want[:2]}拦下", got == want, got)
+        check(f"改卡被{want[:2]}拦下：只读回读一次、无写请求",
+              [c[0] for c in fake.calls] == ["memo_batch_get"], str(fake.calls))
+
+    # 建卡：提交正文原样下发，回执取 id，按 id 回读逐字验收
+    fake = FakeClient({
+        "memo_create": {"structuredContent": {"id": "M1", "word_count": 20}},
+        "memo_batch_get": wrap([{"id": "M1", "content": CARD, "word_count": 20}]),
+    })
+    out = _PassGate(factory=lambda: fake).create_memo(CARD)
+    check("建卡：正文原样下发", fake.calls[0] == ("memo_create", {"content": CARD}), str(fake.calls[0]))
+    check("建卡：回执带出 id", out["ok"] and out["id"] == "M1" and out["id_inferred"] is False, str(out.get("id")))
+    check("建卡：写后回读逐字一致",
+          out["verified"]["matched"] and out["verified"]["chars"] == len(CARD), str(out.get("verified")))
+    check("建卡：回读按 id 取全文", fake.calls[-1] == ("memo_batch_get", {"ids": ["M1"]}), str(fake.calls[-1]))
+
+    # id 也藏在 content[].text 的内层 JSON 里（包裹结构不保证）
+    fake = FakeClient({
+        "memo_create": {"content": [{"type": "text", "text": '{"id": "M2"}'}]},
+        "memo_batch_get": wrap([{"id": "M2", "content": CARD}]),
+    })
+    out = _PassGate(factory=lambda: fake).create_memo(CARD)
+    check("建卡：id 取内层 JSON", out["id"] == "M2" and out["id_inferred"] is False, str(out.get("id")))
+
+    # 字段名也不保证是 id：memo_id / memoId 都要认
+    fake = FakeClient({
+        "memo_create": {"structuredContent": {"memoId": "M4"}},
+        "memo_batch_get": wrap([{"id": "M4", "content": CARD}]),
+    })
+    out = _PassGate(factory=lambda: fake).create_memo(CARD)
+    check("建卡：id 认 memoId 写法", out["id"] == "M4" and out["verified"]["matched"] is True,
+          str(out.get("id")))
+
+    # 回执没有 id：按概念名回搜兜底，但必须标注是推断来的
+    fake = FakeClient({"memo_search": wrap([{"id": "M3", "content": CARD}])})
+    out = _PassGate(factory=lambda: fake).create_memo(CARD)
+    check("建卡：缺 id 时按签名回搜", out["id"] == "M3", str(out.get("id")))
+    check("建卡：回搜来的 id 标注为推断", out["id_inferred"] is True, str(out.get("id_inferred")))
+    # 回读不到全文时不能抛错（抛错会被读成写入失败，重发即多一张重复卡）
+    check("建卡：回读不到时标未知而非报错",
+          out["ok"] is True and out["verified"]["matched"] is None
+          and "不要重发" in out["verified"]["error"], str(out.get("verified")))
+
+    # 改卡：必须「先读原文 → 再写 → 再回读」，回执带出更新前字数
+    fake = _SeqClient({
+        "memo_batch_get": [wrap([{"id": "M1", "content": OLD_CARD}]), wrap([{"id": "M1", "content": CARD}])],
+        "memo_update": [{"structuredContent": {"word_count": 20}}],
+    })
+    out = _PassGate(factory=lambda: fake).update_memo("M1", CARD)
+    check("改卡：先读原文再写", [c[0] for c in fake.calls] == ["memo_batch_get", "memo_update", "memo_batch_get"],
+          str([c[0] for c in fake.calls]))
+    check("改卡：写前读的是目标卡", fake.calls[0] == ("memo_batch_get", {"ids": ["M1"]}), str(fake.calls[0]))
+    check("改卡：before 带出原文字数", out["before"]["chars"] == len(OLD_CARD), str(out.get("before")))
+    check("改卡：写后回读一致", out["verified"]["matched"] is True, str(out.get("verified")))
+
+    # 回读与提交不一致时必须报出来（验收不落空）
+    fake = _SeqClient({
+        "memo_batch_get": [wrap([{"id": "M1", "content": OLD_CARD}]), wrap([{"id": "M1", "content": OLD_CARD}])],
+        "memo_update": [{"structuredContent": {"word_count": 5}}],
+    })
+    out = _PassGate(factory=lambda: fake).update_memo("M1", CARD)
+    check("改卡：回读不符如实报未通过", out["verified"]["matched"] is False, str(out.get("verified")))
+
+    fake = FakeClient()
+    try:
+        _PassGate(factory=lambda: fake).update_memo("", CARD)
+        got = "未拦下"
+    except C.CloudError as e:
+        got = "CloudError" if "memo id" in str(e) else str(e)
+    check("改卡：缺 id 直接拒", got == "CloudError" and fake.calls == [], got)
+
+
+# --------------------------------------------------------------------------- #
 # 失败与脱敏
 # --------------------------------------------------------------------------- #
 def run_failure_and_secrecy():
@@ -687,6 +916,8 @@ def main():
     run_tags_and_texts()
     run_catalog()
     run_read_tool_entry()
+    run_tag_rename()
+    run_write_paths()
     run_failure_and_secrecy()
     run_missing_token()
     print("---")

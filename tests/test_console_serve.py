@@ -242,6 +242,16 @@ def main() -> int:
         check("无 Origin 的命令行客户端不受影响", code == 200 and '"ok"' in text,
               f"{code} {text[:60]}")
 
+        # 4f) 批量改标签的规模参数要被本地校验：负数若被夹成 1，会「成功只改一条」，
+        #     比报错更难发现。这里验证路由确实把 max_memos 交给前置校验，错误映射 422。
+        #     原标签取一个不可能存在的名字：万一这层校验被人拆掉，本请求也只会得到
+        #     「0 条匹配」，不会真的改到线上标签——用例本身不能成为写入风险。
+        bad_scale = json.dumps({"old_tag": "__no_such_tag__", "new_tag": "人工智能",
+                                "max_memos": -1}).encode()
+        code, _, text = request(port, "POST", "/api/cloud/tag/rename", bad_scale)
+        check("重命名 max_memos 非法：422 且不写云端",
+              code == 422 and "max_memos" in text, f"{code} {text[:80]}")
+
         # 4e) 非回环绑定必须显式解锁：本服务无鉴权，绑到 0.0.0.0 等于把云端卡片
         #     （读取全文与批量改标签）开放给同网段任何机器。来源校验拦不住「直接连
         #     上来的另一台机器」，这一层只能靠不绑出去。

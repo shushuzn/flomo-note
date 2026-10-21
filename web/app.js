@@ -600,15 +600,20 @@ async function editorSave() {
   }
   const v = r.verified || {};
   const before = r.before ? `<span>更新前 ${esc(r.before.chars)} 字</span>` : "";
+  // 验收有三种结局，不能并成两种：一致 / 不一致（真读过、内容不同）/ 未知（没读到全文）。
+  // 未知摊进「不一致」会让人以为正文写坏了，而实际是写已下发、只是没验收——处置完全不同。
+  const unknown = v.matched !== true && v.matched !== false;
   editorResult(
-    `<div class="result-head is-ok">已写入，并回读全文验收</div>
+    `<div class="result-head ${unknown ? "is-err" : "is-ok"}">${unknown ? "已下发，但没能回读验收" : "已写入，并回读全文验收"}</div>
      <div class="result-sub"><code>${esc(r.id || "")}</code> · 云端字数 ${esc(r.word_count ?? "—")} · 回读 ${esc(v.chars ?? "—")} 字 ${before}</div>
-     <div class="${v.matched ? "ok-note" : "result-head is-err"}">${v.matched
+     <div class="${v.matched === true ? "ok-note" : "result-head is-err"}">${v.matched === true
         ? "回读正文与提交内容逐字一致。"
-        : "回读正文与提交内容不一致，请点开该卡核对后再决定是否重写。"}</div>
+        : unknown
+          ? `回读没取到全文，无法判定是否一致：${esc(v.error || "未取到卡片 id")}。写请求已下发，先按 id 现查，不要重发。`
+          : "回读正文与提交内容不一致，请点开该卡核对后再决定是否重写。"}</div>
      <div class="result-sub">列表已标记为待刷新，按「刷新」即取回最新云端状态。</div>`
   );
-  toast(isEdit ? "已更新并验收" : "已新建并验收");
+  toast(unknown ? "已下发，回读失败，勿重发" : (isEdit ? "已更新并验收" : "已新建并验收"));
   state.cloudData = null;
   state.cache = {};
   state.liveTags = null;
@@ -669,7 +674,8 @@ async function viewTags() {
     ? (ren.error
         ? `<div class="empty">重命名未完成：${esc(ren.error)}</div>`
         : `<div class="result-sub"><code>${esc(ren.old_tag)}</code> → <code>${esc(ren.new_tag)}</code>${
-             ren.max_memos ? ` · 本次规模 ${esc(ren.max_memos)}` : " · 默认规模 200"}</div>
+             ren.max_memos_requested ? ` · 声明规模 ${esc(ren.max_memos_requested)}` : " · 未声明规模（默认 200）"}</div>
+           <div class="${ren.ok ? "ok-note" : "result-head is-err"}">${esc(ren.hint || "")}</div>
            <pre class="gate-out">${esc(JSON.stringify(ren.result || {}, null, 2))}</pre>`)
     : `<div class="empty">把挂旧标签的卡片整批改挂新标签。云端默认只处理 200 条，超出时回报实际匹配数而不写；确认规模后再填「规模上限」（绝对上限 2000）</div>`;
 
@@ -1048,6 +1054,12 @@ async function runTagRename() {
   state.renNew = ($("#ren-new")?.value || "").trim().replace(/^#/, "");
   state.renMax = ($("#ren-max")?.value || "").trim();
   if (!state.renOld || !state.renNew) { toast("原标签与新标签都要填"); return; }
+  // 规模留空表示「按云端默认 200」；填了就必须是正整数——`Number("abc")` 会变 NaN、
+  // 序列化成 null，等于悄悄退回默认规模，看着像生效了其实没声明。
+  if (state.renMax && !(/^\d+$/.test(state.renMax) && Number(state.renMax) > 0)) {
+    toast("规模上限须为正整数，留空则按默认 200");
+    return;
+  }
   if (!state.renConfirm) {
     state.renConfirm = true;
     state.renameResult = null;
@@ -1062,10 +1074,19 @@ async function runTagRename() {
     max_memos: state.renMax ? Number(state.renMax) : null,
   });
   state.renameResult = r.error ? { error: r.error } : r;
+  // 一条没写（匹配数超默认上限）或只写了一部分：把该带的规模填进输入框，
+  // 由用户看清数字后再走一次两步确认——不自动重发，规模是人来定的。
+  if (!r.error && (r.status === "needs_scale" || r.status === "partial") && r.matched_memos) {
+    state.renMax = String(r.matched_memos);
+  }
   state.cache = {};
   state.liveTags = null;
   render();
-  toast(r.error ? "重命名未完成" : "重命名已下发，请按「拉取」现采标签树");
+  toast(r.error ? "重命名未完成"
+    : r.ok ? `已改 ${r.updated_memos} 条，稍后拉取标签树复查`
+      : r.status === "needs_scale" ? "未写入：规模超默认上限，确认后重试"
+        : r.status === "partial" ? "只改了一部分，标签已分裂，看结论"
+          : "重命名未达成，看结论");
 }
 
 document.addEventListener("change", (e) => {
