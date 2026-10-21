@@ -41,23 +41,45 @@ VERIFY_JSON = json.dumps({
     "human_judgment": [{"item": "首尾是否同一事件", "why": "语义"}],
 }, ensure_ascii=False)
 
+# 云端回读形态：标签段后补一个空行（渲染层行为），概念名是第二个非空行
+BATCH_JSON = json.dumps({
+    "structuredContent": {
+        "memos": [{"id": "ABC", "word_count": 30,
+                   "content": "#AI/测试\n\n概念名\n\n正文"}]
+    }
+}, ensure_ascii=False)
+
 
 def make_exec(overrides=None):
-    """返回 (exec_fn, calls)。overrides 按脚本名替换 (code, stdout, stderr)。"""
+    """返回 (exec_fn, calls)。overrides 按脚本名（覆盖其全部子命令）或
+    (脚本名, 子命令) 精确指定 (code, stdout, stderr)。"""
     calls = []
     table = {
-        "sop_gate.py": (0, "[gate] 通过", ""),
-        "validate_memo.py": (0, "[validate] 0 ERR", ""),
-        "flomo_client.py": (0, '{"structuredContent": {"id": "ABC", "word_count": 600}}',
-                            "[成功] 已写入 memo id=ABC\n"),
-        "verify_card.py": (0, VERIFY_JSON, ""),
+        ("sop_gate.py", ""): (0, "[gate] 通过", ""),
+        ("validate_memo.py", ""): (0, "[validate] 0 ERR", ""),
+        ("flomo_client.py", "memo_create"): (
+            0, '{"structuredContent": {"id": "ABC", "word_count": 600}}',
+            "[成功] 已写入 memo id=ABC\n"),
+        ("flomo_client.py", "memo_batch_get"): (0, BATCH_JSON, ""),
+        ("flomo_client.py", "memo_update"): (
+            0, '{"structuredContent": {"memos": [{"id": "ABC"}]}}',
+            "[成功] 已覆盖更新 memo id=ABC\n"),
+        ("verify_card.py", ""): (0, VERIFY_JSON, ""),
     }
-    table.update(overrides or {})
+    for k, v in (overrides or {}).items():
+        if isinstance(k, tuple):
+            table[k] = v
+            continue
+        for key in list(table):
+            if key[0] == k:
+                table[key] = v
+        table[(k, "")] = v
 
     def _exec(cmd, timeout=600):
         calls.append(list(cmd))
         name = Path(cmd[1]).name if len(cmd) > 1 else cmd[0]
-        return table.get(name, (0, "", ""))
+        tool = cmd[2] if len(cmd) > 2 and not cmd[2].startswith("--") else ""
+        return table.get((name, tool)) or table.get((name, "")) or (0, "", "")
 
     return _exec, calls
 
@@ -180,10 +202,142 @@ def test_missing_draft():
     check("草稿不存在：不调用任何子脚本", calls == [], calls)
 
 
+# ── 覆盖既有卡（--update-id）：比建卡更危险，写前必须确认目标卡 ──────────────
+
+def tools(calls):
+    return [c[2] if len(c) > 2 and not c[2].startswith("--") else "" for c in calls]
+
+
+def _other_card(concept="另一张卡", tag="#AI/测试"):
+    return json.dumps({"structuredContent": {"memos": [
+        {"id": "ABC", "content": f"{tag}\n\n{concept}\n\n别的正文"}]}}, ensure_ascii=False)
+
+
+def test_update_success():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec()
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("覆盖路：五步按序（含写前确认）",
+              names(calls) == ["sop_gate.py", "validate_memo.py", "flomo_client.py",
+                               "flomo_client.py", "verify_card.py"], names(calls))
+        check("覆盖路：先 batch_get 再 memo_update",
+              tools(calls)[2:4] == ["memo_batch_get", "memo_update"], tools(calls))
+        check("覆盖路：不误用 memo_create",
+              "memo_create" not in tools(calls), tools(calls))
+        payload = PB.PAYLOAD.read_text(encoding="utf-8")
+        check("覆盖路：update 请求带目标 id 与正文",
+              '"id": "ABC"' in payload and "概念名" in payload, payload[:120])
+        last = calls[-1]
+        check("覆盖路：复核指向同一 id",
+              last[last.index("--id") + 1] == "ABC", last)
+        check("覆盖路：退出码 0 且不误报幂等",
+              code == 0 and "[RESULT] reused=1" not in out, f"{code} {out[-160:]}")
+        check("覆盖路：复核步骤编号为 ⑤", "⑤ 写后机器项复核" in out, out[-400:])
+
+
+def test_update_rename_blocked():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card(), "")})
+        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+                              "--update-id", "ABC"], exec_fn)
+        check("概念名不符：退出码 6（未写云）", code == 6, code)
+        check("概念名不符：一个字节不发 update",
+              "memo_update" not in tools(calls), tools(calls))
+        check("概念名不符：也不跑复核", "verify_card.py" not in names(calls), names(calls))
+        check("概念名不符：提示疑似 id 抄错", "疑似 id 抄错" in err, err)
+        check("概念名不符：给出放行办法", "--allow-rename" in err, err)
+
+
+def test_update_rename_allowed():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card(), "")})
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC", "--allow-rename"], exec_fn)
+        check("显式改名：退出码 0", code == 0, code)
+        check("显式改名：确实发了 update", "memo_update" in tools(calls), tools(calls))
+        check("显式改名：打印改名放行", "[放行] 概念名改名" in out, out[-400:])
+
+
+def test_update_target_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        empty = json.dumps({"structuredContent": {"memos": []}}, ensure_ascii=False)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, empty, "")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("目标卡不存在：退出码 6", code == 6, code)
+        check("目标卡不存在：不写云", "memo_update" not in tools(calls), tools(calls))
+        check("目标卡不存在：提示核对 id", "确认 --update-id" in err, err)
+
+
+def test_update_read_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (1, "", "[失败] 网络")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("读目标卡失败：退出码 6", code == 6, code)
+        check("读目标卡失败：不写云", "memo_update" not in tools(calls), tools(calls))
+        check("读目标卡失败：提示未写云", "未写云" in err, err)
+
+
+def test_update_failure_no_dup():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_update"): (1, "", "[失败] 超时")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("覆盖失败：退出码 4", code == 4, code)
+        check("覆盖失败：只发一次、不自动重试",
+              tools(calls).count("memo_update") == 1, tools(calls))
+        check("覆盖失败：提示重试前先确认云端现状",
+              "先确认云端当前是什么内容" in err, err)
+
+
+def test_allow_rename_without_update():
+    exec_fn, calls = make_exec()
+    code, _out, err = run(["--draft", "x.txt", "--allow-rename"], exec_fn)
+    check("单独 --allow-rename：退出码 1", code == 1, code)
+    check("单独 --allow-rename：不调用任何子脚本", calls == [], calls)
+    check("单独 --allow-rename：说明只对 update 有效",
+          "只对 --update-id 有意义" in err, err)
+
+
+def test_update_dry_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec()
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC", "--dry-run"], exec_fn)
+        check("覆盖路 dry-run：只跑到质检",
+              names(calls) == ["sop_gate.py", "validate_memo.py"], names(calls))
+        check("覆盖路 dry-run：退出码 0", code == 0 and "dry_run=1" in out, out)
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
-               test_verify_card_failure, test_dry_run, test_missing_draft):
+               test_verify_card_failure, test_dry_run, test_missing_draft,
+               test_update_success, test_update_rename_blocked,
+               test_update_rename_allowed, test_update_target_missing,
+               test_update_read_failure, test_update_failure_no_dup,
+               test_allow_rename_without_update, test_update_dry_run):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
