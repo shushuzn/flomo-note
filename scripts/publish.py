@@ -14,7 +14,8 @@
 覆盖既有卡同样走这一条链：`--update-id <memo id>` 把第 3 步换成「确认目标卡 → 覆盖更新」。
 更新比建卡更危险——id 抄错不是多出一张卡，而是把 A 卡正文盖到 B 卡上，B 卡原文即丢。
 故更新前先回读目标卡、比对概念名（卡的身份）：不符即阻塞（退出码 6），确属改名要显式
-`--allow-rename`。这是本项目里唯一「写之前先读一次」的分支，读的是同一张卡、只比对不动内容。
+`--allow-rename`。**读不到概念名同样阻塞**——「无法比对」不等于「比对通过」，静默跳过会让
+回包形态一改、这道止损点就无声失效。这是本项目里唯一「写之前先读一次」的分支，读的是同一张卡、只比对不动内容。
 
 同一次回读还兼作**改前快照**：`memo_update` 是整篇替换，写后逐字对账的基准是被改后的草稿，
 所以「草稿漏抄了一段」「编辑时误删两行」在一致的口径下完全隐形——对账越严格越看不见。
@@ -36,7 +37,8 @@
   3  文本质检有 ERR（未写云）
   4  写入失败（**未重发**，须先人工核实再决定）
   5  已写入但机器项复核失败（卡已写入，不改写、不重发，只报告）
-  6  目标卡确认不通过（读不到该卡 / 概念名与草稿不符且未加 --allow-rename），未写云
+  6  目标卡确认不通过（读不到该卡 / 读不到概念名 / 概念名与草稿不符），未写云；
+     后两种（读不到概念名、确属改名）可显式加 --allow-rename 放行
 """
 from __future__ import annotations
 
@@ -92,8 +94,13 @@ def _exec(cmd: list[str], timeout: int = 600) -> tuple[int, str, str]:
 
 
 def _tail(text: str, n: int = 12) -> str:
+    """转发子脚本输出的末尾 n 行。**截断必须说出来**：被切掉的常是最先报的失败项，
+    读者看不到就会当成「只有这些错」，改完再跑又冒出新的，白跑一轮。"""
     lines = [ln for ln in (text or "").splitlines() if ln.strip()]
-    return "\n".join(lines[-n:])
+    if len(lines) <= n:
+        return "\n".join(lines)
+    return (f"…（前面还有 {len(lines) - n} 行未显示，完整输出请单独跑该脚本）\n"
+            + "\n".join(lines[-n:]))
 
 
 def _step(title: str) -> None:
@@ -223,14 +230,27 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[i
     before = memos[0].get("content", "") or ""
     cloud = _head_lines(before, 2)
     local = _head_lines(body, 2)
-    if len(cloud) >= 2 and len(local) >= 2 and cloud[1] != local[1]:
+    # 判身份的前提是**两侧都读得到概念名**。读不到就跳过比对，等于「回包形态一变、
+    # 唯一的止损点就静默失效」——而它失效时恰恰是最危险的时候（id 抄错即覆盖别人）。
+    # 故读不到一律阻塞，放行只留 --allow-rename 这一个显式口子。
+    if len(cloud) < 2 or len(local) < 2:
+        why = (f"目标卡只读到 {len(cloud)} 行非空内容，取不到概念名"
+               if len(cloud) < 2 else "草稿前两行没有概念名")
         if not allow_rename:
-            print(f"[阻塞] 目标卡概念名「{cloud[1]}」与草稿「{local[1]}」不同——"
-                  f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
-                  f"确属改名请显式加 --allow-rename", file=sys.stderr)
+            print(f"[阻塞] {why}，无法确认目标卡就是草稿这一张——未写云。"
+                  f"草稿缺概念名先按 H14 补；若该卡本身没有概念名、确属待改的卡，"
+                  f"显式加 --allow-rename 放行", file=sys.stderr)
             return 6, ""
-        print(f"[放行] 概念名改名：「{cloud[1]}」→「{local[1]}」（--allow-rename）")
-    print(f"[通过] 目标卡概念名「{cloud[1] if len(cloud) >= 2 else '-'}」")
+        print(f"[放行] {why}——按 --allow-rename 跳过概念名比对")
+    else:
+        if cloud[1] != local[1]:
+            if not allow_rename:
+                print(f"[阻塞] 目标卡概念名「{cloud[1]}」与草稿「{local[1]}」不同——"
+                      f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
+                      f"确属改名请显式加 --allow-rename", file=sys.stderr)
+                return 6, ""
+            print(f"[放行] 概念名改名：「{cloud[1]}」→「{local[1]}」（--allow-rename）")
+        print(f"[通过] 目标卡概念名「{cloud[1]}」")
     # 回读被截断时，快照只是原文的前半截：拿它做 diff 会把「没取到的后半段」
     # 整片报成删除，比不报更坏（人会以为真的误删了）。故宁可显式放弃这一项。
     if memos[0].get("content_truncated"):
@@ -438,13 +458,18 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
             info = {}
         detail = info.get("info") or {}
         checks = info.get("checks") or []
-        failed = [c.get("name") for c in checks if not c.get("ok")]
-        print(
-            f"[通过] 机器项 {len(checks)} 项全过 | 字数 {detail.get('word_count')} | "
-            f"标签 {' '.join(detail.get('tags') or []) or '-'}"
-        )
-        if failed:
-            print(f"[告警] 失败项：{failed}")
+        # 这里不再判「有没有失败项」：verify_card 有任何 FAIL 就退出码非 0，上面已经
+        # return 5 了。能走到这里的必然全过——再写一次 `if failed:` 是条不可达分支，
+        # 只会让人以为「失败也能走到这里」。
+        if checks:
+            print(
+                f"[通过] 机器项 {len(checks)} 项全过 | 字数 {detail.get('word_count')} | "
+                f"标签 {' '.join(detail.get('tags') or []) or '-'}"
+            )
+        else:
+            print("[告警] 复核回包解析不出机器项明细——退出码 0 只代表它自己判过，"
+                  "本轮没有逐项清单可核；请自己跑一遍 verify_card --show-body 读全文",
+                  file=sys.stderr)
         human = [h.get("item") for h in (info.get("human_judgment") or [])]
         if human:
             print(f"[须人读] 脚本判不了、别当成已查过：{'；'.join(human)}")
