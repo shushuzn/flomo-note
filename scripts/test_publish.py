@@ -330,6 +330,107 @@ def test_update_dry_run():
         check("覆盖路 dry-run：退出码 0", code == 0 and "dry_run=1" in out, out)
 
 
+# ── 覆盖差异：整篇替换下「草稿少抄一段」写后对账永远查不出，故比改前快照 ────────
+
+def _card(body: str, concept: str = "概念名") -> str:
+    return json.dumps({"structuredContent": {"memos": [
+        {"id": "ABC", "content": f"#AI/测试\n\n{concept}\n\n{body}"}]}}, ensure_ascii=False)
+
+
+def test_update_diff_reported():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n第一段\n改写段")
+        exec_fn, _calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _card("第一段\n第二段"), "")})
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("差异：覆盖成功后打印差异段", "⑥ 覆盖差异" in out, out[-600:])
+        check("差异：列出被删的行", "- 第二段" in out, out[-600:])
+        check("差异：列出新增的行", "+ 改写段" in out, out[-600:])
+        check("差异：统计删除/新增/未动",
+              "删除 1 行、新增 1 行、未动 3 行" in out, out[-600:])
+        check("差异：删了行就点名提示", "本次覆盖删除了 1 行" in out, out[-600:])
+        snap = Path(tmp) / "update_before_ABC.txt"
+        check("差异：改前快照已落盘且是云端原文",
+              snap.exists() and "第二段" in snap.read_text(encoding="utf-8"),
+              snap)
+        check("差异：退出码仍为 0（差异不是失败）", code == 0, code)
+
+
+def test_update_diff_unchanged():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        # 云端形态标签段后多一个空行；归一化后与草稿一致，不该报成「新增一行」
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n正文")
+        exec_fn, _calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _card("正文"), "")})
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("差异：无变化时报无实质变化", "无实质变化" in out, out[-500:])
+        check("差异：无变化时不误报删除提示", "本次覆盖删除了" not in out, out[-500:])
+        check("差异：无变化仍退出码 0", code == 0, code)
+
+
+def test_diff_truncated_and_large_delete():
+    old = "\n".join(f"旧行{i}" for i in range(100))
+    rep = PB.diff_report("#AI/测试\n概念名\n\n" + old, "#AI/测试\n概念名\n\n新的一行")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        PB._print_diff(rep, limit=10)
+    out = buf.getvalue()
+    check("差异：删除行数按实际统计", "删除 100 行、新增 1 行" in out, out[:300])
+    check("差异：超上限只列前 N 行并说明剩余",
+          out.count("  - 旧行") == 10 and "…另 91 行未列出" in out, out[-300:])
+    check("差异：大比例删除额外提示",
+          "达到两成以上" in out, out[-300:])
+
+
+def test_update_diff_on_verify_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n第一段\n改写段")
+        exec_fn, _calls = make_exec({
+            ("flomo_client.py", "memo_batch_get"): (0, _card("第一段\n第二段"), ""),
+            "verify_card.py": (1, "", "[verify] 回读不一致"),
+        })
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("差异：复核失败也要打差异（正是要人看的时候）",
+              code == 5 and "⑥ 覆盖差异" in out, out[-600:])
+
+
+def test_create_has_no_diff():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, _calls = make_exec()
+        _code, out, _err = run(["--draft", str(draft), "--verify", str(verify)], exec_fn)
+        check("建卡路：不打覆盖差异段", "覆盖差异" not in out, out[-400:])
+        check("建卡路：不落改前快照",
+              not list(Path(tmp).glob("update_before_*.txt")), tmp)
+
+
+def test_update_truncated_read_no_diff():
+    """回读被截断时快照只是前半截，拿它 diff 会把没取到的部分报成删除——假警报更坏。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        cut = json.dumps({"structuredContent": {"memos": [
+            {"id": "ABC", "content": "#AI/测试\n\n概念名\n\n正文",
+             "content_truncated": True}]}}, ensure_ascii=False)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, cut, "")})
+        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+                              "--update-id", "ABC"], exec_fn)
+        check("截断回读：仍继续覆盖（截断不影响写入）",
+              code == 0 and "memo_update" in tools(calls), f"{code} {tools(calls)}")
+        check("截断回读：不打差异段", "⑥ 覆盖差异" not in out, out[-400:])
+        check("截断回读：不落不可信快照",
+              not list(Path(tmp).glob("update_before_*.txt")), tmp)
+        check("截断回读：说明跳过原因", "跳过差异" in err, err)
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -337,7 +438,11 @@ if __name__ == "__main__":
                test_update_success, test_update_rename_blocked,
                test_update_rename_allowed, test_update_target_missing,
                test_update_read_failure, test_update_failure_no_dup,
-               test_allow_rename_without_update, test_update_dry_run):
+               test_allow_rename_without_update, test_update_dry_run,
+               test_update_diff_reported, test_update_diff_unchanged,
+               test_diff_truncated_and_large_delete,
+               test_update_diff_on_verify_failure, test_create_has_no_diff,
+               test_update_truncated_read_no_diff):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
