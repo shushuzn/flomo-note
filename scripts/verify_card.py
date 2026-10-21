@@ -21,6 +21,11 @@
     # 追加一项机械比对：云端回读与本地草稿按写路径同口径（FC._norm_body：
     # 丢空行 / 还原转义 / 去行内水平空白）逐字比。不传草稿时只报数字，
     # 不假装对过账——「数字相等」曾靠两层平台差异相互抵消蒙对过（卡 37）。
+  python scripts/verify_card.py --id MjYxMzk1MDg0 --show-body
+    # 打印云端全文（还原渲染层补的空行）。存在理由是那两条「须人读」项：
+    # 早先为了看一眼全文，要临时写一个 memo_batch_get 请求文件、再把 id 手抄进去、
+    # 再用内联 python 抠 content——H5 明令 id 不手抄，而这一步每轮都做一次。
+    # --show-body 把「回读 → 判定 → 摆出原文」收成一次调用，人读项就在手上这段里查。
 
 退出码：0 = 机械项全过；1 = 有机械项不过或回读失败。
 """
@@ -180,6 +185,10 @@ def run(memo_id: str, client=None, draft_path=None):
         "render_padded": render_padded,
         "draft_compared": bool(draft_path),
         "warnings": list(dict.fromkeys(VM.WARN)),
+        # 人读全文用：已还原渲染层补的空行，形态与本地草稿一致（不是 _norm_body 那个
+        # 丢空行/去空白的比对口径——那个只用来判等，拿去打印会把排版压成一坨）。
+        # main 会把它从 --json 输出里摘掉，免得自动化消费方平白多背一份全文。
+        "content": norm,
     }
 
     if draft_path:
@@ -200,6 +209,9 @@ def main(argv=None) -> int:
     ap.add_argument("--id", required=True, help="卡片 id（写云回包里的 id）")
     ap.add_argument("--draft", help="本地草稿路径；给了就追加与草稿的逐字比对（同写路径口径）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（供自动化消费）")
+    ap.add_argument("--show-body", action="store_true",
+                    help="打印云端全文（还原渲染层补的空行），供两条「须人读」项当场核对；"
+                         "与 --json 不同时生效")
     args = ap.parse_args(argv)
 
     try:
@@ -209,7 +221,13 @@ def main(argv=None) -> int:
         return 1
 
     ok = all(c[1] for c in checks)
+    # 全文只供人眼核对，不进 JSON：--json 是给程序消费的，多塞一份正文既没用到，
+    # 又让人误以为机器已经查过「首尾是否同一事件」这类语义项。
+    body_text = info.pop("content", "")
     if args.json:
+        if args.show_body:
+            print("[提示] --json 供程序消费，不与 --show-body 同时生效（未打印全文）",
+                  file=sys.stderr)
         print(json.dumps({
             "ok": ok,
             "info": info,
@@ -250,6 +268,10 @@ def main(argv=None) -> int:
     print("[须人读——脚本判不了，别当成已查过]")
     for name, why in HUMAN_JUDGMENT:
         print(f"  ? {name}（{why}）")
+    if args.show_body and body_text:
+        print("[云端全文——上面两条人读项就在这段里查]")
+        for line in body_text.split("\n"):
+            print(f"  {line}" if line.strip() else "")
     print("---")
     print(f"[verify] {'机械项全过' if ok else '存在失败项'}（{len(checks)} 项）")
     return 0 if ok else 1
