@@ -31,6 +31,8 @@ FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备�
 （`RuntimeError` 子类，可被 `except Exception` 接住）；**不使用 `SystemExit`**——
 它继承自 `BaseException`，会把调用方的异常处理穿透，在 HTTP 服务里表现为连接被掐断、
 错误原因传不出去。CLI 侧在入口把 `FlomoError` 转成退出码。
+命令行参数写错（`--limit abc`）另有 `UsageError`（`FlomoError` 子类），由入口按用法码
+退出——不要让它和「调用失败」共用一个退出码，用户会去查网络。
 """
 import itertools
 import json
@@ -60,7 +62,46 @@ class FlomoError(RuntimeError):
     """
 
 
-def cli_entry(main, *, code=1, prefix="[失败]"):
+class UsageError(FlomoError):
+    """命令行参数本身写错了（如 `--limit abc`）：不是云端或凭据问题。
+
+    单列一类，是因为两者的正确出口不同——参数错该指回那个参数、按各脚本自己的
+    「用法错」退出码结束；把它混进 `FlomoError` 会被读成「调用失败」，用户去查网络
+    和 token，实际只是少打了个数字。各脚本 `main` 里不各写一份报错文案，交给
+    `cli_entry(..., usage_code=本脚本的用法码)` 统一渲染。
+    """
+
+
+def _num_arg(raw, flag, cast, low=None, high=None):
+    """把命令行里的数字参数转成 `cast`，并在越界/非数字时抛 `UsageError`。
+
+    不做「宽松解析」——`int("2000条")` 会抛、`int("2_000")` 会过，都是意外的。
+    此前三个脚本直接写 `int(args[i+1])`，用户打错一个字得到的是 traceback。
+    """
+    text = (raw or "").strip()
+    try:
+        value = cast(text)
+    except (TypeError, ValueError):
+        kind = "整数" if cast is int else "数字"
+        raise UsageError(f"{flag} 需要{kind}，收到 {raw!r}") from None
+    if low is not None and value < low:
+        raise UsageError(f"{flag} 不能小于 {low}，收到 {value}")
+    if high is not None and value > high:
+        raise UsageError(f"{flag} 不能大于 {high}，收到 {value}")
+    return value
+
+
+def int_arg(raw, flag, *, low=None, high=None):
+    """`--limit 2000` 这类整数参数：见 `_num_arg`。"""
+    return _num_arg(raw, flag, int, low, high)
+
+
+def float_arg(raw, flag, *, low=None, high=None):
+    """`--timeout 30` 这类浮点参数：见 `_num_arg`。"""
+    return _num_arg(raw, flag, float, low, high)
+
+
+def cli_entry(main, *, code=1, prefix="[失败]", usage_code=2):
     """CLI 入口的统一出口：跑 `main`，把 `FlomoError` 转成退出码。
 
     所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是**可预期**
@@ -70,6 +111,11 @@ def cli_entry(main, *, code=1, prefix="[失败]"):
     """
     try:
         return main()
+    except UsageError as e:
+        # 用法错一律以「[失败] + 参数名」开头。`prefix` 是用来补调用上下文的
+        # （如「查重未能进行：」），而用法错根本没进到那一步，套上去会读成云端失败。
+        print(f"[失败] {e}", file=sys.stderr)
+        return usage_code
     except FlomoError as e:
         # 中文冒号后面不再补空格（`[失败] 查重未能进行：` 直接接原因）
         sep = "" if prefix.endswith(("：", ":")) else " "

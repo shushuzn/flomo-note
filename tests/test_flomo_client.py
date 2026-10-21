@@ -278,6 +278,43 @@ def run_error_contract_cases():
     check("库层源码不出现 raise SystemExit", "raise SystemExit" not in src,
           "库层又用 SystemExit 表示失败了")
 
+    # 参数解析：`--limit abc` 此前是裸 int()，用户打错一个字得到一段 traceback
+    check("int_arg 正常值原样返回", FC.int_arg("2000", "--limit") == 2000)
+    check("int_arg 去首尾空白", FC.int_arg("  12  ", "--limit") == 12)
+    bad = []
+    for raw, want in [("abc", "需要整数"), ("", "需要整数"), ("2.5", "需要整数"),
+                      ("0", "不能小于 1"), ("-3", "不能小于 1"),
+                      ("2001", "不能大于 2000")]:
+        try:
+            FC.int_arg(raw, "--limit", low=1, high=2000)
+            bad.append(f"{raw!r} 未拦下")
+        except FC.UsageError as e:
+            if want not in str(e):
+                bad.append(f"{raw!r} -> {e}")
+    check("int_arg 非数字/越界一律抛 UsageError 并点明参数", not bad, "; ".join(bad))
+    check("float_arg 正常值", FC.float_arg("30.5", "--timeout") == 30.5)
+    try:
+        FC.float_arg("abc", "--timeout")
+        got = "未拦下"
+    except FC.UsageError as e:
+        got = "ok" if "--timeout" in str(e) else str(e)
+    check("float_arg 非数字抛 UsageError 并点明参数", got == "ok", got)
+    # UsageError 是 FlomoError 的子类：既有的 `except FlomoError` 不会漏接
+    check("UsageError 属于 FlomoError", issubclass(FC.UsageError, FC.FlomoError))
+
+    # cli_entry 对用法错：走独立退出码，且**不套** `prefix`（「查重未能进行：」套在
+    # 参数错上会读成云端失败，用户去查网络）
+    def bad_limit():
+        raise FC.UsageError("--limit 需要整数，收到 'abc'")
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = FC.cli_entry(bad_limit, prefix="[失败] 查重未能进行：", usage_code=1)
+    line = err.getvalue().strip()
+    check("cli_entry 用法错按 usage_code 退出", code == 1, str(code))
+    check("cli_entry 用法错不套调用上下文前缀",
+          line == "[失败] --limit 需要整数，收到 'abc'", repr(line))
+
 
 if __name__ == "__main__":
     run_norm_cases()

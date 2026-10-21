@@ -19,6 +19,7 @@ def _load(name, filename):
 
 
 TC = _load("tagcheck", "tagcheck.py")
+from flomo_client import cli_entry as CLI_ENTRY  # noqa: E402  （SCRIPT_DIR 已在 sys.path）
 RESULTS = []
 
 
@@ -45,6 +46,17 @@ def run(argv, client):
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = TC.main(argv, client=client)
+    return code, out.getvalue(), err.getvalue()
+
+
+def run_cli(argv, client):
+    """走真实入口：`main` 抛的 `UsageError` 由 `cli_entry` 渲染成一行提示 + 退出码。
+
+    参数写错时**不冒 traceback** 是这条路的判据，所以必须经入口跑，不能直接调 `main`。
+    """
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = CLI_ENTRY(lambda: TC.main(argv, client=client))
     return code, out.getvalue(), err.getvalue()
 
 
@@ -110,10 +122,64 @@ def test_grep_with_tags():
     check("--grep 与 --tags 并存：退出码仍按标签判定", code == 2, code)
 
 
+def test_written_differently():
+    # 判据与第 ⑧ 步闸门同一份（memo_util.tag_key）。此前这里没有这一项，
+    # `AI / Agent` 被判成「不存在，可直接新建此二级」——定标签的工具亲手把人
+    # 引向新建近义簇，只在写前闸门才被拦下。三档都属「确定是错」，一律拦。
+    for label, tag in [("斜杠两侧空格", "AI / Agent"), ("全角斜杠", "AI／Agent"),
+                       ("大小写", "ai/agent")]:
+        code, out, _err = run(["--tags", tag], FakeClient(TAGS))
+        check(f"写法重复（{label}）：退出码 2", code == 2, code)
+        check(f"写法重复（{label}）：点出树里的写法",
+              "与现有「AI/Agent」" in out and "只差空白" in out, out)
+        check(f"写法重复（{label}）：不再建议新建", "可直接新建" not in out, out)
+
+
+def test_fullwidth_slash_not_depth_error():
+    # 全角斜杠会让层级判定失败。先判写法重复再判层级，否则报「层级不合规」
+    # 会把人引向「改格式」，而真正该做的是改回树里那个写法。
+    _code, out, _err = run(["--tags", "AI／Agent"], FakeClient(TAGS))
+    check("全角斜杠：报写法重复而非层级不合规", "层级不合规" not in out, out)
+
+
+def test_case_only_top_exists():
+    # 顶层名大小写不同、二级是新的：顶层存在性必须按键比，逐字比会报
+    # 「该顶层也不存在，须连同顶层一起新建」——把已有的顶层重开一遍。
+    _code, out, _err = run(["--tags", "ai/新二级"], FakeClient(TAGS))
+    check("大小写不同的顶层：仍判为该顶层存在", "该顶层存在" in out, out)
+    check("大小写不同的顶层：不提示连同顶层一起新建",
+          "连同顶层一起新建" not in out, out)
+
+
+def test_bad_limit():
+    for raw in ("abc", "0", "-3", "2.5"):
+        code, _out, err = run_cli(["--tags", "AI/Agent", "--limit", raw], FakeClient(TAGS))
+        check(f"--limit {raw}：退出码 2", code == 2, code)
+        check(f"--limit {raw}：一行提示、不冒 traceback",
+              err.startswith("[失败] --limit") and "Traceback" not in err, err)
+
+
+def test_duplicate_flag():
+    # 重复给同一选项时后者会静默覆盖前者（只核了最后一个），而漏核正是本脚本要防的。
+    code, _out, err = run(["--tags", "AI/Agent", "--tags", "科技/测试"], FakeClient(TAGS))
+    check("重复 --tags：退出码 2", code == 2, code)
+    check("重复 --tags：点明只能给一次", "只能给一次" in err, err)
+
+
+def test_empty_grep():
+    # 空正则会命中全部标签，打出的「命中 N 个」不构成任何证据。
+    code, _out, err = run(["--grep", ""], FakeClient(TAGS))
+    check("空 --grep：退出码 2", code == 2, code)
+    check("空 --grep：说明空正则命中全部", "空正则" in err, err)
+
+
 if __name__ == "__main__":
     for fn in (test_existing_ok, test_missing_tag, test_missing_tag_leaf_only_tree,
                test_three_levels, test_truncated_tree, test_hash_prefix_and_split,
-               test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags):
+               test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
+               test_written_differently, test_fullwidth_slash_not_depth_error,
+               test_case_only_top_exists, test_bad_limit, test_duplicate_flag,
+               test_empty_grep):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

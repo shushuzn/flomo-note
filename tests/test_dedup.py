@@ -197,11 +197,34 @@ def test_recommended_mode():
     check("复盘路退出码 0", code == 0, code)
 
 
+def test_bad_numeric_args():
+    """`--limit abc` / `--max-full -1` 该给一行提示，而不是 traceback。
+
+    此前两处直接写 `int(args[i + 1])`，用户打错一个字就得到一段调用栈；更糟的是
+    `--max-full -1` 会被 `ids[:-1]` 静默变成「少读一张」。现在解析在 flomo_client，
+    越界与非数字都抛 `UsageError`，由入口按本脚本的用法码退出。
+    """
+    for argv in (["--keywords", "x", "--limit", "abc"],
+                 ["--keywords", "x", "--limit", "0"],
+                 ["--keywords", "x", "--max-full", "-1"]):
+        client = FakeClient()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = FC.cli_entry(lambda: DD.main(argv, client=client), usage_code=1)
+        label = f"{argv[2]} {argv[3]}"
+        check(f"{label}：退出码 1", code == 1, code)
+        check(f"{label}：一行提示、不冒 traceback",
+              err.getvalue().startswith("[失败] ") and "Traceback" not in err.getvalue(),
+              err.getvalue())
+        check(f"{label}：未发起任何云端调用", client.calls == [], client.calls)
+
+
 if __name__ == "__main__":
     for fn in (test_per_keyword_calls, test_id_dedup_and_batching,
                test_default_full_cap_is_explicit, test_explicit_ids,
                test_id_and_keywords_together, test_dedup_across_keywords,
-               test_no_full, test_failure_not_empty, test_recommended_mode):
+               test_no_full, test_failure_not_empty, test_recommended_mode,
+               test_bad_numeric_args):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

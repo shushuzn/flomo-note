@@ -110,6 +110,19 @@ def run_tag_leaves():
     # 成对括号必须成对保留——一刀切 rstrip 会剥成残缺的「机器人（人形」
     check("成对括号原样保留",
           MU.tag_leaves("#科技/机器人（人形）") == [("科技", "机器人（人形）")])
+
+
+def run_tag_key():
+    """`tag_key` 只认「同一簇被写成两种」的三档：空白、全半角斜杠、大小写。"""
+    check("同写法同键", MU.tag_key("AI/Agent") == MU.tag_key("AI/Agent"))
+    check("折叠半角空白", MU.tag_key("AI / Agent") == MU.tag_key("AI/Agent"))
+    check("折叠全角空格", MU.tag_key("AI\u3000/Agent") == MU.tag_key("AI/Agent"))
+    check("全角斜杠归一", MU.tag_key("AI／Agent") == MU.tag_key("AI/Agent"))
+    check("统一小写", MU.tag_key("ai/agent") == MU.tag_key("AI/Agent"))
+    # 不是「近似」：换字/换层就是不同的簇，这个键不能把它们并成一个
+    check("换字不并簇", MU.tag_key("AI/Agents") != MU.tag_key("AI/Agent"))
+    check("换层不并簇", MU.tag_key("AI/Agent") != MU.tag_key("科技/Agent"))
+    check("空值安全", MU.tag_key("") == "" and MU.tag_key(None) == "")
     check("未配对左括号原样保留",
           MU.tag_leaves("#科技/机器人（人形") == [("科技", "机器人（人形")])
     check("纯中文二级名不被误剔",
@@ -188,6 +201,7 @@ if __name__ == "__main__":
     run_keywords()
     run_keywords_of_concept()
     run_tag_leaves()
+    run_tag_key()
     run_slice_qualifiers()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")

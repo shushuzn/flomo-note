@@ -41,6 +41,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flomo_client import cli_entry, float_arg, int_arg  # noqa: E402
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIN_CHARS = 300
 
@@ -471,10 +474,10 @@ def main(argv: list[str] | None = None) -> int:
             out = Path(args[i + 1])
             i += 2
         elif a == "--min-chars" and i + 1 < len(args):
-            min_chars = int(args[i + 1])
+            min_chars = int_arg(args[i + 1], "--min-chars", low=1)
             i += 2
         elif a == "--timeout" and i + 1 < len(args):
-            timeout = float(args[i + 1])
+            timeout = float_arg(args[i + 1], "--timeout", low=1)
             i += 2
         elif a == "--print":
             echo = True
@@ -548,4 +551,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 用法错（参数写成非数字等）由入口渲染：`main` 里不再各写一份报错文案。
+    sys.exit(cli_entry(main, usage_code=1))

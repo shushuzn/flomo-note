@@ -601,7 +601,16 @@ def run_tag_check_cases():
     got = GATE._check_tags(tree, "#新材料/钙钛矿", b, n)
     check("_check_tags 新顶层不阻塞但说明", b == [] and any("顶层一起新建" in x for x in n), (b, n))
 
-    # 7) 裸字符串回包形态同样可用（服务端有 dict 与 str 两种）
+    # 6b) 顶层名只差大小写、二级是新的 → 顶层仍算存在。逐字比前缀会报「顶层也不存在，
+    #     将连顶层一起新建」，那等于把已有的顶层换个大小写重开一遍。
+    b, n = [], []
+    got = GATE._check_tags(tree_case, "#ai/新二级", b, n)
+    check("_check_tags 顶层只差大小写仍算存在",
+          b == [] and any("该顶层存在" in x for x in n), (b, n))
+    check("_check_tags 顶层只差大小写不提示连顶层新建",
+          not any("顶层一起新建" in x for x in n), n)
+
+
     b, n = [], []
     got = GATE._check_tags(["科技/云原生"], "#科技/云原生", b, n)
     check("_check_tags 兼容裸字符串标签", b == [] and got["tags"][0]["exists"] is True, b)

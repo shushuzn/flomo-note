@@ -81,6 +81,7 @@ from memo_util import (  # noqa: E402
     keywords_of_concept,
     memo_signature,
     signature_key,
+    tag_key,
     tag_leaves,
 )
 
@@ -135,7 +136,6 @@ _RATING_RE = re.compile(r"(?:五|四|三|两)星")
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-_.]{1,}|[\u4e00-\u9fff]{2,}")
 # 「本卡将新建该簇」时列几个同顶层最相近的现有二级供人判断（只作提示）。
 TAG_NEAR_SHOW = 3
-_TAG_WS_RE = re.compile(r"[\s\u3000]+")
 
 
 def _tag_names(tags):
@@ -146,15 +146,6 @@ def _tag_names(tags):
         if name:
             out.append(name)
     return out
-
-
-def _tag_key(name):
-    """标签比对键：折叠空白与全角空格、全角斜杠归一、统一小写。
-
-    只用于识别「同一簇被写成两种」，**不用来判断存在性**——存在性必须逐字匹配，
-    否则会把云端并不存在的写法认成已存在，而那正是这条检查要拦的东西。
-    """
-    return _TAG_WS_RE.sub("", (name or "").replace("／", "/")).lower()
 
 
 def _norm(text):
@@ -275,13 +266,13 @@ def _check_tags(tags, tagline, blockers, notes):
     exact = set(names)
     by_key: dict[str, list[str]] = {}
     for n in names:
-        by_key.setdefault(_tag_key(n), []).append(n)
+        by_key.setdefault(tag_key(n), []).append(n)
     leaves = tag_leaves(tagline)
     if not leaves:
         # 三级、单层、全角斜杠都会落到这里。若它与某个现有标签只差写法，先点出
         # 这一层——那不是「格式写歪了」，而是把一个已有的簇换个写法重开。
         tokens = re.findall(r"#([^\s#]+)", tagline)
-        dups = [n for t in tokens for n in by_key.get(_tag_key(t), []) if n != t]
+        dups = [n for t in tokens for n in by_key.get(tag_key(t), []) if n != t]
         if dups:
             blockers.append(
                 f"标签「{tokens[0]}」与现有「{dups[0]}」只差空白/全半角/大小写"
@@ -297,10 +288,14 @@ def _check_tags(tags, tagline, blockers, notes):
             notes.append(f"标签·「{full}」已存在")
             records.append(rec)
             continue
-        dup = [n for n in by_key.get(_tag_key(full), []) if n != full]
-        rec["top_exists"] = any(n == top or n.startswith(top + "/") for n in names)
+        dup = [n for n in by_key.get(tag_key(full), []) if n != full]
+        # 顶层存在性也按键比：`#AI/新二级` 与树里的 `ai/agent` 只差大小写，
+        # 逐字比前缀会报「顶层也不存在」——那句提示会让人连顶层一起新建。
+        top_k = tag_key(top)
+        rec["top_exists"] = any(tag_key(n) == top_k or tag_key(n).startswith(top_k + "/")
+                                for n in names)
         siblings = [n.split("/", 1)[1] for n in names
-                    if n.startswith(top + "/") and n.count("/") == 1]
+                    if tag_key(n).startswith(top_k + "/") and n.count("/") == 1]
         near = sorted(siblings, key=lambda s: -difflib.SequenceMatcher(None, s, leaf).ratio())
         near = [s for s in near[:TAG_NEAR_SHOW]]
         if near:
