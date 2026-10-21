@@ -38,6 +38,7 @@ from flomo_client import (  # noqa: E402
     FlomoClient,
     FlomoError,
     _result_memos,
+    cli_entry,
     load_token,
 )
 
@@ -165,9 +166,15 @@ def main(argv: list[str] | None = None, client=None) -> int:
         return 1
 
     if client is None:
-        token, _src = load_token()
-        client = FlomoClient(token)
-        client.init()
+        # 建连失败（含凭据缺失）在 main 里就收成退出码：`cli_entry` 那层是兜底，
+        # 不该让「没配 token」这种可预期失败走到兜底上——消息会少掉这里的上下文。
+        try:
+            token, _src = load_token()
+            client = FlomoClient(token)
+            client.init()
+        except FlomoError as exc:
+            print(f"[失败] 查重未能进行：{exc}", file=sys.stderr)
+            return 1
 
     seen: list[str] = []
     fetched: list[str] = []
@@ -210,7 +217,13 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
     rest = [i for i in seen if i not in fetched]
     if full:
-        fetch_full(client, rest, max_full)
+        try:
+            fetch_full(client, rest, max_full)
+        except FlomoError as exc:
+            # 清单已到手、正文没取到：这时候最危险的是「拿清单当读过」，故显式拦下
+            print(f"[失败] 全文未取到：{exc}", file=sys.stderr)
+            print("[注意] 只拿到 id 清单，未读正文不得做同事件判断", file=sys.stderr)
+            return 1
     elif rest:
         print(f"\n[跳过全文] --no-full：{len(rest)} 张卡只列清单，未取正文")
 
@@ -220,4 +233,4 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli_entry(main, prefix="[失败] 查重未能进行："))

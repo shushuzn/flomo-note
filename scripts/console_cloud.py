@@ -72,7 +72,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import validate_memo as _vm  # noqa: E402
-from flomo_client import FlomoClient, _result_memos, load_token  # noqa: E402
+from flomo_client import FlomoClient, FlomoError, _result_memos, load_token  # noqa: E402
 from memo_util import memo_signature  # noqa: E402
 
 # 云端只读工具白名单：**恰好等于**本模块各读方法实际调用的工具，一个不多。
@@ -331,7 +331,7 @@ def cloud_status() -> dict:
     """
     try:
         _token, src = load_token()
-    except SystemExit as e:
+    except FlomoError as e:
         return {"available": False, "reason": str(e), "source": "", "max_limit": MAX_LIMIT}
     return {"available": True, "reason": "凭证就位", "source": src, "max_limit": MAX_LIMIT}
 
@@ -359,7 +359,7 @@ class CloudReader:
             else:
                 try:
                     token, _src = load_token()
-                except SystemExit as e:
+                except FlomoError as e:
                     raise CloudError(str(e)) from None
                 client = FlomoClient(token)
             client.init()
@@ -378,8 +378,9 @@ class CloudReader:
 
         失败一律**转成 `CloudError`**：本层是控制台与云端之间的唯一边界，任何漏出去的
         异常都会在 HTTP 服务里变成「连接被掐断、错误传不出去」。除普通异常外还显式拦
-        `SystemExit`（`BaseException` 子类，`except Exception` 接不住）——客户端历史上
-        拿它表示协议错误，这类错误绝不能让响应半途失联。
+        `SystemExit`（`BaseException` 子类，`except Exception` 接不住）——库层已约定不抛它
+        （见 `flomo_client.FlomoError` 的类文档），这一拦是边界该有的兜底：本层的职责就是
+        不让任何东西漏出去，漏一次的表现就是响应半途失联。
         """
         allowed = WRITE_TOOLS if write else READONLY_TOOLS
         if name not in allowed:

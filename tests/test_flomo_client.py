@@ -212,11 +212,79 @@ def run_brief_cases():
     check("brief 通过剥离参数实现，不改工具名解析", 'a != "--brief"' in main_src)
 
 
+def run_error_contract_cases():
+    """失败一律走 `FlomoError`：库层不抛 `SystemExit`，CLI 一律以退出码收场。
+
+    判据取**行为**而不是措辞：`except Exception` 必须接得住，进程不能被异常本身带走。
+    旧实现 `raise SystemExit("未找到 token")` 在这里会当场失败——`SystemExit` 继承
+    `BaseException`，`except Exception` 接不住，于是 `verify_card --json` 在那条路径上
+    既没有 JSON、也没有自己的失败行，只剩解释器打的一句提示。
+    """
+    import contextlib
+    import io
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        orig_root = FC.PROJECT_ROOT
+        orig_env = os.environ.pop("FLOMO_TOKEN", None)
+        FC.PROJECT_ROOT = Path(d)  # 没有 .mcp.json，等同于没配 token
+        try:
+            got = ""
+            try:
+                FC.load_token()
+                got = "未抛错"
+            except Exception as e:  # noqa: BLE001 — 库调用方的常规写法
+                got = type(e).__name__
+            except BaseException as e:  # noqa: BLE001 — 逃到这里的正是本次要防的
+                got = f"漏出 BaseException：{type(e).__name__}"
+            check("无凭据时抛 FlomoError 且可被 except Exception 接住",
+                  got == "FlomoError", got)
+
+            # 三个 CLI 的 main：无凭据时必须返回退出码，不许把进程带走
+            for name, argv in (("dedup", ["--keywords", "测试"]),
+                               ("tagcheck", ["--tags", "AI/RAG"]),
+                               ("verify_card", ["--id", "abc"])):
+                mod = _load(name, f"{name}.py")
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = mod.main(list(argv))
+                    ok, detail = code != 0, f"code={code!r}"
+                except BaseException as e:  # noqa: BLE001
+                    ok, detail = False, f"抛出 {type(e).__name__}"
+                check(f"{name} 无凭据时返回非 0（不抛异常）", ok, detail)
+        finally:
+            FC.PROJECT_ROOT = orig_root
+            if orig_env is not None:
+                os.environ["FLOMO_TOKEN"] = orig_env
+
+    # cli_entry：正常返回值不改写，FlomoError 转成指定退出码，输出只有一行
+    check("cli_entry 原样返回 main 的退出码", FC.cli_entry(lambda: 0) == 0)
+
+    def boom():
+        raise FC.FlomoError("未找到 flomo token")
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = FC.cli_entry(boom, code=7, prefix="[失败] 查重未能进行：")
+    line = err.getvalue().strip()
+    check("cli_entry 把 FlomoError 转成指定退出码", code == 7, str(code))
+    check("失败输出为一行，中文冒号后不补空格",
+          line == "[失败] 查重未能进行：未找到 flomo token", repr(line))
+
+    # 结构锁定：库层里不许再出现 SystemExit（契约写在模块与类的文档里）
+    src = (SCRIPT_DIR / "flomo_client.py").read_text(encoding="utf-8")
+    check("库层源码不出现 raise SystemExit", "raise SystemExit" not in src,
+          "库层又用 SystemExit 表示失败了")
+
+
 if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
     run_write_path_cases()
     run_brief_cases()
+    run_error_contract_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

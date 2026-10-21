@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient  # noqa: E402
+from flomo_client import FlomoClient, cli_entry  # noqa: E402
 from scan_qualified_concepts import (  # noqa: E402
     _memos, concept_of, resolve_tags, collect_memos,
 )
@@ -87,4 +87,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(cli_entry(main))
