@@ -20,16 +20,21 @@
   - 正文不落盘（H26）：只在内存与 HTTP 响应之间传递，不写日志、不写缓存；
     唯一落盘是流程闸门要求的当轮草稿（`memo_body*.txt`），由收尾清理回收；
   - token 只在服务进程内用于建连，绝不进入任何响应体；
-  - `.sop_gate/`（闸门凭证）不由本脚本读取；仅监听回环地址，静态文件服务做路径逃逸防护。
+  - `.sop_gate/`（闸门凭证）不由本脚本读取；静态文件服务做路径逃逸防护；
+  - **请求来源校验**：Host 的宿主名必须是本机名（拦 DNS 重绑定），带 Origin 时
+    须同源（拦浏览器发起的跨站写）。「监听回环」**不等于**「只有本机能用」——
+    同源策略管的是能不能读响应，不管请求发不发；本服务有写入口，两道校验缺一不可。
 
 用法：
   python scripts/serve_console.py                 # 默认 127.0.0.1:8787
   python scripts/serve_console.py --port 9000
   python scripts/serve_console.py --open          # 起服务后自动开浏览器
+  python scripts/serve_console.py --host 0.0.0.0 --allow-lan   # 局域网访问（须显式解锁）
 """
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import mimetypes
 import socket
@@ -54,6 +59,44 @@ CLOUD = CloudReader()
 # 静态资源白名单后缀（避免误发任意文件）
 STATIC_SUFFIXES = {".html", ".css", ".js", ".svg", ".ico", ".png", ".webp", ".woff2"}
 
+# 请求来源白名单：本机宿主名。由 main() 按 `--host` 补全（含绑定的具体地址），
+# 未初始化时按回环名判——**默认拒绝**而不是默认放行。
+LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
+ALLOWED_HOSTNAMES: set[str] = set()
+
+
+def _hostname_of(value: str) -> str:
+    """从 Host / Origin 的地址里取宿主名（小写、去端口、去 IPv6 方括号）。"""
+    v = (value or "").strip().lower()
+    if not v:
+        return ""
+    if v.startswith("["):  # [::1]:8787
+        end = v.find("]")
+        return v[1:end] if end > 0 else v
+    if v.count(":") > 1:  # 裸 IPv6（Host 头规范上带括号，这里只是兜底）
+        return v
+    return v.rsplit(":", 1)[0] if ":" in v else v
+
+
+def allowed_hostnames(bound: str) -> set[str]:
+    """按绑定地址算出可接受的宿主名集合。
+
+    绑定具体地址时只认它 + 回环名；绑定通配地址（0.0.0.0 / ::）时把本机各接口地址
+    也认作本站——否则用户按局域网地址访问会被自己的服务拒掉。**不因此放宽到任意名**：
+    通配只是「哪些本机地址算本站」，DNS 重绑定送的仍然是攻击者域名。
+    """
+    names = set(LOOPBACK_HOSTNAMES)
+    b = (bound or "").strip().lower()
+    if b and b not in ("0.0.0.0", "::", ""):
+        names.add(b)
+        return names
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            names.add(str(info[4][0]).strip().lower())
+    except OSError:
+        pass  # 取不到就不加：宁可少认几个本机别名，也不放开任意宿主名
+    return names
+
 
 def _json_bytes(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -69,6 +112,26 @@ def port_in_use(host: str, port: int, timeout: float = 0.4) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         return s.connect_ex((host, port)) == 0
+
+
+def _reject_body(kind: str, value: str, allowed: set[str]) -> bytes:
+    """403 的说明体：写清被拒的是哪一项、允许的是哪些，免得读者以为是服务坏了。"""
+    return (
+        f"403：请求{kind}「{value}」不是本站地址，已拒绝。\n"
+        f"本服务只接受本机访问：{' / '.join(sorted(allowed))}。\n"
+        f"浏览器请用 http://127.0.0.1:<端口>/ 打开；命令行工具（无 Origin）不受影响。\n"
+    ).encode("utf-8")
+
+
+def _is_loopback_bind(host: str) -> bool:
+    """绑定地址是否落在回环范围（含 127.0.0.0/8 与 ::1；`localhost` 也认）。"""
+    h = (host or "").strip().lower()
+    if h in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
 
 
 class ConsoleHandler(BaseHTTPRequestHandler):
@@ -89,6 +152,39 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # 收敛默认访问日志
         sys.stderr.write("[console] %s\n" % (fmt % args))
+
+    # ---- 请求来源校验 ----------------------------------------------------- #
+    def _reject_foreign(self) -> bool:
+        """来源不合法就回 403 并返回 True（调用方直接 return）。
+
+        **为什么回环绑定还需要这一层**：同源策略管的是「页面能不能读响应」，不管
+        「请求发不发」——任何网页都能向 `127.0.0.1:8787` 发一个 `text/plain` 的
+        POST，本服务照收；本服务有写入口（建卡 / 改卡 / 批量改标签），请求到达即已
+        生效，读不到响应也无所谓。DNS 重绑定更进一步：攻击者域名先解析到自己服务器
+        再改解析到 127.0.0.1，浏览器认为同源，连响应都能读——那时 GET 接口里的笔记
+        全文与「参考」文本就不只是能写，而是能被抄走。
+
+        两道判据，各拦一类：
+          - **Host 的宿主名须在本机名白名单内**：重绑定请求必须带攻击者域名（浏览器
+            的 Host 跟着页面走），此关拦它，且连 GET 读取一并拦住；
+          - **带 Origin 时其宿主名须同站**：拦浏览器发起的跨站写（含简单请求——它
+            不触发预检、CORS 管不到发不发）。`Origin: null` 同样拒。
+        Origin 缺失视为非浏览器客户端（curl / 回归用例），放行：强制要求 Origin＝本站
+        会把全部命令行用法拒掉，这是可用性与安全的真实权衡，不是漏判。
+        """
+        allowed = ALLOWED_HOSTNAMES or LOOPBACK_HOSTNAMES
+        host = _hostname_of(self.headers.get("Host", ""))
+        if host not in allowed:
+            self._send(403, _reject_body(
+                "Host", self.headers.get("Host", "") or "（缺失）", allowed), "text/plain; charset=utf-8")
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            if _hostname_of(urlparse(origin).netloc or origin) not in allowed:
+                self._send(403, _reject_body("Origin", origin or "（空）", allowed),
+                           "text/plain; charset=utf-8")
+                return True
+        return False
 
     # ---- 静态资源 ------------------------------------------------------- #
     def _serve_static(self, rel: str):
@@ -131,6 +227,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     # ---- 路由 ----------------------------------------------------------- #
     # 接口只服务界面实际要看的两件事：云端笔记与标签树；不外扩未使用的入口。
     def do_GET(self):
+        if self._reject_foreign():
+            return
         u = urlparse(self.path)
         path = u.path
         q = parse_qs(u.query)
@@ -200,6 +298,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
     # ---- 写入入口（本服务唯一会改动云端的地方） -------------------------- #
     def do_POST(self):
+        if self._reject_foreign():
+            return
         path = urlparse(self.path).path
         try:
             body = self._read_json()
@@ -246,8 +346,25 @@ def main(argv=None):
     )
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default="127.0.0.1", help="默认仅回环，勿改为对外地址")
+    ap.add_argument("--allow-lan", action="store_true",
+                    help="允许绑定非回环地址（本服务无鉴权，局域网内任何人都能读写云端卡片）")
     ap.add_argument("--open", action="store_true", help="起服务后自动打开浏览器")
     args = ap.parse_args(argv)
+
+    # 非回环绑定必须显式解锁：绑定 0.0.0.0 意味着同网段任何人（无需凭据）都能调
+    # 建卡 / 改卡 / 批量改标签。来源校验拦的是「浏览器里的网页」，拦不住「直接连上来的
+    # 另一台机器」——这一层只能靠不绑出去。与项目「放行只留显式开关」一致。
+    if not _is_loopback_bind(args.host) and not args.allow_lan:
+        sys.stderr.write(
+            f"拒绝绑定 {args.host}：本控制台没有鉴权，绑到回环之外等于把云端卡片\n"
+            f"  （含读取全文与批量改标签）开放给同网段任何一台机器。\n"
+            f"  确需局域网访问请显式加 --allow-lan，并自行确认网络环境可信。\n"
+        )
+        return 2
+
+    # 来源白名单按绑定地址算一次，之后每个请求都按它判
+    ALLOWED_HOSTNAMES.clear()
+    ALLOWED_HOSTNAMES.update(allowed_hostnames(args.host))
 
     if not WEB_ROOT.is_dir():
         sys.stderr.write(f"未找到前端目录：{WEB_ROOT}\n")
@@ -264,7 +381,8 @@ def main(argv=None):
     httpd = ThreadingHTTPServer((args.host, args.port), ConsoleHandler)
     url = f"http://{args.host}:{args.port}/"
     print(f"[console] flomo-note 控制台已启动：{url}")
-    print("[console] 只读服务 · 仓库根 %s" % REPO_ROOT)
+    print("[console] 本地服务 · 仓库根 %s" % REPO_ROOT)
+    print("[console] 只接受本机宿主名：%s" % " / ".join(sorted(ALLOWED_HOSTNAMES)))
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

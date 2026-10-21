@@ -113,7 +113,7 @@ flomo-note/
 
 | 文件 | 职责 |
 |------|------|
-| `serve_console.py` + `web/` | 本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力） |
+| `serve_console.py` + `web/` | 本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力）；请求须带本机 `Host`、带 `Origin` 时须同站（防 DNS 重绑定与跨站写） |
 | `console_cloud.py` | 云端访问层：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收 |
 | `console_data.py` | 读仓库：解析技能文档与脚本清单（工具在 `scripts/`、用例在 `tests/`，配套关系跨目录核），产出统计字段 |
 
