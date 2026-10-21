@@ -11,13 +11,15 @@
   python scripts/tagcheck.py --grep "多语言|本地化"      # 只有标签名不确定时：先列出匹配的现有标签
 
 输出：逐个标签给 存在 / 层级 / 同顶层兄弟二级（供判断该复用还是新建更精准的二级）。
-`--grep` 只列匹配标签、不做判定（找不到就说明该新建，而不是「没有这个簇」就随便建）。
-只读，不建标签、不改标签。
+与现有标签**只差空白、全半角斜杠或大小写**的，一律判「写错」并点出树里的那个写法
+（判据与第 ⑧ 步闸门同一份，见 `memo_util.tag_key`）——云端会把它们当两个簇，照原样
+写入即分裂。`--grep` 只列匹配标签、不做判定（找不到就说明该新建，而不是「没有这个簇」
+就随便建）。只读，不建标签、不改标签。
 
 退出码：
-  0  全部存在且严格两级
+  0  全部存在且严格两级、无写法重复
   1  标签树被截断或调用失败（结论不可信）
-  2  有标签缺失或层级不合规（须按输出调整）
+  2  有标签缺失 / 层级不合规 / 与现有标签只差写法，或命令行参数写错（须按输出调整）
 """
 from __future__ import annotations
 
@@ -28,7 +30,14 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from flomo_client import FlomoClient, FlomoError, cli_entry, load_token  # noqa: E402
+from flomo_client import (  # noqa: E402
+    FlomoClient,
+    FlomoError,
+    cli_entry,
+    int_arg,
+    load_token,
+)
+from memo_util import tag_key  # noqa: E402
 
 DEFAULT_LIMIT = 2000
 SIBLING_SHOW = 12
@@ -61,7 +70,13 @@ def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int]:
 
 
 def inspect_tag(tag: str, tags: list[str]) -> dict:
-    """核对单个标签：层级（H17 严格两级）、是否存在、同顶层兄弟二级。"""
+    """核对单个标签：层级（H17 严格两级）、是否存在、同顶层兄弟二级、写法重复。
+
+    `dup_of` 是**与写前闸门同一个判据**（`memo_util.tag_key`）：只差空白 / 全半角斜杠 /
+    大小写的标签，云端会当两个簇，照输入写入即分裂（H18）。此前这里没有这一项，于是
+    `AI / Agent`（斜杠两侧带空格）被判成「不存在，可直接新建此二级」——定标签的工具
+    亲手把人引向新建近义簇，只在第 ⑧ 步闸门才被拦下，得回头重走一遍第 4 步。
+    """
     parts = tag.split("/")
     depth_ok = len(parts) == 2 and all(p.strip() for p in parts)
     top = parts[0].strip() if parts else ""
@@ -70,10 +85,15 @@ def inspect_tag(tag: str, tags: list[str]) -> dict:
         t for t in tags
         if t != tag and t.startswith(top + "/") and t.count("/") == 1
     ]
+    key = tag_key(tag)
+    dup_of = next((t for t in tags if t != tag and tag_key(t) == key), "")
     # 标签树只返回叶子形态「顶层/二级」，顶层本身不会单独成条：
     # 只比 t == top 会让任何"新建同顶层下的二级"都被误报成"顶层也不存在"，
     # 与紧跟着列出的同顶层兄弟二级自相矛盾。有任一子标签即视为顶层存在。
-    top_exists = any(t == top or t.startswith(top + "/") for t in tags)
+    # 按键比而非逐字比：`#ai/agent` 与树里的 `AI/Agent` 只差大小写，逐字比会报
+    # 「该顶层也不存在，须连同顶层一起新建」——把已有的顶层重开一遍。
+    top_k = tag_key(top)
+    top_exists = any(tag_key(t) == top_k or tag_key(t).startswith(top_k + "/") for t in tags)
     return {
         "tag": tag,
         "depth_ok": depth_ok,
@@ -81,6 +101,7 @@ def inspect_tag(tag: str, tags: list[str]) -> dict:
         "top": top,
         "top_exists": top_exists,
         "siblings": siblings,
+        "dup_of": dup_of,
     }
 
 
@@ -94,26 +115,47 @@ def main(argv: list[str] | None = None, client=None) -> int:
         return 0
 
     raw_tags = ""
-    pattern = ""
-    limit = DEFAULT_LIMIT
+    pattern: str | None = None       # None = 没给；"" = 给了空值（空正则会命中全部标签）
+    limit_raw: str | None = None
+    seen: set[str] = set()
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "--tags" and i + 1 < len(args):
-            raw_tags = args[i + 1]
-            i += 2
-        elif a == "--grep" and i + 1 < len(args):
-            pattern = args[i + 1]
-            i += 2
-        elif a == "--limit" and i + 1 < len(args):
-            limit = int(args[i + 1])
-            i += 2
-        else:
+        if a not in ("--tags", "--grep", "--limit"):
             print(f"[失败] 未知参数：{a}", file=sys.stderr)
             return 2
+        if a in seen:
+            # 重复给同一个选项时后者会静默覆盖前者：`--tags A --tags B` 只核了 B，
+            # 用户以为两个都核过（漏核正是本脚本要防的事）。
+            print(f"[失败] {a} 只能给一次；多个标签请用逗号在一次 --tags 里给全", file=sys.stderr)
+            return 2
+        if i + 1 >= len(args):
+            print(f"[失败] {a} 缺少参数值", file=sys.stderr)
+            return 2
+        seen.add(a)
+        if a == "--tags":
+            raw_tags = args[i + 1]
+        elif a == "--grep":
+            pattern = args[i + 1]
+        else:
+            limit_raw = args[i + 1]
+        i += 2
+
+    limit = DEFAULT_LIMIT
+    if limit_raw is not None:
+        # 参数写错抛 UsageError，由 `__main__` 的 cli_entry 按本脚本的用法码退出
+        # （`main` 自己不再各写一份报错文案——那正是三份「非法整数」提示的来源）。
+        limit = int_arg(limit_raw, "--limit", low=1)
 
     tags_wanted = split_tags(raw_tags)
-    if not tags_wanted and not pattern:
+    if pattern == "":
+        print(
+            "[失败] --grep 为空：空正则会命中全部标签，「命中 N 个」不构成任何证据；"
+            "给个词或正则（只核指定标签则用 --tags）",
+            file=sys.stderr,
+        )
+        return 2
+    if not tags_wanted and pattern is None:
         print("[失败] 未给 --tags 或 --grep", file=sys.stderr)
         return 2
 
@@ -148,6 +190,13 @@ def main(argv: list[str] | None = None, client=None) -> int:
     bad = 0
     for tag in tags_wanted:
         info = inspect_tag(tag, tags)
+        if info["dup_of"]:
+            # 先判写法重复再判层级：全角斜杠会让层级判定失败，报「层级不合规」会把人
+            # 引向「改格式」，而真正该做的是改回树里那个写法。
+            print(f"✗ {tag}  与现有「{info['dup_of']}」只差空白/全半角/大小写——云端会把它们当两个簇，"
+                  "照原样写入即分裂（H18）；改回现有写法")
+            bad += 1
+            continue
         if not info["depth_ok"]:
             print(f"✗ {tag}  层级不合规：须严格两级（#顶层/二级），禁三级或单层（H17）")
             bad += 1

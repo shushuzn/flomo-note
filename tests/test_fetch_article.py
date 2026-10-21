@@ -4,7 +4,9 @@
 只测「解码 / 抽取 / 元信息」这套纯函数；网络路径由 CLI 现场验证。
 退出码 0 = 全部通过。
 """
+import contextlib
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
@@ -21,6 +23,9 @@ def _load(name, filename):
 
 
 FA = _load("fetch_article", "fetch_article.py")
+# 取**同一份**模块（fetch_article 已导入过它，这里只是取回来）：另 `_load` 一份会
+# 得到另一个 `UsageError` 类对象，`except` 就接不住脚本真正抛的那个。
+from flomo_client import UsageError  # noqa: E402
 RESULTS = []
 
 # 用例需要「日期形态」的输入，但 H28 禁止在技能文档里写具体日期（无例外）。
@@ -270,13 +275,38 @@ def test_heading_gap():
           "第二节：部署" in FA.gap_warnings(gap2)[0], FA.gap_warnings(gap2))
 
 
+def test_bad_numeric_args():
+    """`--timeout abc` / `--min-chars 0` 该抛 `UsageError` 并由入口渲染成一行提示。
+
+    此前是裸 `int()` / `float()`，用户打错一个字得到一段 traceback。这两种都在
+    发起抓取之前拦下，所以这条用例不联网。
+    """
+    for argv, want in ((["https://example.com", "--timeout", "abc"], "--timeout"),
+                       (["https://example.com", "--min-chars", "0"], "--min-chars")):
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                FA.main(argv)
+            got = "未拦下"
+        except UsageError as e:
+            got = "ok" if want in str(e) else str(e)
+        check(f"{want} 非法值抛 UsageError 并点明参数", got == "ok", got)
+
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        code = FA.cli_entry(lambda: FA.main(["https://example.com", "--timeout", "abc"]),
+                            usage_code=1)
+    check("用法错经入口变成一行提示 + 非 0",
+          code == 1 and err.getvalue().startswith("[失败] ") and "Traceback" not in err.getvalue(),
+          err.getvalue())
+
+
 if __name__ == "__main__":
     for fn in (test_decode, test_to_text, test_extract_site_pattern,
                test_extract_site_pattern_nested_divs,
                test_extract_site_pattern_comment_fallback,
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
-               test_published_from_text, test_heading_gap):
+               test_published_from_text, test_heading_gap, test_bad_numeric_args):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

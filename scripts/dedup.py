@@ -39,6 +39,7 @@ from flomo_client import (  # noqa: E402
     FlomoError,
     _result_memos,
     cli_entry,
+    int_arg,
     load_token,
 )
 
@@ -149,10 +150,10 @@ def main(argv: list[str] | None = None, client=None) -> int:
             ids_raw = args[i + 1]
             i += 2
         elif a == "--limit" and i + 1 < len(args):
-            limit = int(args[i + 1])
+            limit = int_arg(args[i + 1], "--limit", low=1)
             i += 2
         elif a == "--max-full" and i + 1 < len(args):
-            max_full = int(args[i + 1])
+            max_full = int_arg(args[i + 1], "--max-full", low=0)
             i += 2
         elif a == "--no-full":
             full = False
@@ -233,4 +234,4 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main, prefix="[失败] 查重未能进行："))
+    sys.exit(cli_entry(main, prefix="[失败] 查重未能进行：", usage_code=1))
