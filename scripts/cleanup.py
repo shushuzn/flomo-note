@@ -16,6 +16,11 @@ Windows 为 `%TEMP%`）。同时兼容历史遗留的 `D:\\tmp` —— 若该目
     不会被同一轮收尾即刻删掉；窗口之外才参与归档删除。窗口可用 `--keep-minutes`
     覆盖（0 = 关闭窗口，全部参与清理）。
 
+    收尾是「清理 → `--verify` 复核」两步，两个进程各取 `time.time()` 会让恰好
+    跨过边界的文件在复核时变成假残留（实测差 11 秒即翻转）。故清理成功后落一份
+    基准时刻（`.workbuddy/.cleanup_run`），复核沿用它；记录缺失或超过
+    `STAMP_FRESH_SECONDS` 则退回当前时刻，并在输出里说明用的是哪个基准。
+
 保留项（绝不删）：
   - `.workbuddy/trash/*`（历史备份包，即归档目标本身）
   - 临时目录内的他项目旧件（`arxiv_test.xml`、`arxiv_vibe.xml`）
@@ -118,6 +123,16 @@ RECENT_WINDOW_MINUTES = 24 * 60
 GATE_DIR = PROJECT_ROOT / ".sop_gate"
 ARCHIVE_KEEP = 10                    # trash 里保留最近多少个归档案
 GATE_CRED_MAX_AGE_HOURS = 24         # 凭证文件保留时长（凭证本身 6 小时失效）
+
+# 清理与复核的**基准时刻**必须跨进程共用（同 `collect` 的 now 参数在进程内共用的理由）。
+# 收尾固定是两步：先 `cleanup.py` 清理，再 `cleanup.py --verify` 复核。两步各取
+# `time.time()` 时，落在两次调用之间的文件会「清理时还在窗口内被跳过、复核时已出窗口
+# 被判残留」——实测两个文件 mtime 距边界 11 秒，清理报 0、十几秒后复核报「残留 2 个」。
+# 这种报告无法据以行动（再跑一次就没了），而「残留不是 0」一旦变成可忽略的噪声，
+# 这条检查就废了。故清理成功后落基准时间戳，复核读它；超出新鲜度就退回当前时刻并说明。
+STAMP_FILE = PROJECT_ROOT / ".workbuddy" / ".cleanup_run"
+STAMP_FRESH_SECONDS = 3600
+CLOCK_SKEW = 60                      # 允许基准「略微超前」的容差（时钟校准/夏令时）
 
 
 def _arcname(p: Path) -> str:
@@ -267,6 +282,35 @@ def _report_prune(gone_archives, gone_creds, dry_run):
         print(f"  凭证 ……另有 {len(gone_creds) - 5} 份")
 
 
+def _write_stamp(ts: float) -> bool:
+    """清理完成后落基准时刻（复核按它算窗口）。写不进去不阻塞清理。
+
+    取整用**截断**不用四舍五入：`f"{ts:.0f}"` 在 .5 秒之后会进位到「未来 1 秒」，
+    复核立刻跑就是 age < 0、被判成过期记录，边界翻转照旧发生（约一半概率）。
+    """
+    try:
+        STAMP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STAMP_FILE.write_text(str(int(ts)), encoding="utf-8")
+        return True
+    except OSError as exc:
+        print(f"[cleanup] 告警：基准时刻未落盘（{exc}），--verify 将按当前时刻判窗口")
+        return False
+
+
+def _read_stamp() -> tuple[float | None, str]:
+    """读上次清理的基准时刻。返回 (时刻或 None, 供打印的来源说明)。"""
+    try:
+        ts = float(STAMP_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None, "无上次清理记录，按当前时刻"
+    age = time.time() - ts
+    # 允许小幅负值：时钟校准/夏令时会让记录显得「在未来几秒」，那不是坏数据；
+    # 但明显超前（> CLOCK_SKEW）只能说明基准不可信，退回当前时刻。
+    if age > STAMP_FRESH_SECONDS or age < -CLOCK_SKEW:
+        return None, f"上次清理记录已过期（{age / 60:.0f} 分钟前），按当前时刻"
+    return ts, f"沿用上次清理时刻（{max(age, 0):.0f} 秒前），与清理同一口径"
+
+
 def main():
     ap = argparse.ArgumentParser(description="每轮收尾强制清理残留临时文件 (H27)")
     ap.add_argument("--dry-run", action="store_true", help="只列名不删")
@@ -284,7 +328,10 @@ def main():
 
     if args.verify:
         skipped = []
-        left = collect(args.keep_minutes, skipped, now=run_time)
+        stamp, why = _read_stamp()
+        base = stamp if stamp is not None else run_time
+        left = collect(args.keep_minutes, skipped, now=base)
+        print(f"[cleanup] 基准时刻：{why}")
         if left:
             print(f"[cleanup] 残留 {len(left)} 个（应清未清）：")
             for p in left:
@@ -306,6 +353,7 @@ def main():
 
     if not candidates:
         print("[cleanup] 无残留，无需清理")
+        _write_stamp(run_time)
         _report_prune(*prune(dry_run=False), dry_run=False)
         return
 
@@ -330,6 +378,7 @@ def main():
 
     left = verify(args.keep_minutes, now=run_time)
     assert len(left) == 0, f"复核失败，残留 {len(left)} 个"
+    _write_stamp(run_time)
     print(f"[cleanup] 已归档 {archive}（顶层 {members} 个），删除并复核残留 = 0，OK")
     _report_prune(*prune(dry_run=False), dry_run=False)
 
