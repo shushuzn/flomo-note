@@ -75,7 +75,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, FlomoError, load_token, _result_memos  # noqa: E402
+from flomo_client import FlomoClient, cli_entry, load_token, _result_memos  # noqa: E402
 from memo_util import (  # noqa: E402
     body_hash,
     keywords_of_concept,
@@ -594,8 +594,4 @@ def main():
 
 if __name__ == "__main__":
     # CLI 入口把库异常转成退出码（非 0，自动化不会据此重试写操作）
-    try:
-        sys.exit(main())
-    except FlomoError as e:
-        print(f"[失败] 云端调用出错：{e}", file=sys.stderr)
-        sys.exit(2)
+    sys.exit(cli_entry(main, code=2, prefix="[失败] 云端调用出错："))

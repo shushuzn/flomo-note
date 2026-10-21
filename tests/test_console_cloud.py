@@ -650,6 +650,32 @@ def run_failure_and_secrecy():
     check("列表返回不含 token", "Bearer" not in payload and "eyJ" not in payload)
 
 
+def run_missing_token():
+    """凭据缺失走 `FlomoError`：状态报「不可用」，调用转 `CloudError`，都不许崩溃。
+
+    这一条以前依赖 `load_token` 抛 `SystemExit`，本层再单独 `except SystemExit` 兜住——
+    同一种「没配 token」在别处（如 `verify_card --json`）就直接穿透了。现在源头只抛
+    `FlomoError`，本层用同一个 `except` 处置，两边不再是两套逻辑。
+    """
+    orig = C.load_token
+    C.load_token = lambda: (_ for _ in ()).throw(FlomoError("未找到 flomo token"))
+    try:
+        st = C.cloud_status()
+        check("凭据缺失时状态为不可用",
+              st["available"] is False and "token" in st["reason"], str(st))
+
+        try:
+            C.CloudReader().list_memos()
+            got = "未拦下"
+        except C.CloudError as e:
+            got = "CloudError" if "token" in str(e) else str(e)
+        except BaseException as e:  # noqa: BLE001 — 漏出 BaseException 即本次要防的缺陷
+            got = f"漏出 {type(e).__name__}"
+        check("凭据缺失时调用转 CloudError", got == "CloudError", got)
+    finally:
+        C.load_token = orig
+
+
 def main():
     run_split()
     run_slim()
@@ -662,6 +688,7 @@ def main():
     run_catalog()
     run_read_tool_entry()
     run_failure_and_secrecy()
+    run_missing_token()
     print("---")
     ok = all(_RESULTS)
     print(f"{len(_RESULTS)} 项断言，" + ("全部通过" if ok else "存在失败用例"))

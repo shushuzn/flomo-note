@@ -28,7 +28,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from flomo_client import FlomoClient, FlomoError, load_token  # noqa: E402
+from flomo_client import FlomoClient, FlomoError, cli_entry, load_token  # noqa: E402
 
 DEFAULT_LIMIT = 2000
 SIBLING_SHOW = 12
@@ -171,4 +171,4 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli_entry(main))

@@ -27,7 +27,7 @@ FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备�
 （H11），不一致、取不到卡、或被云端截断一律判失败（退出码非 0）——「拿到 id」
 只证明请求被受理，不证明云端存的就是这份正文。验收逻辑见 `readback_check`。
 
-作**库**被复用时的契约：握手失败、HTTP 错误、JSON-RPC 协议错误一律抛 `FlomoError`
+作**库**被复用时的契约：凭据缺失、握手失败、HTTP 错误、JSON-RPC 协议错误一律抛 `FlomoError`
 （`RuntimeError` 子类，可被 `except Exception` 接住）；**不使用 `SystemExit`**——
 它继承自 `BaseException`，会把调用方的异常处理穿透，在 HTTP 服务里表现为连接被掐断、
 错误原因传不出去。CLI 侧在入口把 `FlomoError` 转成退出码。
@@ -49,11 +49,42 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _IDS = itertools.count(1)
 
 
+class FlomoError(RuntimeError):
+    """调用无法进行：本地凭据缺失，或云端调用失败（HTTP 错误 / JSON-RPC 协议错误）。
+
+    两类都归这里，是因为调用方对它们的处置相同——都只能终止本次调用并报出原因。
+    **不要用 `SystemExit` 表示这类失败**：`SystemExit` 继承自 `BaseException` 而非
+    `Exception`，一旦被当作通用错误类型抛出，库的调用方（`except Exception`）就接不住，
+    会直接穿透到进程顶层——在 HTTP 服务里表现为**连接被掐断、客户端拿到空响应**，
+    错误原因一个字都传不出去。CLI 需要退出码，在入口处转成 `return 1` 即可。
+    """
+
+
+def cli_entry(main, *, code=1, prefix="[失败]"):
+    """CLI 入口的统一出口：跑 `main`，把 `FlomoError` 转成退出码。
+
+    所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是**可预期**
+    的失败，该以「一行说明 + 非 0 退出码」结束；traceback 只该留给真缺陷。此前各脚本
+    各写各的（有的转了、有的没转），于是同一个「没配 token」在不同脚本里分别表现为
+    一行提示和一段 traceback——用户看不出这是同一件事。
+    """
+    try:
+        return main()
+    except FlomoError as e:
+        # 中文冒号后面不再补空格（`[失败] 查重未能进行：` 直接接原因）
+        sep = "" if prefix.endswith(("：", ":")) else " "
+        print(f"{prefix}{sep}{e}", file=sys.stderr)
+        return code
+
+
 def load_token():
     """返回 (token, 来源) 元组。
 
     优先级：项目 .mcp.json（配置事实源）优先，环境变量 FLOMO_TOKEN 仅在不存 .mcp.json 时作后备。
     env 中的 token 可能过期，故不作权威来源。
+
+    取不到就抛 `FlomoError`——这是本模块唯一的失败类型，调用方 `except FlomoError`
+    一处即可覆盖（**不能抛 `SystemExit`**，见类文档）。
     """
     mcp = PROJECT_ROOT / ".mcp.json"
     if mcp.exists():
@@ -67,17 +98,7 @@ def load_token():
     t = os.environ.get("FLOMO_TOKEN")
     if t:
         return t, "env FLOMO_TOKEN"
-    raise SystemExit("未找到 flomo token：请补全 .mcp.json，或设置 FLOMO_TOKEN 并 Export")
-
-
-class FlomoError(RuntimeError):
-    """云端调用失败（HTTP 错误 / JSON-RPC 协议错误）。
-
-    **不要用 `SystemExit` 表示这类失败**：`SystemExit` 继承自 `BaseException` 而非
-    `Exception`，一旦被当作通用错误类型抛出，库的调用方（`except Exception`）就接不住，
-    会直接穿透到进程顶层——在 HTTP 服务里表现为**连接被掐断、客户端拿到空响应**，
-    错误原因一个字都传不出去。CLI 需要退出码，在入口处转成 `return 1` 即可。
-    """
+    raise FlomoError("未找到 flomo token：请补全 .mcp.json，或设置 FLOMO_TOKEN 并 Export")
 
 
 class FlomoClient:
@@ -544,8 +565,4 @@ FLOMO_MCP_TOOLS = [
 
 if __name__ == "__main__":
     # CLI 入口把库异常转成退出码（库层不再用 SystemExit 表达调用失败）
-    try:
-        sys.exit(main())
-    except FlomoError as e:
-        sys.stderr.write(f"[失败] {e}\n")
-        sys.exit(1)
+    sys.exit(cli_entry(main))

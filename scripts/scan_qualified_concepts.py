@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient  # noqa: E402
+from flomo_client import FlomoClient, cli_entry  # noqa: E402
 from memo_util import memo_signature, slice_qualifiers  # noqa: E402  单一来源
 
 # 切片识别**走 memo_util.slice_qualifiers**（与质检拦截 5.8 同源）：
@@ -121,4 +121,4 @@ def _memos(result):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(cli_entry(main))
