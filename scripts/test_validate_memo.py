@@ -480,7 +480,8 @@ def run_no_gate_auth_cases():
             _json.dumps(gate_obj, ensure_ascii=False), encoding="utf-8")
 
     base = {"signature": sig, "sig_key": sk, "body_hash": body_hash(BODY),
-            "expires_at": 9999999999, "web": {"searched": True}}
+            "expires_at": 9999999999, "web": {"searched": True},
+            "tag_check": {"tags": [{"tag": "数学/泛函方程", "exists": True}], "checked": 1}}
 
     # 1) 无授权标记 → False
     _write(dict(base))
@@ -539,7 +540,8 @@ def run_gate_expiry_cases():
         return errs
 
     base = {"signature": sig, "sig_key": sk, "body_hash": body_hash(BODY),
-            "web": {"searched": True}}
+            "web": {"searched": True},
+            "tag_check": {"tags": [{"tag": "数学/泛函方程", "exists": True}], "checked": 1}}
 
     cases = [
         ("缺 expires_at 须判错（不得视为永不过期）", {}, True),

@@ -722,12 +722,15 @@ def _no_gate_authorized(content):
 
 
 def check_gate(content):
-    """流程闸门校验：确认 ②验证 / ④tag_tree 核对 / ⑤查重两路 / ⑧复盘三路 都已执行。
+    """流程闸门校验：凭证是否真的覆盖了②验证与④标签核对，且与当前卡一致。
 
     这是"漏做 SOP 步骤"事故（卡写对了但流程没走）的机械兜底——
     此前 validate_memo.py 只查文本格式，对"步骤没做"完全无感。
     凭证由 scripts/sop_gate.py 生成，落在 .sop_gate/<sig_key>.json。
-    无凭证 / 凭证过期 / 签名不匹配 / 术语验证缺失，一律判 ERR 阻断写云。
+    无凭证 / 凭证过期 / 签名不匹配 / 术语验证缺失 / 标签核对缺失，一律判 ERR 阻断写云。
+
+    ⑤查重与⑧复盘的现查结果同样落进凭证，但**这里只核对它们随凭证存在**：
+    命中候选是否同一事件属语义判断，机器不据此放行或阻断（边界写进 human_judgment）。
     """
     sig = _signature_of(content)
     if not sig:
@@ -776,6 +779,12 @@ def check_gate(content):
     web = gate.get("web") or {}
     if not web.get("web_skipped") and not web.get("searched"):
         err("SOP 闸门凭证显示第 ② 步验证（网络搜索）未执行——术语卡必须现查后再写云")
+    # ④ 标签存在性核对的留痕。缺这一段的凭证只可能是旧版本产物或被改过：
+    # 没有它，「标签在树里」与「标签根本不存在、本卡要新建簇」在凭证里长得
+    # 一模一样，而后者恰恰是错字/近义簇的入口。
+    if gate.get("tag_check") is None:
+        err("SOP 闸门凭证缺少第 ④ 步标签核对（tag_check）——凭证格式过旧或被改过，"
+            "须重跑 scripts/sop_gate.py 再写云")
 
 
 def _content_from_json(obj):

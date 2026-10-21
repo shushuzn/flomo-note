@@ -97,6 +97,7 @@ def _write_gate(sig, body_hash, *, expires_delta=3600, web=None, key_sig=None,
         "generated_at": int(time.time()),
         "expires_at": int(time.time()) + expires_delta,
         "web": web if web is not None else {"searched": True, "term_count": 2},
+        "tag_check": {"tags": [{"tag": "科技/机器人", "exists": True}], "checked": 1},
         "dedup": {},
         "review": {},
     }
@@ -552,6 +553,67 @@ def run_dedup_net_cases():
           "科技/机器人学" not in got.get("tag_neighbors", []))
 
 
+def run_tag_check_cases():
+    """_check_tags 标签存在性核对（假 client，不联网）。
+
+    判据分档：写错字才阻塞，新建簇只提示——新建二级是常态动作，误拦会让
+    「合法新建」也要绕路，而绕路的人最终会把检查关掉。
+    """
+    tree = ["科技/云原生", "科技/后端开发", "商业/获客", "AI/智能体"]
+
+    # 1) 标签已存在 → 不阻塞，逐条留痕
+    b, n = [], []
+    got = GATE._check_tags(tree, "#科技/云原生", b, n)
+    check("_check_tags 已存在不阻塞", b == [], b)
+    check("_check_tags 已存在记 exists", got["tags"][0]["exists"] is True, got)
+    check("_check_tags 已存在有 note", any("已存在" in x for x in n), n)
+
+    # 2) 新建二级 → 不阻塞，提示「将新建」并给同顶层最近邻
+    b, n = [], []
+    got = GATE._check_tags(tree, "#科技/容器编排", b, n)
+    check("_check_tags 新建二级不阻塞", b == [], b)
+    check("_check_tags 新建二级说清是新建", any("将新建此二级" in x for x in n), n)
+    check("_check_tags 新建二级给同顶层近邻",
+          got["tags"][0].get("near") and "云原生" in got["tags"][0]["near"], got)
+
+    # 3) 只差全角斜杠 / 大小写 → 阻塞（云端会是同一簇的两种写法）
+    tree_case = tree + ["AI/Agent"]
+    for bad in ("#科技／云原生", "#ai/agent"):
+        b, n = [], []
+        GATE._check_tags(tree_case, bad, b, n)
+        check(f"_check_tags 写错字阻塞：{bad}",
+              b and any("只差空白/全半角/大小写" in x for x in b), b)
+
+    # 4) 树为空 → 阻塞（第 ④ 步无从进行；查重标签路同样空转）
+    b, n = [], []
+    GATE._check_tags([], "#科技/云原生", b, n)
+    check("_check_tags 树未取到判阻塞",
+          len(b) == 1 and "标签树未取到" in b[0], b)
+
+    # 5) 首行没有合法两级标签 → 阻塞（H17）
+    b, n = [], []
+    GATE._check_tags(tree, "#科技/安全/邮件", b, n)
+    check("_check_tags 三级标签判阻塞",
+          len(b) == 1 and "没有合法的两级标签" in b[0], b)
+
+    # 6) 顶层也不存在 → 不阻塞，但要说清会连顶层一起建
+    b, n = [], []
+    got = GATE._check_tags(tree, "#新材料/钙钛矿", b, n)
+    check("_check_tags 新顶层不阻塞但说明", b == [] and any("顶层一起新建" in x for x in n), (b, n))
+
+    # 7) 裸字符串回包形态同样可用（服务端有 dict 与 str 两种）
+    b, n = [], []
+    got = GATE._check_tags(["科技/云原生"], "#科技/云原生", b, n)
+    check("_check_tags 兼容裸字符串标签", b == [] and got["tags"][0]["exists"] is True, b)
+
+    # 8) 查重标签路：标签不在树里时，「0 个簇」不能与「簇为空」同形
+    b, n = [], []
+    GATE._check_dedup(FakeClient(), GATE.memo_signature("#科技/不存在的簇\n某概念名\n\n正文\n"),
+                      b, n, tree=["科技/云原生"])
+    check("_check_dedup 标签不在树中时点明「将新建簇」",
+          any("不在树中" in x for x in n), n)
+
+
 def run_review_net_cases():
     """_check_review 三路复盘补 memo_recommended（假 client，不联网）。"""
     sig = GATE.memo_signature(BODY)
@@ -668,6 +730,7 @@ if __name__ == "__main__":
     run_no_gate_cases()
     run_tag_tree_net_cases()
     run_dedup_net_cases()
+    run_tag_check_cases()
     run_review_net_cases()
     run_usage_consistency_cases()
     print("---")
