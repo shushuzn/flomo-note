@@ -52,6 +52,13 @@
 比对前两侧统一做归一化（去空白与千分位逗号、统一小写），避免
 `160 kW` / `160kW`、`1,055 公里` / `1055公里` 这类写法差异造成误判。
 
+**④ 标签核对（本闸门的阻塞项之一）**：首行每个 `#顶层/二级` 都要在现采的标签树里
+核一遍。只差空白 / 全半角斜杠 / 大小写即视为**写错**（云端会是同一簇的两种写法，
+写入即分裂），直接阻塞；标签不在树中而顶层在，只提示「本卡将新建此二级」并列出
+同顶层最接近的现有二级——新建二级是常态动作，相近名是否同一簇属语义判断，机器不
+背这个结论。查重的标签路同时点明「0 个簇」是哪一种：簇在但没卡，还是这个名字根本
+不在树里（后者意味着这一路没扫到任何同类卡）。
+
 **凭证自带边界声明**：凭证里的 `human_judgment` 列出本闸门**机器判不了**的项
 （如「查重候选是否同一事件」属语义判定、写云后才存在的本卡全文自查）。它是
 如实标注闸门的边界，**不参与放行判定**——一份看起来处处有据的凭证比一份
@@ -60,6 +67,7 @@
 退出码：0 = 闸门全过并已出凭证；1 = 有阻塞项未过（凭证不出）。
 """
 import argparse
+import difflib
 import json
 import re
 import sys
@@ -87,6 +95,13 @@ GATE_TTL = 6 * 3600
 # 一份处处有据、却把盲区藏起来的凭证，比一份如实标注边界的东西更危险——
 # 审计者会以为「凭证齐 = 全查过了」。清单只声明边界，不改变任何放行条件。
 _HUMAN_ITEMS = [
+    {
+        "item": "④ 标签：命名是否与主体类别相符",
+        "why": "闸门只核「写错了没有」（不在树中 / 只差空白与全半角）；"
+               "「该不该复用这个簇」「是不是塞进了纯概念筐」属 H17/H18 的语义判断",
+        "evidence": "凭证 tag_check 逐条记录每个标签在树里的状态；"
+                    "命名决策见第 4 步 tagcheck.py 的输出",
+    },
     {
         "item": "⑤ 查重：命中候选是否同一事件",
         "why": "闸门只保证两路真的跑了、候选被读到；「是否撞卡」须按 H8 三项语义判定，机器判不了",
@@ -118,6 +133,28 @@ _EVIDENCE_RE = re.compile(
 _RATING_RE = re.compile(r"(?:五|四|三|两)星")
 # 术语词块：结论无关键参数时，按术语本身的 ASCII / 中文词块比对落点。
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-_.]{1,}|[\u4e00-\u9fff]{2,}")
+# 「本卡将新建该簇」时列几个同顶层最相近的现有二级供人判断（只作提示）。
+TAG_NEAR_SHOW = 3
+_TAG_WS_RE = re.compile(r"[\s\u3000]+")
+
+
+def _tag_names(tags):
+    """标签树条目归一成字符串列表（回包有 dict 与裸字符串两种形态）。"""
+    out = []
+    for t in tags or []:
+        name = t.get("name") if isinstance(t, dict) else str(t)
+        if name:
+            out.append(name)
+    return out
+
+
+def _tag_key(name):
+    """标签比对键：折叠空白与全角空格、全角斜杠归一、统一小写。
+
+    只用于识别「同一簇被写成两种」，**不用来判断存在性**——存在性必须逐字匹配，
+    否则会把云端并不存在的写法认成已存在，而那正是这条检查要拦的东西。
+    """
+    return _TAG_WS_RE.sub("", (name or "").replace("／", "/")).lower()
 
 
 def _norm(text):
@@ -211,6 +248,78 @@ def _check_term_landed(item, body, blockers):
     return _landed_record(term, bool(matched), names=names, matched=matched)
 
 
+def _check_tags(tags, tagline, blockers, notes):
+    """④ 定标签的机器兜底：卡上每个标签在云端树里到底是什么状态。
+
+    【为什么要它】这一步此前没有任何机器兜底。闸门只在查重第二路里数「同标签
+    近邻几个簇」，而**标签根本不存在时那个数同样是 0**——「近邻 0 个簇」既可能是
+    「簇在、但没有卡」，也可能是「这个名字是刚编出来的」，两种含义完全不同的情况
+    长得一模一样。于是二级名写错（`云原生`→`云原主`）、把已有一簇换个写法重开，
+    都不会触发任何提示：卡片照样过闸门，云端静默多出一个单卡簇——H18 要防的近义/
+    错字簇，有一半是从这里长出来的。
+
+    分档判定，**只有确定是写错才阻塞**：
+      · 归一化后与现有标签相同（只差空白、全半角斜杠、大小写）→ 阻塞：云端会是
+        同一簇的两种写法，写入即分裂。
+      · 其余不存在 → 只提示「本卡将新建该簇」，并列出同顶层最相近的现有二级。
+    新建二级是合法且常见的动作；相近名是否同一簇属语义判断，机器不背这个结论
+    （误拦比漏检更危险，与 H6d 同一条原则）。
+    """
+    names = _tag_names(tags)
+    if not names:
+        blockers.append(
+            "标签树未取到（tag_tree 无内容），第 ④ 步标签核对无从进行"
+            "——查重的标签路同样空转，重采通过后再跑"
+        )
+        return {"tags": [], "checked": 0}
+    exact = set(names)
+    by_key: dict[str, list[str]] = {}
+    for n in names:
+        by_key.setdefault(_tag_key(n), []).append(n)
+    leaves = tag_leaves(tagline)
+    if not leaves:
+        # 三级、单层、全角斜杠都会落到这里。若它与某个现有标签只差写法，先点出
+        # 这一层——那不是「格式写歪了」，而是把一个已有的簇换个写法重开。
+        tokens = re.findall(r"#([^\s#]+)", tagline)
+        dups = [n for t in tokens for n in by_key.get(_tag_key(t), []) if n != t]
+        if dups:
+            blockers.append(
+                f"标签「{tokens[0]}」与现有「{dups[0]}」只差空白/全半角/大小写"
+                "——云端会把它们当两个簇，写入即分裂；改回现有写法"
+            )
+        blockers.append(f"首行标签段里没有合法的两级标签（{tagline!r}）——见 H17")
+        return {"tags": [], "checked": 0}
+    records = []
+    for top, leaf in leaves:
+        full = f"{top}/{leaf}"
+        rec = {"tag": full, "exists": full in exact}
+        if rec["exists"]:
+            notes.append(f"标签·「{full}」已存在")
+            records.append(rec)
+            continue
+        dup = [n for n in by_key.get(_tag_key(full), []) if n != full]
+        rec["top_exists"] = any(n == top or n.startswith(top + "/") for n in names)
+        siblings = [n.split("/", 1)[1] for n in names
+                    if n.startswith(top + "/") and n.count("/") == 1]
+        near = sorted(siblings, key=lambda s: -difflib.SequenceMatcher(None, s, leaf).ratio())
+        near = [s for s in near[:TAG_NEAR_SHOW]]
+        if near:
+            rec["near"] = near
+        if dup:
+            rec["dup_of"] = dup[0]
+            blockers.append(
+                f"标签「{full}」与现有「{dup[0]}」只差空白/全半角/大小写——云端会把"
+                "它们当两个簇，写入即分裂；改回现有写法"
+            )
+            records.append(rec)
+            continue
+        where = "该顶层存在，将新建此二级" if rec["top_exists"] else "顶层也不存在，将连顶层一起新建"
+        hint = f"；同顶层最接近的现有二级：{'、'.join(near)}" if near else ""
+        notes.append(f"标签·「{full}」不在树中（{where}）{hint}")
+        records.append(rec)
+    return {"tags": records, "checked": len(records)}
+
+
 def _tag_tree_total_and_count(client):
     """现采 tag_tree，返回 (total, 覆盖全部标签的集合)。
 
@@ -232,11 +341,13 @@ def _tag_tree_total_and_count(client):
     return total, tags or []
 
 
-def _check_dedup(client, sig, blockers, notes):
+def _check_dedup(client, sig, blockers, notes, tree=None):
     """⑤ 查重两路并查：memo_search 关键词扫 + tag_tree 同主标签细分比对。
 
     本函数只负责"两路都真的跑了、且结果被读到"；是否撞卡由调用方在
     正文自检时判断（闸门不做语义合并决策）。命中候选会写进凭证供人工复核。
+
+    `tree` 可传入已采到的标签列表，免得与第 ④ 步各采一次；不传则自行现采。
     """
     concept = sig["concept"]
     kws = keywords_of_concept(concept, limit=2)
@@ -253,19 +364,23 @@ def _check_dedup(client, sig, blockers, notes):
         ]
         notes.append(f"查重·关键词「{kw}」命中 {len(memos)} 条")
     # 第二路：tag_tree 列同主标签细分
-    total, tags = _tag_tree_total_and_count(client)
+    if tree is None:
+        _total, tree = _tag_tree_total_and_count(client)
+    names = set(_tag_names(tree))
     leaves = tag_leaves(sig["tagline"])
     near = []
     for top, leaf in leaves:
         hit = 0
-        for t in tags:
-            name = t.get("name") if isinstance(t, dict) else str(t)
+        for name in names:
             # 精确匹配 `顶层/二级` 或其下的子路径；不用裸子串匹配，否则
             # 短二级词会命中无关簇（如「机器」命中「其他/机器人架构」）。
-            if name and (name == f"{top}/{leaf}" or name.startswith(f"{top}/{leaf}/")):
+            if name == f"{top}/{leaf}" or name.startswith(f"{top}/{leaf}/"):
                 near.append(name)
                 hit += 1
-        notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇")
+        # 「0 个簇」有两种含义，必须说清是哪一种：簇在但没卡，还是这个名字根本
+        # 不在树里（后者意味着本卡会新建簇，这一路实际没扫到任何同类卡）。
+        absent = "" if f"{top}/{leaf}" in names else "（该标签不在树中，本卡将新建簇）"
+        notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
@@ -371,7 +486,7 @@ def _check_web(verify_path, body, blockers, notes):
 
 
 def assemble_gate(content, sig, web, dedup, review, *, sig_key=None,
-                  expires_delta=GATE_TTL, now=None):
+                  expires_delta=GATE_TTL, now=None, tag_check=None):
     """组装凭证（纯函数：不联网、不落盘），便于用例直接断言凭证内容。
 
     凭证字段是写云侧 `validate_memo.check_gate` 的判据来源，改动此处
@@ -385,6 +500,9 @@ def assemble_gate(content, sig, web, dedup, review, *, sig_key=None,
         "generated_at": ts,
         "expires_at": ts + expires_delta,
         "web": web,
+        # ④ 标签存在性核对：每个标签「在树里 / 将新建」逐条留痕。写云侧据此
+        # 确认这一步真的跑过（否则「标签不存在」与「簇为空」在凭证里无从分辨）。
+        "tag_check": tag_check if tag_check is not None else {"tags": [], "checked": 0},
         "dedup": dedup,
         "review": review,
         # 机器盲区随凭证留痕，供事后审计看清闸门的边界（不参与放行判定）。
@@ -427,7 +545,21 @@ def main():
     client = FlomoClient(token)
     client.init()
 
-    dedup = _check_dedup(client, sig, blockers, notes)  # ⑤
+    # 标签树只采一次：④ 存在性核对与 ⑤ 标签路查重用的是同一份树，各采一次既
+    # 多一次往返，也可能两次之间标签被改名而让两段结论互相矛盾。
+    total, tree = _tag_tree_total_and_count(client)
+    got = len(_tag_names(tree))
+    if total is None:
+        notes.append("标签树·未取到（第 ④ 步与查重标签路都将无从核对）")
+    else:
+        notes.append(f"标签树·现采 {got} 个（total {total}）")
+        if got < total:
+            notes.append(
+                f"标签树·被截断（{got} / {total}）"
+                "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
+            )
+    tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
+    dedup = _check_dedup(client, sig, blockers, notes, tree=tree)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
     notes.append(
@@ -445,7 +577,8 @@ def main():
         return 1
 
     sig_key = signature_key(sig)  # 与 validate_memo 侧同源，保证文件名口径一致
-    gate = assemble_gate(content, sig, web, dedup, review, sig_key=sig_key)
+    gate = assemble_gate(content, sig, web, dedup, review, sig_key=sig_key,
+                         tag_check=tag_check)
     if args.allow_no_gate:
         # 降级授权随凭证落盘：validate_memo.py 只在看到此标记时才认 --no-gate。
         # 于是「降级」从调用方口头声明变成凭证里的可审计事实，且绑定本卡签名与正文指纹。
