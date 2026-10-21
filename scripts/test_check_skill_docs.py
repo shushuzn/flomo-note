@@ -326,6 +326,81 @@ def run_cross_ref_case():
     return ok
 
 
+def run_cli_flags_case():
+    """文档里的命令行，选项必须是该脚本真认识的。
+
+    与「脚本名存在」差一层：名字写错报「文件不存在」，**选项写错只被当成未知参数**，
+    脚本打一行用法就退出，读者以为是自己环境问题。参数改名（`--update-id` ↔ `--update_id`）
+    又恰恰是改脚本时最容易顺手带上的漂移，文档那头不会跟着红。
+
+    判据只认**片段开头即命令**的形态：自然语言里「…见 scripts/a.py…，b.py --flag 才生效」
+    按「最近脚本名」归属会张冠李戴（真实文档实测出过 2 条假报），故不做那种归属。
+    """
+    ok = True
+    ARG = (
+        "import argparse\n"
+        "ap = argparse.ArgumentParser()\n"
+        'ap.add_argument("--draft")\n'
+        'ap.add_argument("--verify")\n'
+    )
+    HAND = (
+        "for i, a in enumerate(argv):\n"
+        '    if a == "--update-id":\n'
+        "        pass\n"
+        '    elif a in ("--keep", "--dry-run"):\n'
+        "        pass\n"
+    )
+
+    def errs_for(doc_body):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "real.py").write_text(ARG, encoding="utf-8")
+            (root / "scripts" / "hand.py").write_text(HAND, encoding="utf-8")
+            (root / "SKILL.md").write_text("# 规则\n", encoding="utf-8")
+            (root / "DOC.md").write_text(doc_body, encoding="utf-8")
+            return CD.check_doc_cli_flags(root)
+
+    def expect(name, doc, want_err, needle=""):
+        nonlocal ok
+        got = errs_for(doc)
+        hit = len(got) == want_err and (not needle or any(needle in m for m in got))
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  {name}: 得到 {len(got)} 错，"
+              f"期望 {want_err} 错{'（含 %s）' % needle if needle else ''}")
+        if not hit:
+            for m in got:
+                print("      ERR :", m)
+
+    # argparse 风格
+    expect("argparse 脚本的已知选项放行",
+           "# 说明\n\n跑 `python scripts/real.py --draft x --verify y`。\n", 0)
+    expect("argparse 脚本的未知选项判错",
+           "# 说明\n\n跑 `python scripts/real.py --draftt x`。\n", 1, "--draftt")
+    # 手写解析风格：`a == "--x"` 与 `a in ("--x", "--y")` 都要采到
+    expect("手写解析的选项也采得到（== 形态）",
+           "# 说明\n\n跑 `scripts/hand.py --update-id abc`。\n", 0)
+    expect("手写解析的选项也采得到（in 元组形态）",
+           "# 说明\n\n跑 `scripts/hand.py --keep`。\n", 0)
+    expect("代码块里的命令同样核",
+           "# 说明\n\n```bash\npython scripts/real.py --ghost\n```\n", 1, "--ghost")
+    # 不按「最近脚本名」归属：只有片段开头即命令才核对，句中的脚本名不吞后文参数
+    expect("句中提及的脚本不吞掉后文参数",
+           "# 说明\n\n见 `scripts/real.py` 的说明；另有 `--draft` 一词属别的脚本。\n", 0)
+    expect("无反引号的自然语言不参与核对",
+           "# 说明\n\n见 scripts/real.py 的说明，hand.py --draft 才生效。\n", 0)
+    # 脚本不存在时交给交叉引用检查，这里不重复报
+    expect("不存在的脚本不在这里报",
+           "# 说明\n\n跑 `scripts/ghost.py --whatever`。\n", 0)
+
+    real = CD.check_doc_cli_flags(HERE.parent)
+    ok &= real == []
+    print(f"{'PASS' if not real else 'FAIL'}  真实文档的命令行选项全部对得上")
+    for m in real:
+        print("      ERR :", m)
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
@@ -333,6 +408,7 @@ if __name__ == "__main__":
     results.append(run_env_doc_case())
     results.append(run_inventory_case())
     results.append(run_cross_ref_case())
+    results.append(run_cli_flags_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)
