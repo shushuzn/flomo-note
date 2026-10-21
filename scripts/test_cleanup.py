@@ -289,6 +289,99 @@ def run_window_boundary_cases():
           [p.name for p in C.collect(24 * 60, now=t0 + 10)] == ["b_edge.txt"])
 
 
+def run_cross_process_stamp_cases():
+    """收尾是「清理 → `--verify`」两个进程，各取 `time.time()` 会让边界文件翻转。
+
+    进程内共用 now 只解决了「一轮里打包耗时」那半；实测跨进程仍会翻：两个文件
+    mtime 距边界 11 秒，清理报 0，十几秒后 `--verify` 报「残留 2 个」。故清理落
+    基准时间戳、复核读它——否则「残留不是 0」会变成可忽略的噪声，检查就废了。
+    """
+    base = Path(tempfile.mkdtemp())
+    f = base / "c_edge.txt"
+    f.write_text("x", encoding="utf-8")
+    t0 = time.time()
+    edge = t0 - 24 * 3600 + 1          # 距边界 1 秒，清理那一刻仍在窗口内
+    os.utime(f, (edge, edge))
+
+    C.SCAN = [(base, ["c_edge.txt"])]
+    C.KEEP = {}
+    orig_stamp = C.STAMP_FILE
+    C.STAMP_FILE = base / "stamp"
+    try:
+        check("跨进程：清理口径下跳过（无候选）", C.collect(24 * 60, now=t0) == [])
+        check("跨进程：若各取当前时刻，10 秒后即成为候选",
+              [p.name for p in C.collect(24 * 60, now=t0 + 10)] == ["c_edge.txt"])
+
+        C._write_stamp(t0)
+        ts, why = C._read_stamp()
+        check(f"跨进程：复核读回清理基准（{ts}）", ts == float(int(t0)))
+        check("跨进程：沿用基准后不再判残留",
+              ts is not None and C.collect(24 * 60, now=ts) == [])
+        check(f"跨进程：输出写明沿用几秒前（{why}）", "沿用上次清理时刻" in why)
+
+        C._write_stamp(t0 - 7200)
+        ts2, why2 = C._read_stamp()
+        check(f"跨进程：过期记录不采用（防拿旧基准放宽窗口）[{ts2} {why2}]",
+              ts2 is None and "已过期" in why2)
+
+        C.STAMP_FILE.write_text("不是数字", encoding="utf-8")
+        ts3, why3 = C._read_stamp()
+        check(f"跨进程：记录损坏退回当前时刻（{why3}）",
+              ts3 is None and "无上次清理记录" in why3)
+    finally:
+        C.STAMP_FILE = orig_stamp
+
+
+def run_verify_command_cases():
+    """整条命令：`--verify` 走 stamp 口径，边界文件不再被报成残留。"""
+    import contextlib
+    import io
+
+    base = Path(tempfile.mkdtemp())
+    f = base / "d_edge.txt"
+    f.write_text("x", encoding="utf-8")
+    t0 = time.time()
+    edge = t0 - 24 * 3600 + 1
+    os.utime(f, (edge, edge))
+
+    C.SCAN = [(base, ["d_edge.txt"])]
+    C.KEEP = {}
+    orig_stamp, orig_trash, orig_gate = C.STAMP_FILE, C.TRASH_DIR, C.GATE_DIR
+    C.STAMP_FILE = base / "stamp"
+    C.TRASH_DIR = base / "trash"
+    C.GATE_DIR = base / "gate"
+    C._write_stamp(t0)
+    try:
+        buf = io.StringIO()
+        old_argv = sys.argv
+        sys.argv = ["cleanup.py", "--verify"]
+        code = 0
+        try:
+            with contextlib.redirect_stdout(buf):
+                C.main()
+        except SystemExit as exc:
+            code = exc.code or 0
+        finally:
+            sys.argv = old_argv
+        out = buf.getvalue()
+        check(f"--verify 命令：残留 0 且退出码 0（{code}）",
+              code == 0 and "残留 = 0" in out)
+        check("--verify 命令：打印所用基准", "沿用上次清理时刻" in out)
+
+        # dry-run 没真清理，不能落基准（否则复核会拿一次没删过东西的时刻判窗口）
+        C.STAMP_FILE.unlink()
+        buf2 = io.StringIO()
+        sys.argv = ["cleanup.py", "--dry-run"]
+        try:
+            with contextlib.redirect_stdout(buf2):
+                C.main()
+        finally:
+            sys.argv = old_argv
+        check(f"--dry-run 不落基准（{C.STAMP_FILE}）", not C.STAMP_FILE.exists())
+    finally:
+        C.STAMP_FILE, C.TRASH_DIR, C.GATE_DIR = orig_stamp, orig_trash, orig_gate
+
+
 if __name__ == "__main__":
     run_collect_cases()
     run_scan_pattern_cases()
@@ -296,6 +389,8 @@ if __name__ == "__main__":
     run_force_remove_cases()
     run_recent_window_cases()
     run_window_boundary_cases()
+    run_cross_process_stamp_cases()
+    run_verify_command_cases()
     run_arcname_cases()
     run_archive_cases()
     run_prune_cases()
