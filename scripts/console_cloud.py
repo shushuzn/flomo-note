@@ -178,6 +178,94 @@ def _structured(result) -> dict:
     return sc if isinstance(sc, dict) else {}
 
 
+def _struct_or_text(result) -> dict:
+    """结构化数据；缺 `structuredContent` 时退回解析 `content[].text` 里的内层 JSON。
+
+    写回执里的数字是判「写没写成」的唯一依据，回包形态少一层就不该整条判成
+    「无法判定」；两边都取不到才返回空字典，由调用方按「读不到」处理。
+    """
+    sc = _structured(result)
+    if sc:
+        return sc
+    for block in (result.get("content") or []):
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str):
+            continue
+        try:
+            inner = json.loads(text)
+        except Exception:  # noqa: BLE001 — 不是 JSON 就不是回执载体
+            continue
+        if isinstance(inner, dict):
+            return inner
+    return {}
+
+
+def _as_int(value):
+    """整数化；取不到返回 None——缺失与「恰好是 0」必须能分开（前者禁止放行）。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _positive_int(value, name: str) -> int:
+    """严格取正整数：布尔不算数字，`abc` 不回落默认值——规模参数错就当错。"""
+    if isinstance(value, bool):
+        raise CloudError(f"{name} 须为正整数，收到布尔值 {value}")
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise CloudError(f"{name} 须为正整数，收到 {value!r}") from None
+    if n <= 0:
+        raise CloudError(f"{name} 须大于 0，收到 {n}")
+    return n
+
+
+def _rename_verdict(old_tag: str, new_tag: str, requested, sc: dict) -> dict:
+    """把 `tag_rename` 回执的匹配数 / 实改数读成结论，而不是把数字原样丢给调用方。
+
+    `matched_memos` 与 `updated_memos` 缺一个就 `unknown`：读不到不等于改成功。
+    只有「匹配到、且全部改完」才算 `ok`；`no_match` 也算没达成（标签名打错与
+    已经改过在回执里同形，只能并列说出，不能替他挑一个）。
+    """
+    matched = _as_int(sc.get("matched_memos"))
+    updated = _as_int(sc.get("updated_memos"))
+    warnings = [str(w) for w in (sc.get("warnings") or [])]
+    out = {
+        "old_tag": old_tag,
+        "new_tag": new_tag,
+        "max_memos_requested": requested,
+        "matched_memos": matched,
+        "updated_memos": updated,
+        "updated_tags": _as_int(sc.get("updated_tags")),
+        "warnings": warnings,
+        "result": sc,
+    }
+    if matched is None or updated is None:
+        return dict(out, ok=False, status="unknown",
+                    hint="回执缺 matched_memos / updated_memos，无法判定是否写成；"
+                         "按新标签现查，不要当作已完成")
+    if matched == 0:
+        return dict(out, ok=False, status="no_match",
+                    hint=f"云端没有匹配到挂 {old_tag} 的笔记：标签名可能不存在，"
+                         f"或该标签下已无卡片（含子树）。未写入任何内容")
+    if updated == 0:
+        return dict(out, ok=False, status="needs_scale",
+                    hint=f"匹配 {matched} 条，超过默认批量上限 {TAG_RENAME_DEFAULT} 条，一条都没写；"
+                         f"带 max_memos={matched} 重试才动（上限 {TAG_RENAME_MAX}）")
+    if updated > matched:
+        return dict(out, ok=False, status="inconsistent",
+                    hint=f"回执自相矛盾：实改 {updated} 条多于匹配 {matched} 条；"
+                         "按新旧标签各现查一次，不要当作已完成")
+    if updated < matched:
+        return dict(out, ok=False, status="partial",
+                    hint=f"只改了 {updated} 条，另有 {matched - updated} 条仍挂旧标签——"
+                         f"标签已分裂；带 max_memos={matched} 重试，或逐卡 memo_update 收尾")
+    return dict(out, ok=True, status="done", hint=f"{updated} 条已改挂 {new_tag}")
+
+
 def _extract_id(result) -> str:
     """从写入回执里取新卡 id。
 
@@ -645,6 +733,19 @@ class CloudReader:
             "content_truncated": bool(memo.get("content_truncated")),
         }
 
+    def _verify_or_unknown(self, memo_id: str, expected: str) -> dict:
+        """回读验收取不到全文时，标 `matched=None` 并说清「已写、未验收」。
+
+        这条不能抛错：写请求已经发出去了，抛错会被调用方读成「写入失败」并重发，
+        而 `memo_create` 重发的后果是多一张重复卡。读不到就如实标记未知，把处置
+        交给调用方（现查、不要重发），与「验收没通过」区分开。
+        """
+        try:
+            return self._verify(memo_id, expected)
+        except CloudError as e:
+            return {"id": memo_id, "matched": None,
+                    "error": f"回读验收失败：{e}；写入已下发，按 id 现查，不要重发"}
+
     def _find_id_by_signature(self, content: str) -> str:
         """回执取不到 id 时的兜底：按概念名回搜一次，取签名（概念名）相同的最新一条。
 
@@ -684,7 +785,7 @@ class CloudReader:
             "id": new_id,
             "id_inferred": inferred,
             "word_count": sc.get("word_count"),
-            "verified": self._verify(new_id, content) if new_id else None,
+            "verified": self._verify_or_unknown(new_id, content) if new_id else None,
         }
 
     def update_memo(self, memo_id: str, content: str, fmt: str | None = None) -> dict:
@@ -703,14 +804,24 @@ class CloudReader:
             "id": memo_id,
             "before": {"chars": len(before.get("content") or ""), "concept": before.get("title") or ""},
             "word_count": sc.get("word_count"),
-            "verified": self._verify(memo_id, content),
+            "verified": self._verify_or_unknown(memo_id, content),
         }
 
     def rename_tag(self, old_tag: str, new_tag: str, max_memos=None) -> dict:
-        """批量重命名标签：把挂 `old_tag` 的卡片改挂 `new_tag`。
+        """批量重命名标签：本地按云端契约前置校验 → `tag_rename` → 把回执读成结论。
 
-        云端默认只处理 200 条，超出时**返回实际匹配数而不写**；确认规模后再用
-        `max_memos` 显式声明本次批量规模（绝对上限 2000）。
+        云端契约（工具说明与 outputSchema 现采）：
+          - `new_tag` 不得含空白、`<`、`#`，也不得与原标签相同或位于原标签子树下；
+          - 默认最多处理 200 条，**超过时只返回实际匹配数、一条都不写**，须用
+            `max_memos` 显式声明规模重试；服务端绝对上限 2000；
+          - 回执含 `matched_memos` / `updated_memos` / `updated_tags` / `warnings`。
+
+        两条判断边界：
+          - **不替调用方决定批量规模**：匹配数超默认值时不做「自动带 max_memos 重试」，
+            只把该带的参数说清楚。夹取也不行——要 5000 却悄悄按 2000 写，是静默截断。
+          - **回执数字必须读成结论**：只写了 `matched_memos` 条里的 `updated_memos` 条
+            就是标签分裂，须报 `partial`；一条没写是 `needs_scale`。HTTP 200 只说明
+            请求被处理，写没写成看 `ok` 与 `status`。
         """
         old_tag = (old_tag or "").strip().lstrip("#")
         new_tag = (new_tag or "").strip().lstrip("#")
@@ -718,16 +829,26 @@ class CloudReader:
             raise CloudError("原标签与新标签都不能为空")
         if old_tag == new_tag:
             raise CloudError("新标签与原标签相同，无需重命名")
+        if new_tag.startswith(old_tag + "/"):
+            raise CloudError(f"新标签 {new_tag} 位于原标签 {old_tag} 的子树下，云端会拒绝")
+        bad = sorted({c for c in new_tag if c.isspace() or c in "<#"})
+        if bad:
+            raise CloudError("新标签不能包含空白、`<` 或 `#`：" + "、".join(repr(c) for c in bad))
+
+        granted = None
+        if max_memos not in (None, ""):
+            granted = _positive_int(max_memos, "max_memos")
+            if granted > TAG_RENAME_MAX:
+                raise CloudError(
+                    f"max_memos={granted} 超过服务端上限 {TAG_RENAME_MAX}；"
+                    "超出部分不会被处理，请分批执行或先缩小范围"
+                )
+
         args: dict = {"old_tag": old_tag, "new_tag": new_tag}
-        if max_memos:
-            args["max_memos"] = _clamp(max_memos, TAG_RENAME_DEFAULT, 1, TAG_RENAME_MAX)
-        sc = _structured(self.call("tag_rename", args, write=True))
-        return {
-            "old_tag": old_tag,
-            "new_tag": new_tag,
-            "max_memos": args.get("max_memos"),
-            "result": sc,
-        }
+        if granted:
+            args["max_memos"] = granted
+        sc = _struct_or_text(self.call("tag_rename", args, write=True))
+        return _rename_verdict(old_tag, new_tag, granted, sc)
 
     # ---- 能力清单 ------------------------------------------------------- #
     def tool_catalog(self) -> dict:

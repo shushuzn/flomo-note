@@ -189,7 +189,7 @@ python scripts/serve_console.py --port 9000
 | `POST /api/cloud/gate` | 现跑流程闸门 `sop_gate.py` 出凭证 |
 | `POST /api/cloud/memo/create` | 新建卡片：两道闸门 → 写云 → 回读验收 |
 | `POST /api/cloud/memo/update` | 更新卡片：先回读原文 → 两道闸门 → 写云 → 回读验收 |
-| `POST /api/cloud/tag/rename` | 批量重命名标签（`max_memos` 显式声明规模） |
+| `POST /api/cloud/tag/rename` | 批量重命名标签（`max_memos` 显式声明规模）。**HTTP 200 只表示请求被处理**：写没写成看响应里的 `ok` 与 `status`（`done` / `partial` / `needs_scale` / `no_match` / `unknown`），只有 `done` 是匹配到的都改完了 |
 
 `POST` 上只有两类用途：**改动云端的写接口**，与 **`/api/cloud/tool` 这个带参数跑读工具的入口**。
 没有「执行命令」「跑脚本」的位置。
@@ -211,7 +211,9 @@ python scripts/serve_console.py --port 9000
 **写不是直通**：写卡须走格式闸门与流程闸门（见 `SKILL.md`），控制台把这两道闸门做成
 **可操作的步骤**而不是绕开它——`POST /api/cloud/validate` 报待修项，`POST /api/cloud/gate`
 现跑 `sop_gate.py` 出凭证，写入后一律按 id **回读全文验收**（H1 / H2 / H11），更新前还要
-先回读原文（H22）。任一闸门不过即 ERR 阻断，**一个字节都不会发到云端**。写工具因此不走
+先回读原文（H22）。任一闸门不过即 ERR 阻断，**一个字节都不会发到云端**。回读取不到全文时
+既不报成功也不报失败，标成「已下发、未验收」并说明「不要重发」——报失败会引来重发，
+而重发就是多一张重复卡。写工具因此不走
 能力页的通用执行入口，只在「云端笔记」（新建 / 编辑）与「标签」（重命名）两个过闸门的
 专属入口发生。
 

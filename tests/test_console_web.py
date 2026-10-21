@@ -176,6 +176,33 @@ def main() -> int:
     check("前端批量上限与服务侧 BATCH_MAX 一致",
           js_limit == _CC.BATCH_MAX, f"前端 {js_limit} / 服务 {_CC.BATCH_MAX}")
 
+    # ---- 9. 重命名的结局要分开显示（不写在回执里也算没达成） ---------------- #
+    # 云端回执里 matched / updated 两个数才决定写没写成：一条没写是「等规模」，
+    # 只写一部分是「标签已分裂」。界面若只按「有没有 error」判断，两种都会被显示
+    # 成「重命名已下发」，用户照此收工，线上就留下一半旧标签。
+    ren = re.search(r"const ren = state\.renameResult;(.*?)const renameBlock", js, re.S)
+    ren_body = ren.group(1) if ren else ""
+    check("重命名结果按 ok / hint 呈现", "ren.ok" in ren_body and "ren.hint" in ren_body,
+          ren_body[:80].replace("\n", " "))
+    check("重命名规模读 max_memos_requested（旧字段名已改，写错会静默显示默认值）",
+          "max_memos_requested" in ren_body and not re.search(r"ren\.max_memos\b", ren_body),
+          ren_body[:80].replace("\n", " "))
+    check("重命名未达成不用成功样式", 'ren.ok ? "ok-note"' in ren_body,
+          ren_body[:80].replace("\n", " "))
+    # 提示语必须按结局分叉——只钉「文件里出现过 needs_scale 字样」是不够的：
+    # 该字符串也出现在「把匹配数填回输入框」的条件里，退回一句「已下发」照样能过。
+    ren_fn = re.search(r"async function runTagRename\(\)\s*\{(.*?)\n\}", js, re.S)
+    fn_body = ren_fn.group(1) if ren_fn else ""
+    toast_m = re.search(r"toast\((r\.error.*?)\);", fn_body, re.S)
+    toast_expr = toast_m.group(1) if toast_m else ""
+    check("重命名的提示按结局分叉（不是一句「已下发」）",
+          "r.ok" in toast_expr and '"needs_scale"' in toast_expr and '"partial"' in toast_expr,
+          toast_expr[:120].replace("\n", " "))
+    check("未写入 / 部分写入时把匹配数填回规模输入框",
+          "state.renMax = String(r.matched_memos)" in js, "没有回填规模")
+    check("规模输入本地校验（NaN 会序列化成 null，等于没声明规模）",
+          "/^\\d+$/.test(state.renMax)" in js, "缺规模校验")
+
     total = len(_RESULTS)
     failed = sum(1 for r in _RESULTS if not r)
     print("---")
