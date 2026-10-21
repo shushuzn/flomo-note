@@ -80,12 +80,14 @@ def spawn(port: int) -> subprocess.Popen:
     )
 
 
-def request(port: int, method: str, path: str, body: bytes | None = None):
+def request(port: int, method: str, path: str, body: bytes | None = None,
+            headers: dict | None = None):
     """直连发一个请求，返回 (状态码, Content-Type, 文本)。失败返回 (0, "", 错误)。"""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        headers = {"Content-Type": "application/json"} if body is not None else {}
-        conn.request(method, path, body=body, headers=headers)
+        hdrs = {"Content-Type": "application/json"} if body is not None else {}
+        hdrs.update(headers or {})
+        conn.request(method, path, body=body, headers=hdrs)
         resp = conn.getresponse()
         raw = resp.read()
         return resp.status, resp.getheader("Content-Type") or "", raw.decode("utf-8", "replace")
@@ -201,6 +203,70 @@ def main() -> int:
         check("畸形 JSON 请求体返回 400 与错误体",
               code == 400 and "application/json" in ctype and "error" in text,
               f"{code} {ctype} {text[:80]}")
+
+        # 4d) 请求来源校验：绑定回环 != 只有本机能用
+        #     任何网页都能向 127.0.0.1 发请求（同源策略管的是能不能读响应，不管发不发），
+        #     而本服务有写入口（建卡 / 改卡 / 批量改标签）。DNS 重绑定还能让攻击者读到
+        #     响应。这里逐条验证两道判据真的拦得住，且不误伤正常用法。
+        draft = json.dumps({"content": "#AI/RAG\n测试\n"}, ensure_ascii=False).encode()
+        evil_host = f"evil.example:{port}"
+
+        code, _, text = request(port, "POST", "/api/cloud/validate", draft,
+                                {"Host": evil_host})
+        check("伪造 Host 的写请求被拒（拦 DNS 重绑定）",
+              code == 403 and "Host" in text, f"{code} {text[:80]}")
+
+        code, _, text = request(port, "GET", "/api/overview", None, {"Host": evil_host})
+        check("伪造 Host 的读请求同样被拒（重绑定可读响应，故读也要拦）",
+              code == 403, f"{code} {text[:80]}")
+
+        code, _, text = request(port, "POST", "/api/cloud/validate", draft,
+                                {"Origin": "http://evil.example"})
+        check("跨站 Origin 的写请求被拒（拦浏览器 CSRF）",
+              code == 403 and "Origin" in text, f"{code} {text[:80]}")
+
+        code, _, text = request(port, "POST", "/api/cloud/validate", draft,
+                                {"Origin": "null"})
+        check("Origin: null 同样被拒", code == 403, f"{code} {text[:80]}")
+
+        code, _, text = request(port, "POST", "/api/cloud/validate", draft,
+                                {"Origin": f"http://127.0.0.1:{port}"})
+        check("同源 Origin 的写请求放行（界面自己的请求）",
+              code == 200 and '"ok"' in text, f"{code} {text[:80]}")
+
+        code, _, text = request(port, "GET", "/api/overview", None,
+                                {"Origin": f"http://localhost:{port}"})
+        check("localhost 与 127.0.0.1 视为同一站", code == 200, f"{code} {text[:60]}")
+
+        code, _, text = request(port, "POST", "/api/cloud/validate", draft)
+        check("无 Origin 的命令行客户端不受影响", code == 200 and '"ok"' in text,
+              f"{code} {text[:60]}")
+
+        # 4e) 非回环绑定必须显式解锁：本服务无鉴权，绑到 0.0.0.0 等于把云端卡片
+        #     （读取全文与批量改标签）开放给同网段任何机器。来源校验拦不住「直接连
+        #     上来的另一台机器」，这一层只能靠不绑出去。
+        lan = subprocess.Popen(
+            [sys.executable, str(SERVER), "--port", str(free_port()), "--host", "0.0.0.0"],
+            cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")},
+        )
+        try:
+            rc_lan = lan.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            lan.kill()
+            lan.wait()
+            rc_lan = None
+        err_lan = (lan.stderr.read() or b"").decode("utf-8", "replace")
+        check("非回环绑定默认拒绝（退出码 2）", rc_lan == 2, f"rc={rc_lan} {err_lan[:80]}")
+        check("拒绝时点明要加 --allow-lan", "--allow-lan" in err_lan, err_lan[:120])
+
+        # 白名单算出来只能是本机名，不得因通配绑定变成「任意名」
+        sys.path.insert(0, str(SERVER.parent))
+        import serve_console as SC  # noqa: E402
+        wild = SC.allowed_hostnames("0.0.0.0")
+        check("通配绑定不产出任意宿主名",
+              "evil.example" not in wild and all(n for n in wild), str(sorted(wild)[:5]))
+        check("通配绑定仍认回环名", {"127.0.0.1", "localhost"} <= wild, str(sorted(wild)[:5]))
 
         # 5) 双实例：端口已被本进程占用，第二个实例应拒绝启动
         second = spawn(port)
