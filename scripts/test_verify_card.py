@@ -12,7 +12,7 @@ import io
 import json
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -236,6 +236,44 @@ def run_cases():
         finally:
             VC._default_client = orig_default
         check("草稿比对不过时退出码为 1", rc3 == 1, str(rc3))
+
+    # 14) --show-body：把云端全文摆出来，供两条「须人读」项当场核对。
+    #     存在的理由是那两条机器判不了，而此前看一眼全文要临时写 memo_batch_get
+    #     请求文件、把 id 手抄进去、再用内联 python 抠 content——每轮一次。
+    def _main_with(memo_obj, argv):
+        buf, err = io.StringIO(), io.StringIO()
+        try:
+            VC._default_client = lambda: FakeClient(memo_obj)
+            with redirect_stdout(buf), redirect_stderr(err):
+                rc = VC.main(argv)
+        finally:
+            VC._default_client = orig_default
+        return rc, buf.getvalue(), err.getvalue()
+
+    rc4, text4, _ = _main_with(memo(GOOD), ["--id", "TESTID", "--show-body"])
+    check("--show-body 打印云端全文", "要点：" in text4, text4[-200:])
+    check("--show-body 标明人读项落在哪段", "人读项就在这段里查" in text4, text4[-200:])
+    check("--show-body 的全文段排在须人读之后",
+          text4.index("[须人读") < text4.index("[云端全文"), "顺序")
+    check("--show-body 不改变机械判定与退出码", rc4 == 0, str(rc4))
+
+    # 15) 默认不打印全文：不加参数时输出保持简洁（全文只按需给）
+    rc5, text5, _ = _main_with(memo(GOOD), ["--id", "TESTID"])
+    check("默认不打印全文", "要点：" not in text5, text5[-200:])
+    check("默认仍给首/次/末行落点",
+          "首行" in text5 and "次行" in text5 and "末行" in text5, text5[-200:])
+
+    # 16) --json 与 --show-body 同时给：JSON 必须仍可解析，且不夹带正文。
+    #     混在一起会污染自动化消费方，也容易让人误以为机器查过了语义项。
+    rc6, text6, err6 = _main_with(memo(GOOD), ["--id", "TESTID", "--json", "--show-body"])
+    payload6 = json.loads(text6)
+    check("--json 与 --show-body 混用时 JSON 仍可解析", rc6 == 0 and payload6.get("ok") is True,
+          text6[:120])
+    check("--json 输出里不含正文",
+          "content" not in (payload6.get("info") or {}),
+          str(list((payload6.get("info") or {}).keys()))[:120])
+    check("--json 忽略 --show-body 时给出提示",
+          "不与 --show-body 同时生效" in err6, err6[:160])
 
 
 def main() -> int:

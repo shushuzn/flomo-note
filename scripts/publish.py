@@ -339,6 +339,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
     print("\n[RESULT] id=" + memo_id)
     if reused:
         print("[RESULT] reused=1")
+    print(f"[下一步] 人读全文自查：python scripts/verify_card.py --id {memo_id} --show-body")
     print(f"[下一步] 复盘定向复查：python scripts/dedup.py --id {memo_id}")
     return 0
 
