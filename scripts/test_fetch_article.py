@@ -203,13 +203,80 @@ def test_published_from_text():
           FA.find_published_in_text("标题\n正文没有日期。") == "")
 
 
+def test_heading_gap():
+    """章节标题缺口：抓了一半的正文要能指出来，抓全了不能误报。"""
+    page = (
+        "<html><body>"
+        "<nav><h2>导航里的标题</h2></nav>"
+        "<article>"
+        "<h2>第一节：安装</h2><p>安装正文。</p>"
+        "<h2>第二节：部署</h2><p>部署正文。</p>"
+        "<h2>第三节：维护</h2><p>维护正文。</p>"
+        "<h4>四级标题不算小节</h4>"
+        "</article></body></html>"
+    )
+    full = "第一节：安装\n安装正文。\n第二节：部署\n部署正文。\n第三节：维护\n维护正文。"
+    check("heading_gap：抓全时不报警", FA.heading_gap(page, full) == {},
+          FA.heading_gap(page, full))
+
+    half = "第一节：安装\n安装正文。\n第二节：部署\n部署正文。"
+    gap = FA.heading_gap(page, half)
+    check("heading_gap：截断时指出最后一个见到的章节",
+          gap.get("last_seen") == "第二节：部署", gap)
+    check("heading_gap：截断时列出其后的缺失章节",
+          gap.get("missing_tail") == ["第三节：维护"], gap)
+    check("heading_gap：导航里的标题不参与判定",
+          all("导航" not in h for h in gap.get("missing_tail", []) + gap.get("missing_before", [])),
+          gap)
+
+    mid = "第一节：安装\n安装正文。\n第三节：维护\n维护正文。"
+    gap2 = FA.heading_gap(page, mid)
+    check("heading_gap：中间缺失与结尾截断分开报",
+          gap2.get("missing_before") == ["第二节：部署"] and gap2.get("missing_tail") == [],
+          gap2)
+
+    check("heading_gap：正文里一个标题都没有时不猜",
+          FA.heading_gap(page, "完全对不上的正文。") == {},
+          FA.heading_gap(page, "完全对不上的正文。"))
+    check("heading_gap：页面没有小节标题时返回空",
+          FA.heading_gap("<p>无标题页</p>", "无标题页") == {})
+    check("page_headings：跳过纯数字与过短标题",
+          FA.page_headings("<h2>12</h2><h2>更多</h2><h2>真正的章节标题</h2>")
+          == ["真正的章节标题"],
+          FA.page_headings("<h2>12</h2><h2>更多</h2><h2>真正的章节标题</h2>"))
+
+    # 告警文案：只在真截断时出现，且要指明断点；无缺口时一行不出
+    lines = FA.gap_warnings(gap)
+    check("gap_warnings：截断时给出一条告警", len(lines) == 1 and lines[0].startswith("[告警]"),
+          lines)
+    check("gap_warnings：告警里带上断点章节名",
+          "第二节：部署" in lines[0] and "第三节：维护" in lines[0], lines)
+    check("gap_warnings：无缺口时零输出", FA.gap_warnings({}) == [], FA.gap_warnings({}))
+    many = {"last_seen": "起点", "missing_tail": [f"章节{i}" for i in range(1, 6)]}
+    line = FA.gap_warnings(many)[0]
+    check("gap_warnings：缺失过多时截断列表并给出余数",
+          "另 2 个" in line and "章节4" not in line, line)
+
+    # 端到端：容器选早了（正文 div 在中间就闭合、后面的章节落在容器外），
+    # 抽取结果看起来是正常收尾——这正是要靠标题缺口抓的形态。
+    page2 = ('<div id="article-body"><h2>第一节：安装</h2><p>安装正文。</p>'
+             '<h2>第二节：部署</h2><p>部署正文。</p></div>'
+             '<h2>第三节：维护</h2><p>维护正文。</p>')
+    text2, _ch = FA.extract(page2)
+    gap2 = FA.heading_gap(page2, text2)
+    check("端到端：容器选早时告警触发",
+          gap2.get("missing_tail") == ["第三节：维护"], gap2)
+    check("端到端：告警行里能看出断在哪一章",
+          "第二节：部署" in FA.gap_warnings(gap2)[0], FA.gap_warnings(gap2))
+
+
 if __name__ == "__main__":
     for fn in (test_decode, test_to_text, test_extract_site_pattern,
                test_extract_site_pattern_nested_divs,
                test_extract_site_pattern_comment_fallback,
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
-               test_published_from_text):
+               test_published_from_text, test_heading_gap):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

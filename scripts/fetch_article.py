@@ -14,6 +14,11 @@
 裁了几行、从哪句起、长度从多少变到多少，都打进 `[裁剪]` 行——不静默截断。
 `--min-chars` 只在抽取阶段判定，裁剪不会把合格页误判成失败页。
 
+**抽了一半也会说**：字数过短只是失败的一种形态，右界提前收束时正文会在某个小节
+末尾戛然而止，看起来像自然收尾。故抽取后拿页面自带的小节标题对一遍：正文里有、
+页面里没有的标题会打成 `[告警]`，指明断在哪个章节之后——`[告警]` 不改抽取结果，
+只提醒先核对原文再动笔。
+
 **发布日期多一条兜底**：meta / `<time>` 取不到时，从正文的日期行里取（中文站常把
 发布时间单独成行、页面却不给 meta），并标明来源是「页面 meta」还是「正文兜底」。
 
@@ -316,6 +321,88 @@ def extract(html: str) -> tuple[str, str]:
     return to_text(html), "整页兜底"
 
 
+_HEADING = re.compile(r"<h([23])\b[^>]*>(.*?)</h\1>", re.S | re.I)
+_NOISE_BLOCK = re.compile(r"<(nav|aside|footer|header)\b.*?</\1>", re.S | re.I)
+GAP_SHOW = 3
+
+
+def page_headings(page: str) -> list[str]:
+    """页面的二、三级标题（先剔掉导航、侧栏、页眉页脚里的那些）。"""
+    cleaned = _NOISE_BLOCK.sub(" ", page or "")
+    out: list[str] = []
+    for m in _HEADING.finditer(cleaned):
+        text = re.sub(r"\s+", " ", to_text(m.group(2))).strip()
+        # 太短（「目录」「更多」）与纯数字（页码、年份）没有鉴别力，混进来只会
+        # 制造「缺标题」的假警报。
+        if len(text) < 4 or text.replace(" ", "").isdigit():
+            continue
+        out.append(text)
+    return out
+
+
+def heading_gap(page: str, text: str) -> dict:
+    """正文是否在某个章节处就断了，返回缺掉的标题（分「结尾截断 / 中间缺失」）。
+
+    只在能定位断点时给结论：正文里一个标题都没出现、或标题全在正文里，都返回
+    `{}`——无从判断时不猜。
+
+    【为什么要有它】抽取失败的形态不止「短到触发阈值」，还有「抽到了、但只抽到
+    一半」：右界提前收束会让正文在某个小节末尾戛然而止，断口处的文字读起来像是
+    自然收尾，字数也未必触发下限，于是按残缺正文起草、事后才发现后半篇没抽到。
+    章节标题是页面现成的骨相：页面里有、正文里没有，就是内容丢了。
+
+    **只作告警、不作判据**：标题可能只出现在导航或推荐位里，也可能本就属于被裁掉
+    的附录块，故宁可多报一句让人核对，不据此改动抽取结果。
+    """
+    headings = page_headings(page)
+    if not headings:
+        return {}
+    flat = re.sub(r"\s+", "", text or "").lower()
+
+    def seen(h: str) -> bool:
+        return re.sub(r"\s+", "", h).lower() in flat
+
+    marks = [seen(h) for h in headings]
+    if all(marks) or not any(marks):
+        return {}
+    last = max(i for i, ok in enumerate(marks) if ok)
+    return {
+        "last_seen": headings[last],
+        "missing_tail": [h for h, ok in zip(headings[last + 1:], marks[last + 1:]) if not ok],
+        "missing_before": [h for h, ok in zip(headings[:last], marks[:last]) if not ok],
+    }
+
+
+def _fmt_titles(items: list[str]) -> str:
+    shown = "「" + "」「".join(items[:GAP_SHOW]) + "」"
+    if len(items) > GAP_SHOW:
+        shown += f"，另 {len(items) - GAP_SHOW} 个"
+    return shown
+
+
+def gap_warnings(gap: dict) -> list[str]:
+    """把 `heading_gap` 的结果翻成给人看的告警行（空结果即无告警）。
+
+    单独成函数是为了能离线断言文案：告警只在真的截断时出现，那次出现就是唯一
+    一次提醒人的机会，措辞与顺序不能靠下次撞上才验证。
+    """
+    lines = []
+    miss = gap.get("missing_tail") or []
+    if miss:
+        lines.append(
+            f"[告警] 正文止于章节《{gap.get('last_seen', '')}》，其后 {len(miss)} 个"
+            f"章节标题未出现在正文里：{_fmt_titles(miss)}——疑似抽取被截断，"
+            "先核对页面原文再提炼，别按残缺正文写卡"
+        )
+    miss_before = gap.get("missing_before") or []
+    if miss_before:
+        lines.append(
+            f"[提请注意] 另有 {len(miss_before)} 个章节标题在正文中找不到（不在结尾处）："
+            f"{_fmt_titles(miss_before)}——多来自导航或推荐位，核对后自行判断"
+        )
+    return lines
+
+
 def _first(pattern: re.Pattern, html: str) -> str:
     m = pattern.search(html)
     if not m:
@@ -449,6 +536,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[裁剪] 原 {raw_len} 字符 → {len(body)}：{'、'.join(cuts)}")
     else:
         print("[裁剪] 无首尾噪音（原样保留）")
+    gap = heading_gap(page, body)
+    for line in gap_warnings(gap):
+        print(line)
     print(f"[文件] {out}")
     print(f"[下一步] 读回全文：Read {out}（流程第 1 步纪律，未读回不得提炼）")
     if echo:
