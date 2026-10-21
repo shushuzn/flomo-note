@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load(name, filename):
@@ -383,7 +383,7 @@ def run_check_web_cases():
 
     # 18) 结构约束：_check_term_landed 的每个分支都必须经 _landed_record 返回。
     #     裸 dict 返回 = 计数依据可被静默遗漏，正是本次缺口的成因。
-    src = (Path(__file__).resolve().parent / "sop_gate.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "sop_gate.py").read_text(encoding="utf-8")
     m = re.search(r"def _check_term_landed\(.*?\n(?=def )", src, re.S)
     fn = m.group(0) if m else ""
     check("_check_term_landed 无裸 dict 返回（一律经 _landed_record）",

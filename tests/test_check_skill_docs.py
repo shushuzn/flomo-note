@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check_skill_docs.py 回归测试。
 
-用法：python scripts/test_check_skill_docs.py      退出码 0=全过，1=有失败。
+用法：python tests/test_check_skill_docs.py      退出码 0=全过，1=有失败。
 
 覆盖：日期命中（多种形态，含短横线/斜杠/中文年月）、ENVIRONMENT.md 与协议/版本常量行豁免、
 历史事件叙事 WARN、流程时序词（当轮 / 本轮）与「实测」不被误伤、
@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "scripts"
 spec = importlib.util.spec_from_file_location("check_skill_docs", HERE / "check_skill_docs.py")
 CD = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(CD)
@@ -188,23 +188,36 @@ def run_inventory_case():
         root = Path(d)
         (root / "scripts").mkdir()
         (root / "scripts" / "publish.py").write_text("# 写云一条链\n", encoding="utf-8")
-        (root / "scripts" / "test_publish.py").write_text("# 用例\n", encoding="utf-8")
+        # scripts/ 里放一个 test_ 开头的文件：**不再享有豁免**。用例已集中到 tests/，
+        # 这条豁免若留着就是不可达分支，还会顺手放行一个混进工具目录的用例。
+        (root / "scripts" / "test_leak.py").write_text("# 混进工具目录的用例\n", encoding="utf-8")
+        (root / "tests").mkdir()
+        (root / "tests" / "test_publish.py").write_text("# 用例\n", encoding="utf-8")
         (root / "README.md").write_text("# 项目\n\n暂无说明。\n", encoding="utf-8")
 
         errs = CD.check_script_inventory(root)
-        hit = any("publish.py" in m for m in errs) and len(errs) == 1
+        hit = (any("publish.py" in m for m in errs)
+               and any("test_leak.py" in m for m in errs) and len(errs) == 2)
         ok &= hit
-        print(f"{'PASS' if hit else 'FAIL'}  漏列非测试脚本被判错（{len(errs)} 条）")
+        print(f"{'PASS' if hit else 'FAIL'}  scripts/ 漏列都判错、测试不再豁免（{len(errs)} 条）")
 
-        no_test = not any("test_publish.py" in m for m in errs)
+        no_test = not any("tests/test_publish.py" in m for m in errs)
         ok &= no_test
-        print(f"{'PASS' if no_test else 'FAIL'}  测试脚本不要求列出")
+        print(f"{'PASS' if no_test else 'FAIL'}  tests/ 下的用例不要求写进 README")
 
         (root / "README.md").write_text(
-            "# 项目\n\n- `publish.py` 写云一条链\n", encoding="utf-8")
+            "# 项目\n\n- `publish.py` 写云一条链\n- `test_leak.py` 混进来的用例\n",
+            encoding="utf-8")
         clean = CD.check_script_inventory(root) == []
         ok &= clean
         print(f"{'PASS' if clean else 'FAIL'}  补上后不再报")
+
+        # 命名不符 = 用例永远不被 run_tests.sh 收集，是静默失效，必须判错
+        (root / "tests" / "smoke_publish.py").write_text("# 名字写偏\n", encoding="utf-8")
+        bad_name = any("smoke_publish.py" in m for m in CD.check_script_inventory(root))
+        ok &= bad_name
+        print(f"{'PASS' if bad_name else 'FAIL'}  tests/ 下不以 test_ 开头的用例判错")
+        (root / "tests" / "smoke_publish.py").unlink()
 
         # 退出码必须被结构问题拉红，否则这一项等于只打印
         rc = CD.main(["--root", str(root), "--quiet"])
@@ -256,6 +269,8 @@ def run_cross_ref_case():
             root = Path(d)
             (root / "scripts").mkdir()
             (root / "scripts" / "real.py").write_text("# 真实脚本\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_real.py").write_text("# 真实用例\n", encoding="utf-8")
             for relp, body in (extra_files or {}).items():
                 q = root / relp
                 q.parent.mkdir(parents=True, exist_ok=True)
@@ -301,6 +316,10 @@ def run_cross_ref_case():
     # —— 脚本名 ——
     expect("引用存在的脚本放行", "# 说明\n\n跑 `scripts/real.py`。\n", 0)
     expect("引用已删的脚本判错", "# 说明\n\n跑 `scripts/ghost.py`。\n", 1, "ghost.py")
+    # 用例搬进 tests/ 之后，`tests/x.py` 也是引用；只核 scripts/ 会让这类悬空静默通过。
+    # 下面两条**只差目录前缀**：同名文件在 scripts/ 存在、在 tests/ 不存在。
+    expect("引用存在的用例放行", "# 说明\n\n跑 `tests/test_real.py`。\n", 0)
+    expect("引用已删的用例判错", "# 说明\n\n跑 `tests/test_ghost.py`。\n", 1, "test_ghost.py")
 
     # —— 接入 main：结构问题必须拉红退出码 ——
     with tempfile.TemporaryDirectory() as d:

@@ -4,7 +4,7 @@
 覆盖的是**判据本身**：成功卡要全过，每一类缺陷都要能让对应项转红。只有正向用例
 时，「全过」也可能是因为检查根本没生效。
 
-用法：python scripts/test_verify_card.py     退出码 0=全过，1=有失败。
+用法：python tests/test_verify_card.py     退出码 0=全过，1=有失败。
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import flomo_client as FC  # noqa: E402
 import verify_card as VC  # noqa: E402

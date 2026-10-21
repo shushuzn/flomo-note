@@ -11,10 +11,10 @@
 
 - 当前沙箱：Ubuntu 22.04 linux/amd64，root 用户，工作目录 `/workspace`。
 - Python：`python3`（3.11）；依赖用 `sudo pip3 install <包>` 或 `sudo uv pip install --system <包>`。
-- 技能安装位置：`~/.codebuddy/skills/flomo-note/`（含 `SKILL.md`、`AGENTS.md`、`scripts/`）。
+- 技能安装位置：`~/.codebuddy/skills/flomo-note/`（含 `SKILL.md`、`AGENTS.md`、`scripts/`、`tests/`）。
 - **注意**：本文件其余各节的路径（`/workspace`、`/root/.codebuddy/...`）记录的是 Linux 沙箱形态；当前会话实际运行在 Windows 本机（工作目录 `D:/OpenClaw/flomo-note`，Python 3.13.12 托管版，bash 为 Git Bash）。两处冲突时以实测为准，并把实测结果补进本节。
 - Python 实测（`python --version`）：**3.14.6**（Windows 托管版），与上面记的 3.11 / 3.13.12 均不一致，以实测为准。
-- 跑回归用例须带 UTF-8 模式：本机 PowerShell 控制台默认 GBK 代码页，`python scripts/test_*.py` 打印中文或用 `♯`(U+266F) 之类字符时会被 GBK 编码失败崩在**打印阶段**——断言其实全过，现象酷似逻辑失败。先 `$env:PYTHONUTF8=1`（或 `PYTHONIOENCODING=utf-8`）再跑；`bash scripts/run_tests.sh` 同样受此影响。
+- 跑回归用例须带 UTF-8 模式：本机 PowerShell 控制台默认 GBK 代码页，`python tests/test_*.py` 打印中文或用 `♯`(U+266F) 之类字符时会被 GBK 编码失败崩在**打印阶段**——断言其实全过，现象酷似逻辑失败。先 `$env:PYTHONUTF8=1`（或 `PYTHONIOENCODING=utf-8`）再跑；`bash scripts/run_tests.sh` 同样受此影响。
 - 脚本已做**平台自适应**：`run_audit.sh` / `push_skill.sh` 自动探测 `$PYTHON_BIN` → `python3` → `python`；仅 Windows(Git Bash) 才启用 Git 目录 PATH 修正与 `gh.exe` 凭据助手。跨平台无需改脚本，必要时用 `PYTHON_BIN=...` 显式指定解释器。
 
 ---

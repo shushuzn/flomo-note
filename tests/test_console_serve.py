@@ -25,7 +25,7 @@
 参数传递与返回形态由 `test_console_cloud.py` 的 `run_read_tool_entry()`（假
 client）覆盖，两层各管一段。
 
-用法：python scripts/test_console_serve.py     退出码 0=全过，1=有失败。
+用法：python tests/test_console_serve.py     退出码 0=全过，1=有失败。
 """
 from __future__ import annotations
 

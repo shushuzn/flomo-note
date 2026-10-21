@@ -183,26 +183,40 @@ def _summary(p: Path) -> str:
 
 
 def load_scripts(root: Path):
-    """列出 scripts/ 下的工具与用例，标注是否配套回归用例。"""
+    """列出工具（`scripts/`）与其配套用例（`tests/`）。
+
+    两目录分开收，但**配套关系必须跨目录核**：只扫 `scripts/` 会让每个工具的
+    `has_test` 一律答 False——用例明明在，页面上却显示「没有回归覆盖」，比数字
+    少一个更误导人。
+    """
     sdir = root / "scripts"
+    tdir = root / "tests"
     if not sdir.is_dir():
         return []
     out = []
     for p in sorted(sdir.iterdir()):
         if p.suffix not in (".py", ".sh") or p.name == "__init__.py":
             continue
-        is_test = p.stem.startswith("test_")
         out.append(
             {
                 "name": p.name,
-                "kind": "test" if is_test else "tool",
+                "kind": "tool",
                 "bytes": p.stat().st_size,
                 "summary": _summary(p),
-                "has_test": True
-                if is_test
-                else (sdir / f"test_{p.stem}.py").is_file(),
+                "has_test": (tdir / f"test_{p.stem}.py").is_file(),
             }
         )
+    if tdir.is_dir():
+        for p in sorted(tdir.glob("*.py")):
+            out.append(
+                {
+                    "name": p.name,
+                    "kind": "test",
+                    "bytes": p.stat().st_size,
+                    "summary": _summary(p),
+                    "has_test": True,
+                }
+            )
     return out
 
 

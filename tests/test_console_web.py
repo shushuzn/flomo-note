@@ -14,7 +14,7 @@
   - 前端不得引入任何外部资源（零依赖、离线可用）；
   - 服务不得出现命令执行入口（不引 subprocess/shutil）。
 
-用法：python scripts/test_console_web.py     退出码 0=全过，1=有失败。
+用法：python tests/test_console_web.py     退出码 0=全过，1=有失败。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 HTML = REPO / "web" / "index.html"
 CSS = REPO / "web" / "styles.css"
 JS = REPO / "web" / "app.js"

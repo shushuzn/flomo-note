@@ -29,6 +29,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - `SKILL.md` —— 执行细则（唯一细则源）
 - `ENVIRONMENT.md` —— 环境备忘（路径、代理、端口、推送通道等随环境变化的细节）
 - `scripts/` —— 工具脚本（控制台三件套在内：`serve_console.py` 服务、`console_cloud.py` 云端访问、`console_data.py` 本地数据抽取）
+- `tests/` —— 回归用例（`test_*.py`，与 `scripts/` 下的脚本一一配套；不进任何写卡流程）
 - `web/` —— 项目控制台前端（静态资源；配 `scripts/serve_console.py` 起本地服务）
 - `.mcp.json` —— flomo MCP 配置（含 Bearer token，已忽略）
 - 笔记实体 —— 只在云端 flomo，本地不存在
@@ -37,17 +38,17 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 
 改动脚本后必须先跑其配套回归用例，退出码 0 才算过。**本节面向维护者，不进入写卡执行路径**；写卡时不需要读本节。
 
-- 改 `scripts/validate_memo.py` → 跑 `python scripts/test_validate_memo.py`。
-- 改 `scripts/sop_gate.py` 或闸门校验逻辑 → 跑 `python scripts/test_sop_gate.py`（含 tag_tree 现采解析 / 查重 / 复盘的假 client 离线桩，这几处不必联网验证；含验证记录的**落点校验**——结论里的关键参数必须能在卡正文里找到，否则阻塞）。落点记录有硬约束：**每个分支一律经 `_landed_record` 返回、显式申报 `landed` 布尔，不得裸 dict 返回**；汇总行与凭证的条数只读这个字段，按键名猜会在新增分支时静默漏计（用例含源码扫描锁定这条结构约束）。
-- 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python scripts/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
-- 改 `scripts/memo_util.py` → 跑 `python scripts/test_memo_util.py`（它是三处共用的签名口径，改动影响面最大）。
-- 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python scripts/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
-- 改 `scripts/console_data.py`（控制台本地侧数据抽取：`SKILL.md` 与 `scripts/` 的解析与统计字段）→ 跑 `python scripts/test_console_data.py`（临时目录内离线验证解析口径）。
-- 改 `scripts/console_cloud.py`（控制台云端访问：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收）→ 跑 `python scripts/test_console_cloud.py`（全桩离线，不联网、不读 token；覆盖检索条件、批量与相关、云端标签树与标签名、参考文本、能力清单与参数规格归一化、通用只读执行，以及写闸门放行/拦截、回读验收、重命名边界与「返回值不含 token」）。三条硬约束：**读白名单恰等于实际调用的读工具、写白名单恰等于带 `write=True` 调用的写工具**（用例按源码扫描 + `write=True` 标记分别锁定，不能留无人使用的权限空位、也不能读写混用）；**写工具不得走通用执行入口**——写要过格式与流程闸门、写完回读验收，只能在 `create_memo` / `update_memo` / `rename_tag` 里发生；**闸门不过时一个字节都不发云端**（用例断言桩客户端零调用）。
-- 改 `scripts/flomo_client.py`（通道、握手、工具调用、协议发现、写后回读验收）→ 跑 `python scripts/test_flomo_client.py`（离线桩验证回读比对的五类判定：一致 / 内容不符 / 回读为空 / id 对错卡 / 被截断，以及写命令内确实调用了回读）；再跑一次真实只读调用实测（`python scripts/flomo_client.py <tool>` 或起服务点一遍）。两条硬约束：**写后必须回读全文逐字比对**（只宽容空白差异；不一致即非 0 退出——凭 id 宣布成功等于把验收交给运气）；它是 H3 的唯一入口，写侧的幂等查重与成功判定不得削弱。**异常契约不许退回去**：握手失败 / HTTP 错误 / JSON-RPC 协议错误一律抛 `FlomoError`（`RuntimeError` 子类）；**绝不用 `SystemExit` 表达调用失败**——它继承自 `BaseException`，调用方的 `except Exception` 接不住，穿透到 HTTP 服务就是连接被掐断、客户端拿到空响应（`test_console_cloud.py` 已锁住「客户端抛 SystemExit 也必须被边界转成 CloudError」）。CLI 需要退出码，在各自 `__main__` 里把 `FlomoError` 转成 `return 1`。
-- 改 `scripts/serve_console.py` 的接口路由或 `web/` 前端（导航项、视图、样式）→ 跑 `python scripts/test_console_web.py`（离线锁定前后端对齐：导航项必须有对应视图、前端调用的接口必须存在于服务路由表、写工具名不得挂在可执行按钮上、前端不得引入外部资源、服务不得出现命令执行入口），再起服务实测一轮；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
+- 改 `scripts/validate_memo.py` → 跑 `python tests/test_validate_memo.py`。
+- 改 `scripts/sop_gate.py` 或闸门校验逻辑 → 跑 `python tests/test_sop_gate.py`（含 tag_tree 现采解析 / 查重 / 复盘的假 client 离线桩，这几处不必联网验证；含验证记录的**落点校验**——结论里的关键参数必须能在卡正文里找到，否则阻塞）。落点记录有硬约束：**每个分支一律经 `_landed_record` 返回、显式申报 `landed` 布尔，不得裸 dict 返回**；汇总行与凭证的条数只读这个字段，按键名猜会在新增分支时静默漏计（用例含源码扫描锁定这条结构约束）。
+- 改 `scripts/cleanup.py`（扫描规则 / 保留项 / 收集与删除逻辑）→ 跑 `python tests/test_cleanup.py`（覆盖文件与目录两类残留的收集、保留项豁免、归档断言，临时沙箱内离线进行）。
+- 改 `scripts/memo_util.py` → 跑 `python tests/test_memo_util.py`（它是三处共用的签名口径，改动影响面最大）。
+- 改 `scripts/git_tunnel.py`（候选 IP / 选路 / 回落逻辑）→ 跑 `python tests/test_git_tunnel.py`（离线桩验证选路与回落，不联网）。
+- 改 `scripts/console_data.py`（控制台本地侧数据抽取：`SKILL.md` 与 `scripts/` 的解析与统计字段）→ 跑 `python tests/test_console_data.py`（临时目录内离线验证解析口径）。
+- 改 `scripts/console_cloud.py`（控制台云端访问：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收）→ 跑 `python tests/test_console_cloud.py`（全桩离线，不联网、不读 token；覆盖检索条件、批量与相关、云端标签树与标签名、参考文本、能力清单与参数规格归一化、通用只读执行，以及写闸门放行/拦截、回读验收、重命名边界与「返回值不含 token」）。三条硬约束：**读白名单恰等于实际调用的读工具、写白名单恰等于带 `write=True` 调用的写工具**（用例按源码扫描 + `write=True` 标记分别锁定，不能留无人使用的权限空位、也不能读写混用）；**写工具不得走通用执行入口**——写要过格式与流程闸门、写完回读验收，只能在 `create_memo` / `update_memo` / `rename_tag` 里发生；**闸门不过时一个字节都不发云端**（用例断言桩客户端零调用）。
+- 改 `scripts/flomo_client.py`（通道、握手、工具调用、协议发现、写后回读验收）→ 跑 `python tests/test_flomo_client.py`（离线桩验证回读比对的五类判定：一致 / 内容不符 / 回读为空 / id 对错卡 / 被截断，以及写命令内确实调用了回读）；再跑一次真实只读调用实测（`python scripts/flomo_client.py <tool>` 或起服务点一遍）。两条硬约束：**写后必须回读全文逐字比对**（只宽容空白差异；不一致即非 0 退出——凭 id 宣布成功等于把验收交给运气）；它是 H3 的唯一入口，写侧的幂等查重与成功判定不得削弱。**异常契约不许退回去**：握手失败 / HTTP 错误 / JSON-RPC 协议错误一律抛 `FlomoError`（`RuntimeError` 子类）；**绝不用 `SystemExit` 表达调用失败**——它继承自 `BaseException`，调用方的 `except Exception` 接不住，穿透到 HTTP 服务就是连接被掐断、客户端拿到空响应（`test_console_cloud.py` 已锁住「客户端抛 SystemExit 也必须被边界转成 CloudError」）。CLI 需要退出码，在各自 `__main__` 里把 `FlomoError` 转成 `return 1`。
+- 改 `scripts/serve_console.py` 的接口路由或 `web/` 前端（导航项、视图、样式）→ 跑 `python tests/test_console_web.py`（离线锁定前后端对齐：导航项必须有对应视图、前端调用的接口必须存在于服务路由表、写工具名不得挂在可执行按钮上、前端不得引入外部资源、服务不得出现命令执行入口），再起服务实测一轮；服务是多线程单例，改完须重启进程才生效（模块只在启动时加载一次）。
 - `POST` 上只允许两类接口：**改动云端的写接口**与 **`/api/cloud/tool` 这个带参数跑读工具的通用执行入口**。新增任何「执行命令 / 跑脚本」型入口都属越界，`test_console_web.py` 会拦下。
-- 改 `scripts/check_skill_docs.py` → 跑 `python scripts/test_check_skill_docs.py`。除逐行的日期/叙事扫描外，它还有三项**跨文件结构检查**：① `scripts/` 下每个非 `test_` 的 .py 都必须在 `README.md` 出现一次；② 文档里引用的 H 编号 / 附录小节 / 流程步骤 / 脚本名必须真的存在；③ 文档里写的脚本命令行，选项必须是该脚本真认识的。理由同源：入口文档漏掉一整个步骤、引用指向已被删改的名目、或参数名早在脚本里改过（写错选项只会被当成未知参数、打一行用法就退出，读者以为是环境问题），都不会让任何东西报错——引用读起来完全通顺，只是指不到东西。三项都取**正面定义**（全部须命中），不留「历史小节可以不写」这类豁免口子。
+- 改 `scripts/check_skill_docs.py` → 跑 `python tests/test_check_skill_docs.py`。除逐行的日期/叙事扫描外，它还有四项**跨文件结构检查**：① `scripts/` 下每个 .py 都必须在 `README.md` 出现一次；② `tests/` 下的 .py 必须以 `test_` 开头（否则 `run_tests.sh` 的 glob 收不到它，用例静默不跑）；③ 文档里引用的 H 编号 / 附录小节 / 流程步骤 / `scripts/` 与 `tests/` 下的脚本名必须真的存在；④ 文档里写的脚本命令行，选项必须是该脚本真认识的。理由同源：入口文档漏掉一整个步骤、引用指向已被删改的名目、或参数名早在脚本里改过（写错选项只会被当成未知参数、打一行用法就退出，读者以为是环境问题），都不会让任何东西报错——引用读起来完全通顺，只是指不到东西。四项都取**正面定义**（全部须命中），不留「历史小节可以不写」这类豁免口子。
 - **一键跑全部离线用例：`bash scripts/run_tests.sh`**（各配套用例与内容纪律自检一并跑；改动脚本后首选，避免逐个手跑漏项）。
 - 技能文档改动后先跑 `python scripts/check_skill_docs.py`（离线内容纪律自检，须 0 错），再跑 `scripts/run_audit.sh` 自校（已包好环境，勿手搓 `audit_skill.sh`）。
 - 环境变化只改 `ENVIRONMENT.md`。
