@@ -431,6 +431,80 @@ def test_update_truncated_read_no_diff():
         check("截断回读：说明跳过原因", "跳过差异" in err, err)
 
 
+def test_update_target_without_concept():
+    """目标卡读得到、但只有一行非空：概念名无从比对 → 必须阻塞，不许「跳过当通过」。
+
+    旧判据是 `len(cloud) >= 2 and len(local) >= 2 and cloud[1] != local[1]`——少一行就
+    整条短路，然后照样打印「[通过] 目标卡概念名「-」」并覆盖。回包形态一变（`content`
+    换位置、卡里只有一行），这道唯一的写前止损点就无声失效，失效时正好是最危险的时候。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        one_line = json.dumps({"structuredContent": {"memos": [
+            {"id": "ABC", "content": "#AI/测试"}]}}, ensure_ascii=False)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, one_line, "")})
+        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+                              "--update-id", "ABC"], exec_fn)
+        check("目标卡无概念名：退出码 6（未写云）", code == 6, code)
+        check("目标卡无概念名：一个字节不发 update",
+              "memo_update" not in tools(calls), tools(calls))
+        check("目标卡无概念名：提示读不到概念名", "取不到概念名" in err, err)
+        check("目标卡无概念名：给出放行办法", "--allow-rename" in err, err)
+        check("目标卡无概念名：不谎报通过", "目标卡概念名" not in out, out[-300:])
+
+
+def test_update_target_without_concept_allowed():
+    """同一情形加 --allow-rename：放行，且注明是「跳过比对」而不是「比对通过」。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        one_line = json.dumps({"structuredContent": {"memos": [
+            {"id": "ABC", "content": "#AI/测试"}]}}, ensure_ascii=False)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, one_line, "")})
+        code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC", "--allow-rename"], exec_fn)
+        check("无概念名 + 显式放行：退出码 0", code == 0, code)
+        check("无概念名 + 显式放行：确实发了 update",
+              "memo_update" in tools(calls), tools(calls))
+        check("无概念名 + 显式放行：说明跳过比对而非通过",
+              "[放行]" in out and "跳过概念名比对" in out, out[-400:])
+
+
+def test_verify_json_unparsable():
+    """复核退出码 0 但回包解析不出明细：不许说成「机器项 0 项全过」。
+
+    「0 项」与「过了 0 项」是两件事。旧写法把 `checks` 缺省成 `[]` 后照常打印
+    「[通过] 机器项 0 项全过」，读起来像复核跑过且全过，实际一条明细都没拿到。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, _calls = make_exec(
+            {"verify_card.py": (0, "not json at all", "")})
+        code, out, err = run(["--draft", str(draft), "--verify", str(verify)], exec_fn)
+        check("复核明细不可解析：链仍算成功（卡已写入）", code == 0, code)
+        check("复核明细不可解析：不谎称 0 项全过",
+              "0 项全过" not in out, out[-300:])
+        check("复核明细不可解析：给出告警并指向人工核对",
+              "解析不出机器项明细" in err and "--show-body" in err, err)
+
+
+def test_tail_marks_truncation():
+    """子脚本输出被截断时要报「还有几行没显示」，不能悄悄切掉。"""
+    short = "\n".join(f"行{i}" for i in range(5))
+    check("不超上限时原样转发", PB._tail(short, 12) == short, PB._tail(short, 12))
+
+    long = "\n".join(f"行{i}" for i in range(30))
+    got = PB._tail(long, 12)
+    check("超上限时声明被切掉的行数", "还有 18 行未显示" in got, got.splitlines()[0])
+    check("超上限时仍保留最后 12 行",
+          got.splitlines()[-12:] == [f"行{i}" for i in range(18, 30)],
+          got.splitlines()[-1])
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -442,7 +516,10 @@ if __name__ == "__main__":
                test_update_diff_reported, test_update_diff_unchanged,
                test_diff_truncated_and_large_delete,
                test_update_diff_on_verify_failure, test_create_has_no_diff,
-               test_update_truncated_read_no_diff):
+               test_update_truncated_read_no_diff,
+               test_update_target_without_concept,
+               test_update_target_without_concept_allowed,
+               test_verify_json_unparsable, test_tail_marks_truncation):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
