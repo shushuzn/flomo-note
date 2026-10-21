@@ -16,6 +16,11 @@
 故更新前先回读目标卡、比对概念名（卡的身份）：不符即阻塞（退出码 6），确属改名要显式
 `--allow-rename`。这是本项目里唯一「写之前先读一次」的分支，读的是同一张卡、只比对不动内容。
 
+同一次回读还兼作**改前快照**：`memo_update` 是整篇替换，写后逐字对账的基准是被改后的草稿，
+所以「草稿漏抄了一段」「编辑时误删两行」在一致的口径下完全隐形——对账越严格越看不见。
+故覆盖路在写前把云端原文落一份快照，写后逐行比对快照与草稿，把删除/新增行原样列出来；
+净删行数不为零时点名提示，逐条由人认出「这条是不是有意删的」。
+
 用法：
   python scripts/publish.py --draft _tmp/memo_body_68.txt --verify _tmp/verify_68.json
   python scripts/publish.py --draft ... --verify ... --update-id MjYxODU0MzI5   # 覆盖既有卡
@@ -35,6 +40,7 @@
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -47,6 +53,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 PAYLOAD = PROJECT_ROOT / "_tmp" / "publish_payload.json"
 PY = sys.executable
+# 快照目录随 PAYLOAD 走（不预先绑定 `PAYLOAD.parent`：那样用例替换 PAYLOAD 后
+# 快照仍写进真实 _tmp，测试会「通过」，而注入点等于没有）。
+
+# 正文归一化必须与回读对账同源：那是「平台渲染差异不参与比对」的唯一口径
+# （丢空行 / 还原 `_` `|` `[` 转义 / 去行内水平空白）。自己再写一份，两处迟早
+# 不同步，diff 会把渲染层补的空行当成「新增了一行」——噪声会训练出跳过习惯。
+sys.path.insert(0, str(SCRIPT_DIR))
+import flomo_client as FC  # noqa: E402
+
+# 覆盖差异逐行列出，超过这个行数只列前 N 行 + 提示剩余
+DIFF_SHOW = 80
 
 _SUCCESS_RE = re.compile(r"\[成功\] 已写入 memo id=(\S+)")
 
@@ -98,13 +115,93 @@ def _head_lines(text: str, n: int = 2) -> list[str]:
     return [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:n]
 
 
-def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> int:
+def _norm_lines(text: str) -> list[str]:
+    """按回读对账的口径取行序列（与 `FC._norm_body` 同源，不另写一份）。"""
+    return [ln for ln in FC._norm_body(text).splitlines() if ln.strip()]
+
+
+def diff_report(before: str, after: str) -> dict:
+    """改前快照 vs 改后正文的行级差异（纯函数，不联网不落盘，便于用例断言）。
+
+    比的对象是「云端原文」与「本轮草稿」，不是「草稿 vs 草稿」——写后逐字对账只能
+    证明云端存了草稿，证明不了草稿没少抄；漏抄的那段在对账里两边都不存在，永不报错。
+    行序参与比对（`SequenceMatcher` 按序列判），故段落搬动会显示成删+增，属预期。
+    """
+    old, new = _norm_lines(before), _norm_lines(after)
+    sm = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    removed: list[str] = []
+    added: list[str] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            continue
+        removed.extend(old[i1:i2])
+        added.extend(new[j1:j2])
+    return {
+        "old_lines": len(old),
+        "new_lines": len(new),
+        "removed": removed,
+        "added": added,
+        "unchanged": len(old) - len(removed),
+    }
+
+
+def _print_diff(rep: dict | None, limit: int = DIFF_SHOW) -> None:
+    """打印覆盖差异。删除行永远是重点：整篇替换下误删不会触发任何别的检查。"""
+    if rep is None:
+        return
+    _step("⑥ 覆盖差异（写前云端 → 写后云端）")
+    rm, ad = rep["removed"], rep["added"]
+    if not rm and not ad:
+        print(f"[差异] 无实质变化（改前改后同为 {rep['old_lines']} 行，"
+              "按归一化口径逐行一致）")
+        return
+    print(f"[差异] 改前 {rep['old_lines']} 行 → 改后 {rep['new_lines']} 行；"
+          f"删除 {len(rm)} 行、新增 {len(ad)} 行、未动 {rep['unchanged']} 行")
+    shown = 0
+    for ln in rm:
+        if shown >= limit:
+            break
+        print(f"  - {ln}")
+        shown += 1
+    for ln in ad:
+        if shown >= limit:
+            break
+        print(f"  + {ln}")
+        shown += 1
+    total = len(rm) + len(ad)
+    if total > shown:
+        print(f"  …另 {total - shown} 行未列出（逐行清单上限 {limit} 行，"
+              f"要看全量请自行比草稿与快照）")
+    if rm:
+        print(f"[注意] 本次覆盖删除了 {len(rm)} 行——整篇替换下误删不报错，"
+              "逐条确认都是有意的再收工")
+    if rep["old_lines"] and len(rm) / rep["old_lines"] >= 0.2 and len(rm) >= 3:
+        print(f"[注意] 删除占改前 {len(rm) * 100 // rep['old_lines']}%"
+              "（达到两成以上）——若这不是一次有意的重写，先别急着关掉这轮")
+
+
+def _write_snapshot(memo_id: str, before: str) -> Path | None:
+    """落改前快照：写入失败、复核失败、事后想核对「原来写了什么」都靠它。"""
+    try:
+        PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
+        path = PAYLOAD.parent / f"update_before_{memo_id}.txt"
+        path.write_text(before, encoding="utf-8")
+        return path
+    except OSError as exc:
+        print(f"[告警] 改前快照未落盘：{exc}（差异比对仍可继续，但事后无原文可查）",
+              file=sys.stderr)
+        return None
+
+
+def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[int, str]:
     """覆盖更新前确认目标卡就是草稿这一张——比对概念名，它是卡的身份。
 
     为什么必须读一次：建卡的错法是「多出一张卡」，还有机会合并或清空；覆盖的错法是
     「把 A 的正文盖到 B 上」，B 的原文即刻消失、只能凭记忆或历史重建。而 id 是人工
     抄进 `--update-id` 的，抄错一位指向的正是别张卡——写后逐字对账能发现不一致，但那时
     损失已经造成。所以闸门放在写之前。
+
+    返回 `(退出码, 目标卡改前全文)`：同一个回包顺手当改前快照，不为 diff 再读一次。
     """
     _step(f"③ 目标卡确认 memo_batch_get（{memo_id}）")
     req = PAYLOAD.with_name("publish_target.json")
@@ -118,22 +215,33 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> int:
                 print(_tail(stream), file=sys.stderr)
         print("[失败] 读不到目标卡，未写云——确认 --update-id 指向的卡存在、网络正常",
               file=sys.stderr)
-        return 6
+        return 6, ""
     memos = (_cloud_json(out).get("structuredContent") or {}).get("memos") or []
     if not memos:
         print("[失败] 回包里没有这张卡，未写云——确认 --update-id 是否正确", file=sys.stderr)
-        return 6
-    cloud = _head_lines(memos[0].get("content", ""), 2)
+        return 6, ""
+    before = memos[0].get("content", "") or ""
+    cloud = _head_lines(before, 2)
     local = _head_lines(body, 2)
     if len(cloud) >= 2 and len(local) >= 2 and cloud[1] != local[1]:
         if not allow_rename:
             print(f"[阻塞] 目标卡概念名「{cloud[1]}」与草稿「{local[1]}」不同——"
                   f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
                   f"确属改名请显式加 --allow-rename", file=sys.stderr)
-            return 6
+            return 6, ""
         print(f"[放行] 概念名改名：「{cloud[1]}」→「{local[1]}」（--allow-rename）")
     print(f"[通过] 目标卡概念名「{cloud[1] if len(cloud) >= 2 else '-'}」")
-    return 0
+    # 回读被截断时，快照只是原文的前半截：拿它做 diff 会把「没取到的后半段」
+    # 整片报成删除，比不报更坏（人会以为真的误删了）。故宁可显式放弃这一项。
+    if memos[0].get("content_truncated"):
+        print("[告警] 目标卡回读被截断（content_truncated）——改前快照与差异比对"
+              "均不可信，本轮跳过差异；改后须人工比对原卡，不要据「无删除行」"
+              "判定没丢内容", file=sys.stderr)
+        return 0, ""
+    snap = _write_snapshot(memo_id, before)
+    if snap:
+        print(f"[快照] 改前全文已落盘：{snap}")
+    return 0, before
 
 
 def _create_card(run, body: str) -> tuple[int, str, bool]:
@@ -291,9 +399,10 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         print("[完成] 只跑到质检（--dry-run），未写云")
         return 0
 
+    before = ""
     if update_id:
-        # 覆盖路：先确认目标卡（写前唯一一次读），再覆盖；两条都过了才写
-        code = _confirm_target(run, update_id, body, allow_rename)
+        # 覆盖路：先确认目标卡（写前唯一一次读，兼作改前快照），再覆盖；两条都过了才写
+        code, before = _confirm_target(run, update_id, body, allow_rename)
         if code != 0:
             return code
         code, memo_id, reused = _update_card(run, update_id, body)
@@ -304,6 +413,9 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         code, memo_id, reused = _create_card(run, body)
         if code != 0:
             return code
+
+    # 覆盖差异先算好、后打印：复核失败也照样要打，而那时已经在 return 的路上
+    diff = diff_report(before, body) if (update_id and before) else None
 
     # 写后机器项复核：卡已写入，失败只报告，不改写不重发
     if verify_card:
@@ -317,6 +429,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
                 print(_tail(out), file=sys.stderr)
             print("[失败] 机器项未全过——卡已写入，**不改写不重发**，须按上面失败项人工处置",
                   file=sys.stderr)
+            _print_diff(diff)
             print(f"[RESULT] id={memo_id}")
             return 5
         try:
@@ -335,6 +448,8 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         human = [h.get("item") for h in (info.get("human_judgment") or [])]
         if human:
             print(f"[须人读] 脚本判不了、别当成已查过：{'；'.join(human)}")
+
+    _print_diff(diff)
 
     print("\n[RESULT] id=" + memo_id)
     if reused:
