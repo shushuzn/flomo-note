@@ -8,9 +8,10 @@
   ERR  具体日期：YYYY-MM-DD、YYYY/M/D、YYYY.M.D、YYYY年M月[D日]
   ERR  README 漏列脚本：`scripts/` 下每个非 test_ 的 .py 都必须在 README 出现
   ERR  内部交叉引用失效：引用的 H 编号 / 附录小节 / 流程步骤 / 脚本名并不存在
+  ERR  命令行选项失效：文档里 `scripts/x.py --flag` 的 `--flag` 不是该脚本认识的选项
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-后两条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后三条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
 
@@ -18,6 +19,10 @@
 「第 5 步」），删条目、改标题、换脚本名之后，**引用它还留在原处读起来完全通顺**，
 只是指不到任何东西。读者按图索骥找不到，不会有人为此报错——所以要让指不到
 这件事本身变成 ERR。
+
+选项名又比脚本名低一层：脚本名写错会报「文件不存在」，**选项名写错只会被当成
+未知参数**，打一行用法就退出，读者以为是环境问题；而参数改名恰恰是改脚本时最
+容易顺手带上的漂移。
 
 **任何技能文档都不豁免日期**（H28 是严格禁止，无例外）：ENVIRONMENT.md 记录
 环境事实时只写「是什么」——IP、端口、路径、命令，不写「哪天发生的」。
@@ -77,6 +82,25 @@ CIRCLED_STEPS = {c: str(i) for i, c in enumerate("①②③④⑤⑥⑦⑧⑨", 
 # 只管 .md：脚本注释与回归夹具里的 `scripts/x.py` 是临时目录里的相对路径或占位名，
 # 按仓库文件核它们会成片误报（夹具写的本来就是不存在的样本）。
 SCRIPT_REF_RE = re.compile(r"scripts/([A-Za-z0-9_]+\.(?:py|sh))")
+
+# ---- 文档里的命令行 ↔ 脚本真实认识的选项 ----
+# 只认**片段开头**的命令（`python scripts/x.py …` / `x.py …`）。
+# 不按「离哪个脚本名最近」归属：自然语言句子里「…见 scripts/sop_gate.py…，
+# `validate_memo.py --no-gate` 才生效」会把 --no-gate 算到 sop_gate 头上（实测 2 条假报），
+# 而脚本名在句中的位置与参数归属没有稳定关系。片段开头则是无歧义的命令形态。
+CLI_CMD_RE = re.compile(r"^(?:python\s+|bash\s+)?(?:scripts/)?([a-z_]+\.py)\b(.*)$")
+CLI_FLAG_RE = re.compile(r"(?<![\w-])(--[a-z][a-z0-9_-]*)")
+# 各脚本的解析风格不同，四种都要覆盖：argparse 的 add_argument、手写的 `a == "--x"`、
+# `arg in ("--a", "--b")` 元组、以及 `"--x" in argv`。只认一种会让其余脚本的选项集合
+# 取成空集，检查随之静默失效。
+_OPT_PATTERNS = (
+    r'add_argument\(\s*"(--[a-z0-9-]+)"',
+    r'add_argument\(\s*"[^"]*",\s*"(--[a-z0-9-]+)"',
+    r'==\s*"(--[a-z0-9-]+)"',
+    r'!=\s*"(--[a-z0-9-]+)"',
+    r'"(--[a-z0-9-]+)"\s+(?:not\s+)?in\s',
+)
+_OPT_TUPLE_RE = re.compile(r"(?:in|==)\s*\(([^)]*)\)")
 
 # 规则实现体豁免：本脚本的叙事词表与回归测试夹具必然逐字包含被检测的词面，
 # 属模式定义而非叙事，故对这两个文件只停用叙事扫描（日期扫描照常生效），并打印 SKIP 保持可见。
@@ -307,6 +331,81 @@ def check_cross_refs(root: Path) -> list[str]:
     return errs
 
 
+def script_options(path: Path) -> set[str]:
+    """从脚本源码里采出它认识的 `--xxx` 选项，不维护第二份清单。
+
+    宁可漏采（取不到就整段跳过）也不虚采：虚采会让检查放行一个脚本根本不认的参数，
+    那比没有检查更坏。
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError):
+        return set()
+    opts: set[str] = set()
+    for pat in _OPT_PATTERNS:
+        opts |= set(re.findall(pat, text))
+    for grp in _OPT_TUPLE_RE.findall(text):
+        opts |= set(re.findall(r'"(--[a-z0-9-]+)"', grp))
+    return opts
+
+
+def check_doc_cli_flags(root: Path) -> list[str]:
+    """文档里写的命令行，选项必须是该脚本真认识的。
+
+    与「脚本名存在」是同一件事的两层：名字写错会报「文件不存在」，**选项名写错只会
+    被当成未知参数**——脚本自己可能只打印一行用法就退出，读者以为是环境问题；
+    而 `--update-id` 改成 `--update_id` 这种漂移，改脚本时最容易顺手改掉，文档那头
+    没有任何东西会跟着红。实测文档里这类引用有 29 处。
+
+    只处理**片段开头即命令**的形态（行内反引号、代码块整行），漏掉跨句的自然语言
+    描述是可以接受的——判据要求「查到的必须对」，不要求「全部都能查到」。
+    """
+    if not (root / "scripts").is_dir():
+        return []  # 事实源是 scripts/ 里的源码；没有它就没有可核的选项集合
+    errs: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    cache: dict[str, set[str]] = {}
+
+    for p in sorted(root.glob("*.md")):
+        if is_transient(p.name):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError):
+            continue
+        in_fence = False
+        for i, ln in enumerate(text.splitlines(), start=1):
+            if ln.strip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            segs = re.findall(r"`([^`]+)`", ln) or ([ln] if in_fence else [])
+            for seg in segs:
+                m = CLI_CMD_RE.match(seg.strip())
+                if not m:
+                    continue
+                name, rest = m.group(1), m.group(2)
+                script = root / "scripts" / name
+                if not script.is_file():
+                    continue  # 脚本不存在由交叉引用检查报，这里不重复
+                if name not in cache:
+                    cache[name] = script_options(script)
+                allowed = cache[name]
+                if not allowed:
+                    continue  # 采不到选项（换了不认识的解析风格）时整段跳过，不臆断
+                for flag in CLI_FLAG_RE.findall(rest):
+                    if flag in allowed:
+                        continue
+                    key = (p.name, name, flag)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    errs.append(
+                        f"{p.name}:{i}: 参数「{flag}」不是 {name} 认识的选项——"
+                        f"照着这行跑会被当成未知参数；改脚本选项时须同步改文档"
+                    )
+    return errs
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -335,6 +434,8 @@ def main(argv=None):
     errs += check_script_inventory(root)
     # 同理，也看不到「引用的编号/小节/脚本已不存在」——引用读起来通顺，只是指空了
     errs += check_cross_refs(root)
+    # 第三层：脚本名对了，选项名未必对——参数改名比脚本改名更常见，且更不容易被发现
+    errs += check_doc_cli_flags(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):
