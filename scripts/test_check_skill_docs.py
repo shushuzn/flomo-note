@@ -223,12 +223,116 @@ def run_inventory_case():
     return ok
 
 
+def run_cross_ref_case():
+    """内部交叉引用：指空了必须判错，指得到必须放行。
+
+    这条检查的全部价值在于「删改之后引用会静默悬空」——把某条硬限、某个附录
+    小节、某一步流程从 SKILL.md 删掉或改名，引用它还留在原处，读起来完全通顺，
+    只是指不到任何东西。故每个放行用例都配一个**只差目标存在性**的失效用例：
+    两边都能过说明判据恒真，这条检查就等于没有。
+    """
+    ok = True
+    BASE = (
+        "# 规则\n"
+        "\n"
+        "## 二、硬限\n"
+        "\n"
+        "**H1 · 第一条。**\n"
+        "**H6b · 第二条（带字母后缀）。**\n"
+        "\n"
+        "## 三、流程\n"
+        "\n"
+        "### 1. 抓取\n"
+        "### 5. 查重（阻塞）\n"
+        "\n"
+        "## 五、附录\n"
+        "\n"
+        "### 标签树现采（带补充说明的标题）\n"
+        "### 概念名的机械拦截\n"
+    )
+
+    def errs_for(doc_body, extra_files=None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "real.py").write_text("# 真实脚本\n", encoding="utf-8")
+            for relp, body in (extra_files or {}).items():
+                q = root / relp
+                q.parent.mkdir(parents=True, exist_ok=True)
+                q.write_text(body, encoding="utf-8")
+            (root / "SKILL.md").write_text(BASE, encoding="utf-8")
+            (root / "DOC.md").write_text(doc_body, encoding="utf-8")
+            return CD.check_cross_refs(root)
+
+    def expect(name, doc, want_err, needle=""):
+        nonlocal ok
+        got = errs_for(doc)
+        hit = len(got) == want_err and (not needle or any(needle in m for m in got))
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  {name}: 得到 {len(got)} 错，"
+              f"期望 {want_err} 错{'（含 %s）' % needle if needle else ''}")
+        if not hit:
+            for m in got:
+                print("      ERR :", m)
+
+    # —— 硬限编号 ——
+    expect("引用已定义的 H 编号放行", "# 说明\n\n见 H1 与 H6b。\n", 0)
+    expect("区间引用 H1–H6b 放行", "# 说明\n\n见 H1–H6b 各条。\n", 0)
+    expect("引用不存在的 H 编号判错", "# 说明\n\n见 H99。\n", 1, "H99")
+    # 只差「定义行被删」：同样的引用，SKILL.md 里没有 H99 定义
+    expect("紧邻字母数字的 H 不算编号（HDR1 / H264）", "# 说明\n\nHDR1 与 H264 编码。\n", 0)
+
+    # —— 附录小节 ——
+    expect("引用存在的附录小节放行", "# 说明\n\n见「附录 · 概念名的机械拦截」。\n", 0)
+    expect("附录小节名带补充说明也能命中",
+           "# 说明\n\n口径见「附录 · 标签树现采」。\n", 0)
+    expect("引用不存在的附录小节判错",
+           "# 说明\n\n见「附录 · 参数速查」。\n", 1, "参数速查")
+    expect("「附录结论」是正文词不误判", "# 说明\n\n正文层级含附录结论。\n", 0)
+    # 附录里没有「查重」，正文流程里却有 ### 5. 查重：不得拿正文标题冒充附录小节
+    expect("不拿正文标题冒充附录小节", "# 说明\n\n见「附录 · 查重」。\n", 1, "查重")
+
+    # —— 流程步骤 ——
+    expect("引用存在的步骤放行", "# 说明\n\n按第 5 步执行。\n", 0)
+    expect("圈码步骤引用同样核", "# 说明\n\n按第 ⑤ 步执行。\n", 0)
+    expect("引用不存在的步骤判错", "# 说明\n\n按第 7 步执行。\n", 1, "第 7 步")
+    expect("「第 ⑥ 段」不是流程步骤，不误判", "# 说明\n\n看 publish 第 ⑥ 段的删除行。\n", 0)
+
+    # —— 脚本名 ——
+    expect("引用存在的脚本放行", "# 说明\n\n跑 `scripts/real.py`。\n", 0)
+    expect("引用已删的脚本判错", "# 说明\n\n跑 `scripts/ghost.py`。\n", 1, "ghost.py")
+
+    # —— 接入 main：结构问题必须拉红退出码 ——
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "scripts").mkdir()
+        (root / "SKILL.md").write_text(BASE, encoding="utf-8")
+        (root / "README.md").write_text("# 项目\n", encoding="utf-8")
+        rc_clean = CD.main(["--root", str(root), "--quiet"])
+        ok &= rc_clean == 0
+        print(f"{'PASS' if rc_clean == 0 else 'FAIL'}  引用全对时 main 退出码 0（{rc_clean}）")
+        (root / "README.md").write_text("# 项目\n\n见 H99。\n", encoding="utf-8")
+        rc_bad = CD.main(["--root", str(root), "--quiet"])
+        ok &= rc_bad == 1
+        print(f"{'PASS' if rc_bad == 1 else 'FAIL'}  引用悬空时 main 退出码 1（{rc_bad}）")
+
+    # —— 真实项目防回归 ——
+    real = CD.check_cross_refs(HERE.parent)
+    ok &= real == []
+    print(f"{'PASS' if not real else 'FAIL'}  真实技能文档交叉引用全部可解析"
+          + ("" if not real else f"（{len(real)} 条悬空）"))
+    for m in real:
+        print("      ERR :", m)
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
     results.append(run_external_root_case())
     results.append(run_env_doc_case())
     results.append(run_inventory_case())
+    results.append(run_cross_ref_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

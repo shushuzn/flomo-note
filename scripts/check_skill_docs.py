@@ -7,11 +7,17 @@
 
   ERR  具体日期：YYYY-MM-DD、YYYY/M/D、YYYY.M.D、YYYY年M月[D日]
   ERR  README 漏列脚本：`scripts/` 下每个非 test_ 的 .py 都必须在 README 出现
+  ERR  内部交叉引用失效：引用的 H 编号 / 附录小节 / 流程步骤 / 脚本名并不存在
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-第二条是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后两条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
+
+交叉引用同理且更隐蔽：SKILL.md 靠编号互相引用（「见 H11」「见附录 · 标签树现采」
+「第 5 步」），删条目、改标题、换脚本名之后，**引用它还留在原处读起来完全通顺**，
+只是指不到任何东西。读者按图索骥找不到，不会有人为此报错——所以要让指不到
+这件事本身变成 ERR。
 
 **任何技能文档都不豁免日期**（H28 是严格禁止，无例外）：ENVIRONMENT.md 记录
 环境事实时只写「是什么」——IP、端口、路径、命令，不写「哪天发生的」。
@@ -52,6 +58,25 @@ NARRATIVE_RE = re.compile(
 
 # 技术常量行豁免：同行含 version / protocol 键名时，其中的日期不是文档叙事日期。
 CONST_LINE_RE = re.compile(r"(?i)version|protocol")
+
+# ---- 交叉引用（技能文档之间靠编号互指，删改之后引用会静默悬空）----
+# H 编号引用：H1 / H6b / H24。前后不得紧邻字母数字，否则 HDR1、H264 之类会误命中。
+H_REF_RE = re.compile(r"(?<![A-Za-z0-9])H(\d{1,2}[a-z]?)(?![0-9a-z])")
+# H 编号定义：标题行形如 `**H11 · 合并后必须回读全文验收。**` / `**H26（仓库分工部分）· …**`
+H_DEF_RE = re.compile(r"\*\*(H\d+[a-z]?)\s*[·（(]")
+# 附录小节引用：只认同「附录」之间有分隔符的形态（间隔号或引号）。
+# 「附录结论」「附录表」这类是正文里的普通词，不构成对本文档小节的引用。
+ANNEX_REF_TRIGGER = re.compile(r"附录\s*(?:末\s*)?(?:[·・]\s*[「『“]?|[「『“])")
+ANNEX_REF_STOP = "」』”\"，。、；：）)\n*`"
+# 流程步骤引用：第 5 步 / 第 ⑤ 步。只认带「步」字的形态——「第 ⑥ 段」说的是
+# publish 的输出段，不是流程步骤，不该被它约束。
+STEP_REF_RE = re.compile(r"第\s*([0-9]|[①②③④⑤⑥⑦⑧⑨])\s*步")
+STEP_TITLE_RE = re.compile(r"^###\s+([1-9])\.", re.M)
+CIRCLED_STEPS = {c: str(i) for i, c in enumerate("①②③④⑤⑥⑦⑧⑨", start=1)}
+# 脚本引用：**文档里**写的 scripts/x.py 应当真的存在，否则照着跑会报「文件不存在」。
+# 只管 .md：脚本注释与回归夹具里的 `scripts/x.py` 是临时目录里的相对路径或占位名，
+# 按仓库文件核它们会成片误报（夹具写的本来就是不存在的样本）。
+SCRIPT_REF_RE = re.compile(r"scripts/([A-Za-z0-9_]+\.(?:py|sh))")
 
 # 规则实现体豁免：本脚本的叙事词表与回归测试夹具必然逐字包含被检测的词面，
 # 属模式定义而非叙事，故对这两个文件只停用叙事扫描（日期扫描照常生效），并打印 SKIP 保持可见。
@@ -205,6 +230,83 @@ def check_script_inventory(root: Path) -> list[str]:
     ]
 
 
+def check_cross_refs(root: Path) -> list[str]:
+    """技能文档内部的交叉引用必须指得到东西。
+
+    四类引用各自有唯一事实源：H 编号与流程步骤在 `SKILL.md` 的标题/定义行，
+    附录小节在 `SKILL.md` 的 `###` 标题，脚本在 `scripts/` 的真实文件。**只从
+    事实源现采一次**，不维护第二份清单——另写一份清单就又多一个漂移点。
+
+    判据取正面定义：**引用即须命中**，不设「历史小节可以留空指」这类豁免。
+    豁免面每加一处，下一处失效就落在豁免里；而失效的引用读起来完全通顺
+    （「见附录 · 参数速查」），没有任何东西会因此报错，只会让人找不到。
+    """
+    skill = root / "SKILL.md"
+    if not skill.is_file():
+        return []  # --root 指向无 SKILL.md 的目录时，没有事实源可核，不臆断
+    try:
+        stext = skill.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
+        return [f"SKILL.md: 读取失败 {e}"]
+
+    hs = set(H_DEF_RE.findall(stext))
+    # 附录小节标题**只从附录区取**：拿全文标题当候选，会让「附录 · 查重」命中正文里
+    # 「### 5. 查重（阻塞）」，看似通过实则附录里根本没有那节。
+    annex_at = re.search(r"^##\s+[^\n]*附录[^\n]*$", stext, re.M)
+    annex_text = stext[annex_at.start():] if annex_at else ""
+    heads = [h.strip() for h in re.findall(r"^###\s+(.+?)\s*$", annex_text, re.M)]
+    steps = set(STEP_TITLE_RE.findall(stext))
+    have_scripts = {p.name for p in (root / "scripts").glob("*") if p.is_file()}
+
+    def annex_hit(name: str) -> bool:
+        # 标题常带补充说明（「标签树现采（与 H15 互补：…）」），故按包含双向判，
+        # 只要引用的名字能唯一定位到一个标题即可。
+        return any(name in h or h.startswith(name) for h in heads)
+
+    errs: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def note(relp: str, lineno: int, kind: str, name: str, hint: str) -> None:
+        key = (relp, kind, name)
+        if key in seen:
+            return
+        seen.add(key)
+        errs.append(f"{relp}:{lineno}: {kind}「{name}」指向不存在的目标——{hint}")
+
+    for p in sorted(root.glob("*.md")):
+        if is_transient(p.name):
+            continue  # 抓取件里别人写的引用不归我们维护
+        try:
+            text = p.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError):
+            continue  # 读取失败已在 scan_file 里报过，不重复
+        relp = p.name
+
+        for i, ln in enumerate(text.splitlines(), start=1):
+            for m in SCRIPT_REF_RE.finditer(ln):
+                if m.group(1) not in have_scripts:
+                    note(relp, i, "脚本", m.group(1),
+                         "`scripts/` 下没有这个文件，照着跑只会报文件不存在")
+            for m in H_REF_RE.finditer(ln):
+                ref = "H" + m.group(1)
+                if ref not in hs:
+                    note(relp, i, "硬限编号", ref,
+                         "`SKILL.md` 第二节里没有该条的定义，引用已悬空")
+            for m in STEP_REF_RE.finditer(ln):
+                n = CIRCLED_STEPS.get(m.group(1), m.group(1))
+                if n not in steps:
+                    note(relp, i, "流程步骤", f"第 {n} 步",
+                         "`SKILL.md` 第三节没有该编号的步骤标题")
+            for m in ANNEX_REF_TRIGGER.finditer(ln):
+                rest = ln[m.end():m.end() + 60]
+                cut = min([rest.find(c) for c in ANNEX_REF_STOP if c in rest] or [len(rest)])
+                name = rest[:cut].strip()
+                if name and not annex_hit(name):
+                    note(relp, i, "附录小节", name,
+                         "`SKILL.md` 附录里没有这个标题，按名字找不到那段")
+    return errs
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -231,6 +333,8 @@ def main(argv=None):
 
     # 跨文件结构检查：单文件扫描看不到「README 漏了某个脚本」这类缺项
     errs += check_script_inventory(root)
+    # 同理，也看不到「引用的编号/小节/脚本已不存在」——引用读起来通顺，只是指空了
+    errs += check_cross_refs(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):
