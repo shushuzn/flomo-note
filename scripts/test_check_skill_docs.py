@@ -177,11 +177,58 @@ def run_env_doc_case():
     return ok
 
 
+def run_inventory_case():
+    """README 是项目入口：漏列脚本必须判错，且这一项要计入 main 的退出码。
+
+    反面样本来自真实漂移：publish/dedup/tagcheck/fetch_article 与两个 scan_*
+    都不在 README，而前三个是每轮必用的流程脚本——按 README 手跑会漏掉写云这一步。
+    """
+    ok = True
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "scripts").mkdir()
+        (root / "scripts" / "publish.py").write_text("# 写云一条链\n", encoding="utf-8")
+        (root / "scripts" / "test_publish.py").write_text("# 用例\n", encoding="utf-8")
+        (root / "README.md").write_text("# 项目\n\n暂无说明。\n", encoding="utf-8")
+
+        errs = CD.check_script_inventory(root)
+        hit = any("publish.py" in m for m in errs) and len(errs) == 1
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  漏列非测试脚本被判错（{len(errs)} 条）")
+
+        no_test = not any("test_publish.py" in m for m in errs)
+        ok &= no_test
+        print(f"{'PASS' if no_test else 'FAIL'}  测试脚本不要求列出")
+
+        (root / "README.md").write_text(
+            "# 项目\n\n- `publish.py` 写云一条链\n", encoding="utf-8")
+        clean = CD.check_script_inventory(root) == []
+        ok &= clean
+        print(f"{'PASS' if clean else 'FAIL'}  补上后不再报")
+
+        # 退出码必须被结构问题拉红，否则这一项等于只打印
+        rc = CD.main(["--root", str(root), "--quiet"])
+        ok &= rc == 0
+        print(f"{'PASS' if rc == 0 else 'FAIL'}  齐全时 main 退出码 0（{rc}）")
+
+        (root / "README.md").write_text("# 项目\n", encoding="utf-8")
+        rc_bad = CD.main(["--root", str(root), "--quiet"])
+        ok &= rc_bad == 1
+        print(f"{'PASS' if rc_bad == 1 else 'FAIL'}  漏列时 main 退出码 1（{rc_bad}）")
+
+        # --root 指向没有 README 的外部目录时，不因缺入口文档判错
+        (root / "README.md").unlink()
+        ok &= CD.check_script_inventory(root) == []
+        print(f"{'PASS' if CD.check_script_inventory(root) == [] else 'FAIL'}  无 README 时不报")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
     results.append(run_external_root_case())
     results.append(run_env_doc_case())
+    results.append(run_inventory_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

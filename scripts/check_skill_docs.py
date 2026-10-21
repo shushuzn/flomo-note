@@ -6,7 +6,12 @@
 「具体日期」与「历史事件叙事」——二者一律只作抽象陈述。
 
   ERR  具体日期：YYYY-MM-DD、YYYY/M/D、YYYY.M.D、YYYY年M月[D日]
+  ERR  README 漏列脚本：`scripts/` 下每个非 test_ 的 .py 都必须在 README 出现
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
+
+第二条是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
+不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
 
 **任何技能文档都不豁免日期**（H28 是严格禁止，无例外）：ENVIRONMENT.md 记录
 环境事实时只写「是什么」——IP、端口、路径、命令，不写「哪天发生的」。
@@ -172,6 +177,34 @@ def scan_file(path: Path, root: Path):
     return errs, warns, exempts
 
 
+def check_script_inventory(root: Path) -> list[str]:
+    """README 是项目入口：`scripts/` 下每个非测试脚本都必须在 README 出现一次。
+
+    判据取正面定义——**全部列出**，不设「工具类可以不写」的豁免。留一个口子，
+    下一个脚本就会落在口子里；而缺项只表现为「照 README 找不到这一步」，没人会
+    为此报错，直到有人真去手跑才发现少了个主干脚本。实测漂移过：`publish.py`、
+    `dedup.py`、`tagcheck.py`、`fetch_article.py` 与两个 scan_* 都不在 README，
+    其中前三个是每轮必用的流程脚本。
+    """
+    readme = root / "README.md"
+    scripts = root / "scripts"
+    if not readme.exists() or not scripts.is_dir():
+        return []
+    try:
+        text = readme.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
+        return [f"README.md: 读取失败 {e}"]
+    missing = sorted(
+        p.name for p in scripts.glob("*.py")
+        if not p.name.startswith("test_") and p.name not in text
+    )
+    return [
+        f"README.md: 未列出 scripts/{n}——`scripts/` 下每个非测试脚本都须在 README "
+        f"出现一次（清单缺项等于让人不知道有这一步）"
+        for n in missing
+    ]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -195,6 +228,9 @@ def main(argv=None):
         errs += e
         warns += w
         exempts += x
+
+    # 跨文件结构检查：单文件扫描看不到「README 漏了某个脚本」这类缺项
+    errs += check_script_inventory(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):
