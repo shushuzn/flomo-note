@@ -14,7 +14,7 @@ flomo-note 是一个 AI 辅助的云端笔记技能，用于将看到的好内�
 
 - **卡片形态** = 一行标签段 + 概念名称行 + 正文，一事一卡、标签聚合
 - **本地不落盘**：笔记只存在于 flomo 云端账号，本地仅存放技能文档与工具脚本
-- **流程机械化**：抓取 → 验证 → 提炼 → 定标签 → 查重 → 写作 → 自检 → 复盘 → 写云；其中验证/核对/查重/复盘由流程闸门脚本强制留痕，漏做无法通过自检
+- **流程机械化**：抓取 → 验证 → 提炼 → 定标签 → 查重 → 写作 → 自检并写云 → 复盘；其中验证/核对/查重/复盘由流程闸门脚本强制留痕，漏做无法通过自检
 
 ---
 
@@ -57,15 +57,15 @@ JSON
 
 发送链接给 AI 助手，助手按 9 步 SOP 执行：
 
-1. **抓取** — webfetch 为主，SPA 补 curl；抓回即读回正文
+1. **抓取** — `fetch_article.py` 取页并抽正文（webfetch 为主，SPA 补 curl）；抓回即读回全文
 2. **验证** — 专业术语/机构/产品/模型简称必须 `search` 现查（阻塞；结果留痕 `verify.json`）
 3. **提炼** — 滤营销话术，留事实/数据/因果链
-4. **定标签** — `tag_tree` 现采，严格两级 `#顶层/二级`（阻塞）
-5. **查重** — `memo_search` 关键词 + `tag_tree` 同主标签逐条比对，两路并查（阻塞）
+4. **定标签** — `tagcheck.py` 现采标签树，核存在性与严格两级 `#顶层/二级`（阻塞）
+5. **查重** — `dedup.py` 关键词逐次现查 + 同主标签逐条比对，两路并查（阻塞）
 6. **写作** — 按卡片格式写作
-7. **写云前自检** — 先过流程闸门 `sop_gate.py`，再过文本质检 `validate_memo.py`，均 EXIT=0 才许写云（阻塞）
-8. **复盘** — 三路现查（`memo_search` + `tag_tree` + `memo_recommended` 传本卡 id）
-9. **更新云端** — `memo_update` 覆盖式或 `tag_rename`
+7. **自检并写云** — `publish.py --draft <草稿> --verify <留痕>` 一条链跑完闸门 → 质检 → 写云（只发一次）→ 写后复核；改既有卡加 `--update-id`（阻塞）
+8. **复盘** — `dedup.py --id <本卡 id>` 定向复查近邻，`verify_card.py --show-body` 打全文做人读自查
+9. **更新云端** — 改既有卡同样走这条链的 `--update-id <id>`（写前确认概念名、写后给覆盖差异）；标签改名用 `tag_rename`
 
 ---
 
@@ -83,10 +83,15 @@ flomo-note/
 ├── scripts/
 │   ├── memo_util.py           # 签名/指纹/关键词 唯一实现
 │   ├── flomo_client.py        # flomo MCP 调用唯一入口
+│   ├── fetch_article.py       # 取页并抽正文（写卡第 1 步的抓取通道）
+│   ├── tagcheck.py            # 定标签前核对标签树（第 4 步）
+│   ├── dedup.py               # 查重与近邻复查的逐次现查（第 5 / 8 步）
 │   ├── sop_gate.py            # SOP 流程闸门（代跑核对/查重/复盘，出凭证）
 │   ├── validate_memo.py       # 写云前文本质检 + 闸门凭证校验
+│   ├── publish.py             # 写云一条链：闸门 → 质检 → 建卡/覆盖 → 复核
 │   ├── verify_card.py         # 写云后回读全文自查（H11 的机器可判部分）
 │   ├── check_skill_docs.py    # 技能文档内容纪律自检
+│   ├── scan_qualified_concepts.py / scan_concept_duplication.py  # 概念名切片取证（只读）
 │   ├── sni_fetch.py           # SNI 被阻断时的取件通道
 │   ├── extract_arxiv_html.py  # arXiv HTML 正文抽取
 │   ├── cleanup.py             # 收尾强制清理残留（文件与目录）
@@ -103,7 +108,7 @@ flomo-note/
 └── README.md                  # 本文件
 ```
 
-> 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后 13 套仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。
+> 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。**有多少套不在这里写死**——`scripts/test_*.py` 即清单，数量以 `bash scripts/run_tests.sh` 的输出为准。
 
 | 文件 | 职责 |
 |------|------|
@@ -111,9 +116,14 @@ flomo-note/
 | `SKILL.md` | 执行细则：卡片格式、标签规则、SOP 流程、硬限清单（H1–Hn） |
 | `ENVIRONMENT.md` | 环境事实：平台、路径、token 来源、代理与推送通道 |
 | `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现 |
+| `fetch_article.py` | 取页并抽正文落 `_tmp/`：站内专用选择器优先、通用兜底，附带标题与字数 |
+| `tagcheck.py` | 标签树现采 + 存在性 / 严格两级 / 同顶层兄弟二级（树被截断即非 0 退出） |
+| `dedup.py` | 查重执行器：每个关键词单独调一次、id 去重后分批取全文；`--id` 走复盘路、`--ids` 点名读全文 |
 | `sop_gate.py` | 流程闸门：代跑查重两路 / 复盘三路，校验验证留痕 |
 | `validate_memo.py` | 文本质检（格式、标签、来源、载体、字数）+ 闸门凭证校验 |
-| `verify_card.py` | 写云后回读全文，做 H11 里可机械判的那部分（形态、占位符、净字符数），并列出脚本判不了的两项；加 `--draft <草稿>` 时按写路径同口径与本地草稿逐字比对（丢空行/去行内空白/还原转义后），不一致即退出码 1 |
+| `publish.py` | 写云一条链：闸门 → 质检 → 建卡（只发一次）/ 覆盖（写前比对概念名 + 落改前快照）→ 机器项复核 → 覆盖差异 |
+| `verify_card.py` | 写云后回读全文，做 H11 里可机械判的那部分（形态、占位符、净字符数），并列出脚本判不了的两项；`--draft <草稿>` 按写路径同口径逐字比对，`--show-body` 打印全文供人读 |
+| `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
 | `serve_console.py` + `web/` | 项目控制台：本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力） |
 | `console_cloud.py` | 控制台云端访问层：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收 |
 | `console_data.py` | 控制台读仓库：解析技能文档与脚本清单，产出统计字段 |
@@ -221,6 +231,10 @@ python scripts/serve_console.py --port 9000
 
 ## 脚本工具
 
+**写卡不要照下面这些底层命令手拼**：闸门、质检、写云、复核由 `publish.py` 一条链串起来，
+手拼会绕过写前确认与「只发一次」的约束（见 `SKILL.md` 第 7 步）。本段列的是底层通道与
+单点检查的用法，供排查与特殊场景使用。
+
 ### flomo_client.py
 
 ```bash
@@ -275,21 +289,20 @@ python scripts/validate_memo.py --no-gate memo_body.txt
 
 ```mermaid
 graph LR
-    A[用户发链接] --> B(webfetch 抓取)
+    A[用户发链接] --> B(fetch_article 取正文)
     B --> C{抓取成功?}
-    C -->|否| D[补 curl / search 替代来源]
+    C -->|否| D[补 curl / 换来源]
     C -->|是| E[search 验证术语]
-    E --> F[tag_tree 现采]
-    F --> G[memo_search 关键词 + 同标签逐条 两路查重]
+    E --> F[tagcheck 现采标签树]
+    F --> G[dedup 两路查重]
     G --> H{命中?}
-    H -->|同事件| I[memo_update 合并]
+    H -->|同事件| I[publish.py --update-id 合并]
     H -->|无重复| J[按格式写作]
-    J --> K[sop_gate.py 流程闸门]
-    K --> L[validate_memo.py 文本质检]
-    L --> M{均 EXIT=0?}
+    J --> K[publish.py：闸门 → 质检]
+    K --> M{均 EXIT=0?}
     M -->|否| N[修正后重试]
-    M -->|是| O[memo_create 写云]
-    O --> P[memo_recommended 传本卡 id 复盘]
+    M -->|是| O[写云（只发一次）]
+    O --> P[verify_card 复核 + dedup --id 复盘]
 ```
 
 ---
