@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # run_tests.sh — 一键跑完全部离线回归用例（维护约定）。
 #
-# 改动脚本后须跑其配套用例，逐个手跑既重复又易漏。本脚本把 scripts/test_*.py
-# 全部串起来，并一并跑技能文档内容纪律自检（check_skill_docs.py）；任一失败即非 0 退出。
+# 改动脚本后须跑其配套用例，逐个手跑既重复又易漏。本脚本把 tests/test_*.py
+# 全部串起来，并一并跑技能文档内容纪律自检（scripts/check_skill_docs.py）；任一失败即非 0 退出。
 # 用例全部离线（不联网），可随时安全重跑。
+#
+# 工具在 scripts/，用例在 tests/：判据是「它是不是交付物」——用例不进任何流程，
+# 只用来验证流程脚本，混在一层里会让 scripts/ 看不出哪些是入口。
+# 命名硬约束：tests/ 下的 .py 必须叫 test_*.py，否则下面这行 glob 收不到它，
+# 用例会静默不跑（check_skill_docs.py 已把这条做成 ERR）。
 #
 # 用法：
 #   bash scripts/run_tests.sh
@@ -30,6 +35,14 @@ rc=0
 total=0
 failed=0
 
+# 用例目录必须真的有 test_*.py。空目录（或全被改名 / 搬走）时，下面的 glob 会原样
+# 传成字面量 `tests/test_*.py` 去跑，报的是一句「can't open file」——看起来像环境
+# 问题，实际是**一个用例都没跑**。这里显式拦下来，报成它本来的样子。
+if ! compgen -G "tests/test_*.py" > /dev/null; then
+  echo "[tests] tests/ 下没有任何 test_*.py：用例全丢了，或文件名不符合 test_ 前缀" >&2
+  exit 1
+fi
+
 run_one() {
   local label="$1"; shift
   total=$((total + 1))
@@ -46,7 +59,7 @@ run_one() {
 }
 
 run_one "check_skill_docs.py" "$PY" scripts/check_skill_docs.py
-for t in scripts/test_*.py; do
+for t in tests/test_*.py; do
   run_one "$(basename "$t")" "$PY" "$t"
 done
 

@@ -27,7 +27,7 @@
     异常统一转 `CloudError`；
   - **脱敏**：可用性状态只含布尔与理由，任何返回值里都不出现 token。
 
-用法：python scripts/test_console_cloud.py     退出码 0=全过，1=有失败。
+用法：python tests/test_console_cloud.py     退出码 0=全过，1=有失败。
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def check(name, ok, detail=""):
 
 
 def load_module():
-    here = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent.parent / "scripts"
     sys.path.insert(0, str(here))
     spec = importlib.util.spec_from_file_location("console_cloud", here / "console_cloud.py")
     mod = importlib.util.module_from_spec(spec)
@@ -237,7 +237,7 @@ def run_whitelist():
     # 多一个 = 留了没人用的权限空位；少一个 = 方法一调就抛「白名单外工具」。
     # 读 / 写分开核：`write=True` 的调用点归写白名单，其余归读白名单——
     # 这样「读方法里混进一次写」也会被读白名单的对等断言立刻发现。
-    src = (Path(__file__).resolve().parent / "console_cloud.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "console_cloud.py").read_text(encoding="utf-8")
     used_all = set(re.findall(r'self\.call\("(\w+)"', src))
     used_write = set(re.findall(r'self\.call\("(\w+)"[^)]*write=True\)', src))
     used_read = used_all - used_write

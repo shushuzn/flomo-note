@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """validate_memo.py 回归测试。
 
-用法：python scripts/test_validate_memo.py      退出码 0=全过，1=有失败。
+用法：python tests/test_validate_memo.py      退出码 0=全过，1=有失败。
 
 覆盖三个真 bug（表格误报 / --create 读空 / BOM 误判）
 及既有硬限（两级标签），并锁住告警数量防止规则相互干扰。
@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "scripts"
 spec = importlib.util.spec_from_file_location("validate_memo", HERE / "validate_memo.py")
 VM = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(VM)

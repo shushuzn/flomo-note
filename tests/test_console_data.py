@@ -9,7 +9,7 @@
   - 脚本：工具 / 用例分类、配套用例存在性、一句话说明的抽取；
   - 概览：文档规模与统计字段。
 
-用法：python scripts/test_console_data.py     退出码 0=全过，1=有失败。
+用法：python tests/test_console_data.py     退出码 0=全过，1=有失败。
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def check(name, ok, detail=""):
 
 
 def load_module():
-    here = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent.parent / "scripts"
     spec = importlib.util.spec_from_file_location("console_data", here / "console_data.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["console_data"] = mod
@@ -104,7 +104,10 @@ def make_repo(tmp: Path, skill=SKILL_FIXTURE):
     (sdir / "tool_two.sh").write_text(
         "#!/usr/bin/env bash\n# tool_two — 演示脚本。\n#\n# 用法：bash tool_two.sh\nset -e\n", encoding="utf-8"
     )
-    (sdir / "test_tool_one.py").write_text('"""用例。"""\n', encoding="utf-8")
+    # 用例放在 tests/：配套关系跨目录核，避免「工具全无回归」这种假象
+    tdir = tmp / "tests"
+    tdir.mkdir(exist_ok=True)
+    (tdir / "test_tool_one.py").write_text('"""用例。"""\n', encoding="utf-8")
     return tmp
 
 

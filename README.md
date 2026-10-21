@@ -73,49 +73,33 @@ JSON
 
 ```
 flomo-note/
-├── AGENTS.md                  # 项目总则（顶层目标与全局约定）
-├── SKILL.md                   # 执行细则（唯一细则源）
-├── ENVIRONMENT.md             # 运行环境事实（路径、代理、通道）
-├── web/                       # 项目控制台前端（Claude 风格，静态资源）
-│   ├── index.html
-│   ├── styles.css
-│   └── app.js
-├── scripts/
-│   ├── memo_util.py           # 签名/指纹/关键词 唯一实现
-│   ├── flomo_client.py        # flomo MCP 调用唯一入口
-│   ├── fetch_article.py       # 取页并抽正文（写卡第 1 步的抓取通道）
-│   ├── tagcheck.py            # 定标签前核对标签树（第 4 步）
-│   ├── dedup.py               # 查重与近邻复查的逐次现查（第 5 / 8 步）
-│   ├── sop_gate.py            # SOP 流程闸门（代跑标签核对/查重/复盘，出凭证）
-│   ├── validate_memo.py       # 写云前文本质检 + 闸门凭证校验
-│   ├── publish.py             # 写云一条链：闸门 → 质检 → 建卡/覆盖 → 复核
-│   ├── verify_card.py         # 写云后回读全文自查（H11 的机器可判部分）
-│   ├── check_skill_docs.py    # 技能文档内容纪律自检
-│   ├── scan_qualified_concepts.py / scan_concept_duplication.py  # 概念名切片取证（只读）
-│   ├── sni_fetch.py           # SNI 被阻断时的取件通道
-│   ├── extract_arxiv_html.py  # arXiv HTML 正文抽取
-│   ├── cleanup.py             # 收尾强制清理残留（文件与目录）
-│   ├── git_tunnel.py          # GitHub 本地透传通道
-│   ├── push_skill.sh          # 文档改动强制推送
-│   ├── serve_console.py       # 控制台本地服务（静态文件 + JSON 接口）
-│   ├── console_cloud.py       # 控制台云端只读访问（白名单 / 字段精简）
-│   ├── console_data.py        # 控制台本地数据抽取（供上面两者共用）
-│   ├── run_audit.sh / audit_skill.sh    # 技能文档结构审计
-│   ├── run_tests.sh           # 一键跑全部离线回归
-│   └── test_*.py              # 各脚本配套回归用例
+├── SKILL.md / AGENTS.md / ENVIRONMENT.md   # 细则 / 总则 / 环境事实（三份各有唯一职责）
+├── scripts/     # 工具：写卡流程、文档自检、控制台后端 —— 逐个职责见下表
+├── tests/       # 回归用例 test_*.py，与 scripts/ 一一配套，全离线
+├── web/         # 项目控制台前端静态资源（index.html / styles.css / app.js）
 ├── .github/workflows/ci.yml   # 每次推送/PR 跑同一条 run_tests.sh（不配 secrets）
 ├── .gitignore                 # 忽略凭据、本机私有导出与现采缓存
-└── README.md                  # 本文件
+└── README.md
 ```
 
-> 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。**有多少套不在这里写死**——`scripts/test_*.py` 即清单，数量以 `bash scripts/run_tests.sh` 的输出为准。
+> **树只说位置，职责只在下表**。此前树里给每个文件挂注释、表格里再写一遍职责，同一件事有两处描述——改一处忘另一处就会出现「树里说 A、表里说 B」，而没有任何检查会发现。现在文件清单的唯一事实源是下表。
+
+> **工具在 `scripts/`，用例在 `tests/`**：判据是「它是不是交付物」——用例不进任何写卡流程，只用来验证流程脚本。混在一层里会让 `scripts/` 看不出哪些是入口，改脚本时也容易误以为用例也能直接跑进流程。
+
+### 文档（唯一事实源）
 
 | 文件 | 职责 |
 |------|------|
-| `AGENTS.md` | 项目总则：全局约定与收口原则 |
-| `SKILL.md` | 执行细则：卡片格式、标签规则、SOP 流程、硬限清单（H1–Hn） |
+| `SKILL.md` | 执行细则：卡片格式、标签规则、SOP 流程、硬限清单（H1–Hn）。**唯一细则源**，其他文档只引编号 |
+| `AGENTS.md` | 项目总则：顶层目标与全局约定，不复制 SKILL 细节 |
 | `ENVIRONMENT.md` | 环境事实：平台、路径、token 来源、代理与推送通道 |
-| `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现 |
+
+### 写卡流程（按执行顺序）
+
+| 文件 | 职责 |
+|------|------|
+| `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现（多处共用，改动影响面最大） |
+| `flomo_client.py` | flomo MCP 调用唯一入口：握手、协议发现、写后回读验收 |
 | `fetch_article.py` | 取页并抽正文落 `_tmp/`：站内专用选择器优先、通用兜底，附带标题与字数 |
 | `tagcheck.py` | 标签树现采 + 存在性 / 严格两级 / 同顶层兄弟二级（树被截断即非 0 退出） |
 | `dedup.py` | 查重执行器：每个关键词单独调一次、id 去重后分批取全文；`--id` 走复盘路、`--ids` 点名读全文 |
@@ -123,10 +107,41 @@ flomo-note/
 | `validate_memo.py` | 文本质检（格式、标签、来源、载体、字数）+ 闸门凭证校验 |
 | `publish.py` | 写云一条链：闸门 → 质检 → 建卡（只发一次）/ 覆盖（写前比对概念名 + 落改前快照）→ 机器项复核 → 覆盖差异 |
 | `verify_card.py` | 写云后回读全文，做 H11 里可机械判的那部分（形态、占位符、净字符数），并列出脚本判不了的两项；`--draft <草稿>` 按写路径同口径逐字比对，`--show-body` 打印全文供人读 |
+| `cleanup.py` | 收尾强制清理残留（文件与目录），跨进程共用一份基准时刻 |
+
+### 控制台脚本
+
+| 文件 | 职责 |
+|------|------|
+| `serve_console.py` + `web/` | 本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力） |
+| `console_cloud.py` | 云端访问层：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收 |
+| `console_data.py` | 读仓库：解析技能文档与脚本清单（工具在 `scripts/`、用例在 `tests/`，配套关系跨目录核），产出统计字段 |
+
+### 文档与治理
+
+| 文件 | 职责 |
+|------|------|
+| `check_skill_docs.py` | 内容纪律自检（日期 / 叙事）+ 四项跨文件结构检查（README 清单、用例命名、交叉引用、命令行选项） |
+| `run_tests.sh` | 跑 `tests/` 下全部用例与上述自检；CI 与本地共用这一条命令 |
+| `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |
 | `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
-| `serve_console.py` + `web/` | 项目控制台：本地服务 + Claude 风格前端（云端笔记 / 标签 / 参考 / 能力） |
-| `console_cloud.py` | 控制台云端访问层：读 / 写两套白名单、全部已接能力、通用只读执行、字段精简、写路径的两道闸门与回读验收 |
-| `console_data.py` | 控制台读仓库：解析技能文档与脚本清单，产出统计字段 |
+| `push_skill.sh` | 文档改动强制推送（提交 + 推送 + 远端 HEAD 回读核对） |
+
+### 取件与通道
+
+| 文件 | 职责 |
+|------|------|
+| `git_tunnel.py` | GitHub 本地透传通道（候选 IP / 选路 / 回落） |
+| `sni_fetch.py` | SNI 被阻断时的取件通道 |
+| `extract_arxiv_html.py` | arXiv HTML 正文抽取（公式按 MathML 还原） |
+
+### 回归用例
+
+| 文件 | 职责 |
+|------|------|
+| `tests/test_*.py` | 与 `scripts/` 下脚本一一配套，全离线。**必须叫 `test_*.py`**——`run_tests.sh` 按这个 glob 收集，名字不符就不会被跑，且不报任何错 |
+
+> 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。**有多少套不在这里写死**——`tests/test_*.py` 即清单，数量以 `bash scripts/run_tests.sh` 的输出为准。
 
 ---
 

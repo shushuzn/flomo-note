@@ -2,18 +2,22 @@
 """技能文档内容纪律自检（H28 落地；离线、只读、无第三方依赖）。
 
 扫描技能文档（技能目录下的 SKILL.md / AGENTS.md / ENVIRONMENT.md / README.md
-与全部 .py/.sh，以及 --root 下的文档与 scripts/），检测规则文本里混入的
-「具体日期」与「历史事件叙事」——二者一律只作抽象陈述。
+与 `scripts/`、`tests/` 下的全部 .py/.sh，以及 --root 下的文档与脚本），检测规则
+文本里混入的「具体日期」与「历史事件叙事」——二者一律只作抽象陈述。
 
   ERR  具体日期：YYYY-MM-DD、YYYY/M/D、YYYY.M.D、YYYY年M月[D日]
-  ERR  README 漏列脚本：`scripts/` 下每个非 test_ 的 .py 都必须在 README 出现
+  ERR  README 漏列脚本：`scripts/` 下每个 .py 都必须在 README 出现
+  ERR  用例命名：`tests/` 下的 .py 必须以 test_ 开头，否则 run_tests.sh 不执行它
   ERR  内部交叉引用失效：引用的 H 编号 / 附录小节 / 流程步骤 / 脚本名并不存在
   ERR  命令行选项失效：文档里 `scripts/x.py --flag` 的 `--flag` 不是该脚本认识的选项
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-后三条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后四条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
+
+用例命名同理：`run_tests.sh` 只跑 `tests/test_*.py`，名字写偏的用例永远不执行，
+而它「没有失败」，看起来一切正常。
 
 交叉引用同理且更隐蔽：SKILL.md 靠编号互相引用（「见 H11」「见附录 · 标签树现采」
 「第 5 步」），删条目、改标题、换脚本名之后，**引用它还留在原处读起来完全通顺**，
@@ -78,17 +82,20 @@ ANNEX_REF_STOP = "」』”\"，。、；：）)\n*`"
 STEP_REF_RE = re.compile(r"第\s*([0-9]|[①②③④⑤⑥⑦⑧⑨])\s*步")
 STEP_TITLE_RE = re.compile(r"^###\s+([1-9])\.", re.M)
 CIRCLED_STEPS = {c: str(i) for i, c in enumerate("①②③④⑤⑥⑦⑧⑨", start=1)}
-# 脚本引用：**文档里**写的 scripts/x.py 应当真的存在，否则照着跑会报「文件不存在」。
+# 脚本引用：**文档里**写的 scripts/x.py / tests/x.py 应当真的存在，否则照着跑会报
+# 「文件不存在」。目录名一并捕获、各自到对应目录核——工具与用例分属两层，只认
+# scripts/ 会让「用例搬走后文档还写着 scripts/test_x.py」这类悬空引用静默通过。
 # 只管 .md：脚本注释与回归夹具里的 `scripts/x.py` 是临时目录里的相对路径或占位名，
 # 按仓库文件核它们会成片误报（夹具写的本来就是不存在的样本）。
-SCRIPT_REF_RE = re.compile(r"scripts/([A-Za-z0-9_]+\.(?:py|sh))")
+SCRIPT_REF_RE = re.compile(r"(scripts|tests)/([A-Za-z0-9_]+\.(?:py|sh))")
 
 # ---- 文档里的命令行 ↔ 脚本真实认识的选项 ----
 # 只认**片段开头**的命令（`python scripts/x.py …` / `x.py …`）。
 # 不按「离哪个脚本名最近」归属：自然语言句子里「…见 scripts/sop_gate.py…，
 # `validate_memo.py --no-gate` 才生效」会把 --no-gate 算到 sop_gate 头上（实测 2 条假报），
 # 而脚本名在句中的位置与参数归属没有稳定关系。片段开头则是无歧义的命令形态。
-CLI_CMD_RE = re.compile(r"^(?:python\s+|bash\s+)?(?:scripts/)?([a-z_]+\.py)\b(.*)$")
+CLI_CMD_RE = re.compile(
+    r"^(?:python\s+|bash\s+)?(?:(scripts|tests)/)?([a-z_]+\.py)\b(.*)$")
 CLI_FLAG_RE = re.compile(r"(?<![\w-])(--[a-z][a-z0-9_-]*)")
 # 各脚本的解析风格不同，四种都要覆盖：argparse 的 add_argument、手写的 `a == "--x"`、
 # `arg in ("--a", "--b")` 元组、以及 `"--x" in argv`。只认一种会让其余脚本的选项集合
@@ -181,9 +188,13 @@ def iter_targets(root: Path):
                 yield p
         elif p.suffix.lower() in SCRIPT_SUFFIXES and fresh(p):
             yield p
-    scripts = root / "scripts"
-    if scripts.is_dir():
-        for p in sorted(scripts.rglob("*")):
+    # scripts/ 与 tests/ 分开收：前者是工具，后者是回归用例。两者都算「我们写下的
+    # 代码」，日期与叙事口径一致；漏收 tests/ 会让用例里的话绕开内容纪律。
+    for sub in ("scripts", "tests"):
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for p in sorted(d.rglob("*")):
             if p.suffix.lower() in SCRIPT_SUFFIXES and fresh(p):
                 yield p
 
@@ -227,31 +238,42 @@ def scan_file(path: Path, root: Path):
 
 
 def check_script_inventory(root: Path) -> list[str]:
-    """README 是项目入口：`scripts/` 下每个非测试脚本都必须在 README 出现一次。
+    """两层清单完整性：README 须列全 `scripts/`，`tests/` 下不得有跑不到的用例。
 
-    判据取正面定义——**全部列出**，不设「工具类可以不写」的豁免。留一个口子，
-    下一个脚本就会落在口子里；而缺项只表现为「照 README 找不到这一步」，没人会
-    为此报错，直到有人真去手跑才发现少了个主干脚本。实测漂移过：`publish.py`、
-    `dedup.py`、`tagcheck.py`、`fetch_article.py` 与两个 scan_* 都不在 README，
-    其中前三个是每轮必用的流程脚本。
+    ① `scripts/` 下每个 .py 都必须在 README 出现一次。判据取正面定义——**全部列出**，
+    不设「工具类可以不写」的豁免。留一个口子，下一个脚本就会落在口子里；而缺项只
+    表现为「照 README 找不到这一步」，没人会为此报错，直到有人真去手跑才发现少了
+    个主干脚本。实测漂移过：`publish.py`、`dedup.py`、`tagcheck.py`、
+    `fetch_article.py` 与两个 scan_* 都不在 README，其中前三个是每轮必用的流程脚本。
+    用例已全部移入 `tests/`，故这里不再需要 `test_` 豁免——**不可达的分支要删掉**，
+    留着它只是让下一个人以为测试还在 scripts/。
+
+    ② `tests/` 下的 .py 必须以 `test_` 开头。`run_tests.sh` 按 `tests/test_*.py`
+    glob 收集，名字不符就不会被跑：用例写得再好，也只是一份没人执行的文件，
+    而且不报任何错——静默失效比红更坏。
     """
+    errs: list[str] = []
     readme = root / "README.md"
     scripts = root / "scripts"
-    if not readme.exists() or not scripts.is_dir():
-        return []
-    try:
-        text = readme.read_text(encoding="utf-8-sig")
-    except (UnicodeDecodeError, OSError) as e:
-        return [f"README.md: 读取失败 {e}"]
-    missing = sorted(
-        p.name for p in scripts.glob("*.py")
-        if not p.name.startswith("test_") and p.name not in text
-    )
-    return [
-        f"README.md: 未列出 scripts/{n}——`scripts/` 下每个非测试脚本都须在 README "
-        f"出现一次（清单缺项等于让人不知道有这一步）"
-        for n in missing
-    ]
+    tests = root / "tests"
+    if readme.exists() and scripts.is_dir():
+        try:
+            text = readme.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError) as e:
+            return [f"README.md: 读取失败 {e}"]
+        errs += [
+            f"README.md: 未列出 scripts/{n}——`scripts/` 下每个脚本都须在 README "
+            f"出现一次（清单缺项等于让人不知道有这一步）"
+            for n in sorted(p.name for p in scripts.glob("*.py") if p.name not in text)
+        ]
+    if tests.is_dir():
+        errs += [
+            f"tests/{p.name}: 不以 test_ 开头，`run_tests.sh` 不会执行它"
+            f"（用例静默失效，比跑红更难发现）"
+            for p in sorted(tests.glob("*.py"))
+            if not p.name.startswith("test_")
+        ]
+    return errs
 
 
 def check_cross_refs(root: Path) -> list[str]:
@@ -280,7 +302,10 @@ def check_cross_refs(root: Path) -> list[str]:
     annex_text = stext[annex_at.start():] if annex_at else ""
     heads = [h.strip() for h in re.findall(r"^###\s+(.+?)\s*$", annex_text, re.M)]
     steps = set(STEP_TITLE_RE.findall(stext))
-    have_scripts = {p.name for p in (root / "scripts").glob("*") if p.is_file()}
+    have = {
+        d: {p.name for p in (root / d).glob("*") if p.is_file()}
+        for d in ("scripts", "tests")
+    }
 
     def annex_hit(name: str) -> bool:
         # 标题常带补充说明（「标签树现采（与 H15 互补：…）」），故按包含双向判，
@@ -308,9 +333,10 @@ def check_cross_refs(root: Path) -> list[str]:
 
         for i, ln in enumerate(text.splitlines(), start=1):
             for m in SCRIPT_REF_RE.finditer(ln):
-                if m.group(1) not in have_scripts:
-                    note(relp, i, "脚本", m.group(1),
-                         "`scripts/` 下没有这个文件，照着跑只会报文件不存在")
+                d, name = m.group(1), m.group(2)
+                if name not in have[d]:
+                    note(relp, i, "脚本", name,
+                         f"`{d}/` 下没有这个文件，照着跑只会报文件不存在")
             for m in H_REF_RE.finditer(ln):
                 ref = "H" + m.group(1)
                 if ref not in hs:
@@ -383,13 +409,15 @@ def check_doc_cli_flags(root: Path) -> list[str]:
                 m = CLI_CMD_RE.match(seg.strip())
                 if not m:
                     continue
-                name, rest = m.group(1), m.group(2)
-                script = root / "scripts" / name
+                name, rest = m.group(2), m.group(3)
+                sub = m.group(1) or "scripts"  # 不带目录前缀时按主工具目录解析
+                script = root / sub / name
                 if not script.is_file():
                     continue  # 脚本不存在由交叉引用检查报，这里不重复
-                if name not in cache:
-                    cache[name] = script_options(script)
-                allowed = cache[name]
+                ckey = f"{sub}/{name}"
+                if ckey not in cache:
+                    cache[ckey] = script_options(script)
+                allowed = cache[ckey]
                 if not allowed:
                     continue  # 采不到选项（换了不认识的解析风格）时整段跳过，不臆断
                 for flag in CLI_FLAG_RE.findall(rest):

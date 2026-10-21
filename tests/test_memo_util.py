@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent / "scripts"
 spec = importlib.util.spec_from_file_location("memo_util", HERE / "memo_util.py")
 MU = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MU)
@@ -170,7 +170,7 @@ def run_slice_qualifiers():
           MU.concept_head("") == "" and MU.concept_head(None) == "")
 
     # 两侧同源契约：调用方不得自带切片正则
-    root = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent / "scripts"
     for fn in ("validate_memo.py", "scan_qualified_concepts.py",
                "scan_concept_duplication.py"):
         src = (root / fn).read_text(encoding="utf-8")

@@ -465,7 +465,7 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 - `scripts/scan_concept_duplication.py` — 概念名取证：归一化后找出被限定切成平行卡的同名簇（H6b 取证，只读）。
 - `scripts/scan_qualified_concepts.py` — 概念名取证：统计概念名带切片限定的卡占比（H6b 定量依据，只读）。两者共用同一份标签解析与取卡实现。
 
-> 其余脚本（`memo_util.py` 公共实现、各测试用例、`run_tests.sh` 一键回归、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
+> 其余脚本（`memo_util.py` 公共实现、`tests/` 下各回归用例、`run_tests.sh` 一键回归、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
 
 ### 技能文档治理（与写卡执行无关）
 
