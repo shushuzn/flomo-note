@@ -220,20 +220,21 @@ def lost_readings(before: str, after: str) -> list[str]:
     故**整行删除的来源行**里的读数全部从基准里扣掉（引文标题里的数字不是卡片内容），
     **整行删除的状态行**里的读数只扣「保留行里也有同值读数」的那几份（它可能是某个
     读数的唯一载体）。整行删掉的是要点行时照旧报（那才是真丢），行内删改也照旧报。
+
+    「哪几行被删了」按**该行在草稿里是否还以原样存在**认，不按 diff 的 opcode 形状认：
+    状态行紧挨着一段被改写的正文时，SequenceMatcher 会把「删行 + 改行」并成一个
+    replace 段，按 tag == "delete" 收行就整段漏认——实测工业学大庆卡（给状态行
+    上一行的括注补内容、同轮删状态行），状态行里三个与正文重复的读数（600万/100%/1亿）
+    全被报成丢失，而卡里一个没少。删除是「草稿里不含这一行」的事实，与对齐形状无关；
+    宁可漏豁免（多拦一次，人来看），也不能把「改行+删行」并段时真丢的读数放过去。
     """
     old, new = readings(before), readings(after)
     old_lines, new_lines = _norm_lines(before), _norm_lines(after)
-    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
-    src_idx, status_idx = set(), set()
-    for tag, i1, i2, _j1, _j2 in sm.get_opcodes():
-        if tag != "delete":
-            continue
-        for k in range(i1, i2):
-            ln = old_lines[k]
-            if _SRC_LINE_RE.match(ln):
-                src_idx.add(k)
-            elif _STATUS_LINE_RE.match(ln):
-                status_idx.add(k)
+    remain = set(new_lines)
+    src_idx = {k for k, ln in enumerate(old_lines)
+               if ln not in remain and _SRC_LINE_RE.match(ln)}
+    status_idx = {k for k, ln in enumerate(old_lines)
+                  if ln not in remain and _STATUS_LINE_RE.match(ln)}
     allow = readings("\n".join(old_lines[k] for k in sorted(src_idx)))
     kept = readings("\n".join(ln for k, ln in enumerate(old_lines)
                               if k not in src_idx and k not in status_idx))

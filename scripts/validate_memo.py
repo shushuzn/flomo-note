@@ -97,6 +97,15 @@ _UNSUPPORTED_TAG_RE = re.compile(
 )
 # 汉字：真 HTML 标签的标签体（标签名 + 属性）不会含汉字，含汉字即误匹配。
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+# 5.5) 旧格式状态行（「状态：…」/「当前状态：…」/「- 1. 进展状态：…」）：卡片格式硬限
+# 禁状态行。判据与批量清状态行的脚本（`_tmp/drop_status.py`）共用这一份正则——各写一份
+# 必然漂移：脚本按宽口径删行、判据按窄口径复查，漏删的永远不报。
+META_STATUS_LINE_RE = re.compile(
+    r"^\s*(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
+    r"(?:当前|进展|最新|追踪|更新|既往)?"
+    r"(状态)"
+    r"(?:说明|信息|描述)?\s*[：:]"
+)
 
 
 # HTML 自闭合（void）标签：无闭标签形态，本身即完整标签。
@@ -377,19 +386,15 @@ def check(content):
     # 5.5) 旧格式遗留检测：状态行（WARN 提示，不阻塞写云）
     # 说明：**来源类**行（来源：/ 报道：/ 参考：…）已由 5.8) 以 ERR 硬阻断，此处不再重复提示，
     # 只保留「状态」类的 WARN——状态行（状态：/ 当前状态：/ 进展状态：）是历史卡遗留，属人工判断项。
-    meta_source_re = re.compile(
-        r"^\s*(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
-        r"(?:当前|进展|最新|追踪|更新|既往)?"
-        r"(状态)"
-        r"(?:说明|信息|描述)?\s*[：:]"
-    )
+    # 判据本身在模块级（META_STATUS_LINE_RE），与批量清状态行的脚本共用同一份正则：
+    # 各写一份必然漂移——脚本按自己的宽口径删行，判据却按窄口径复查，漏删的永远不报。
     nonempty = [i for i, ln in enumerate(lines) if ln.strip()]
     last_line_no = (nonempty[-1] + 1) if nonempty else 0
     for i, ln in enumerate(lines[2:], start=3):  # 跳过首行标签段、第二行概念名称
         s = ln.strip()
         if not s:
             continue
-        m = meta_source_re.match(s)
+        m = META_STATUS_LINE_RE.match(s)
         if not m:
             continue
         if i < last_line_no - 1:
