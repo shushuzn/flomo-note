@@ -63,7 +63,10 @@ def main():
     c.init()
     # 标签解析与取卡逻辑同源（scan_qualified_concepts），不另写第二份实现。
     tags = resolve_tags(sys.argv[1:])
-    seen = collect_memos(c, tags)
+    seen, failed = collect_memos(c, tags)
+    if failed:
+        print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
+              f"下面的同名簇只在已取到的卡里成立，不代表其余簇没有问题", file=sys.stderr)
 
     clusters = {}
     for mid, m in seen.items():

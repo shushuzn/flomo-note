@@ -11,6 +11,9 @@
 
 注意：样本日期一律由片段拼接构造，避免本文件自身被内容自检判定为违规。
 """
+
+COVERS = ("check_skill_docs",)
+
 import importlib.util
 import sys
 import tempfile
@@ -192,7 +195,10 @@ def run_inventory_case():
         # 这条豁免若留着就是不可达分支，还会顺手放行一个混进工具目录的用例。
         (root / "scripts" / "test_leak.py").write_text("# 混进工具目录的用例\n", encoding="utf-8")
         (root / "tests").mkdir()
-        (root / "tests" / "test_publish.py").write_text("# 用例\n", encoding="utf-8")
+        # 这份夹具要过的是**全部**检查（main 是端到端），所以用例既要有 COVERS
+        # 声明，也要在声明之外真提到那个脚本——少任一项，覆盖检查都会把它判成假覆盖。
+        (root / "tests" / "test_publish.py").write_text(
+            'COVERS = ("publish",)\nimport publish\n', encoding="utf-8")
         (root / "README.md").write_text("# 项目\n\n暂无说明。\n", encoding="utf-8")
 
         errs = CD.check_script_inventory(root)
@@ -438,6 +444,106 @@ def run_cli_flags_case():
     return ok
 
 
+def run_coverage_case():
+    """脚本-用例覆盖：四个方向都要判错，且「声明为空」与「没声明」不许混为一谈。
+
+    这条检查的全部价值在于「新增脚本不写用例也会全绿」——它是可扩展性的一道闸门，
+    不是覆盖率报告。所以每个放行用例都配一个**只差一处**的失效用例：夹具改一个字符
+    就从绿转红，才说明判据真的挂在那处上；反过来，两边都能过就说明判据恒真。
+    """
+    ok = True
+
+    def fixture(root: Path, scripts: dict, tests: dict):
+        (root / "scripts").mkdir()
+        for name, body in scripts.items():
+            (root / "scripts" / name).write_text(body, encoding="utf-8")
+        (root / "tests").mkdir()
+        for name, body in tests.items():
+            (root / "tests" / name).write_text(body, encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        # 夹具必须**像真的用例**：声明之外还得真提到那两个模块，否则「声明与实现
+        # 对不上」那条会先把它们判掉——这正是该判据想要的，夹具不能靠一句声明过关。
+        fixture(
+            root,
+            {"alpha.py": "# a\n", "beta.py": "# b\n"},
+            {"test_alpha.py": 'COVERS = ("alpha", "beta")\nimport alpha\nimport beta\n'},
+        )
+        errs = CD.check_test_coverage(root)
+        ok &= errs == []
+        print(f"{'PASS' if not errs else 'FAIL'}  两个脚本都被声明覆盖时不报（{len(errs)} 条）")
+        for m in errs:
+            print("      ERR :", m)
+
+        # ① 脚本没人认领：删掉声明里的 beta 即红
+        (root / "tests" / "test_alpha.py").write_text(
+            'COVERS = ("alpha",)\nimport alpha\nimport beta\n', encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        hit = any("beta.py" in m for m in errs) and len(errs) == 1
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  没有任何用例认领的脚本被判错（{len(errs)} 条）")
+
+        # ② 用例缺声明：与「声明为空」必须分开——后者是有意的
+        (root / "tests" / "test_alpha.py").write_text("import alpha\n", encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        hit = any("test_alpha.py" in m and "COVERS" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  用例缺少 COVERS 声明被判错")
+
+        (root / "tests" / "test_alpha.py").write_text(
+            'COVERS = ("alpha", "beta")\nimport alpha\nimport beta\n', encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        ok &= errs == []
+        print(f"{'PASS' if not errs else 'FAIL'}  空声明之外的合法声明不报")
+
+        (root / "tests" / "test_empty.py").write_text(
+            "# 跨模块约束，不针对具体脚本\nCOVERS = ()\n", encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        ok &= errs == []
+        print(f"{'PASS' if not errs else 'FAIL'}  COVERS = () 视为有意的空声明，不报")
+
+        # ③ 声明指向不存在的脚本：脚本改名后声明会悬空
+        (root / "tests" / "test_empty.py").write_text(
+            'COVERS = ("gamma",)\n', encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        hit = any("gamma" in m and "不存在" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  COVERS 指向不存在的脚本被判错")
+        (root / "tests" / "test_empty.py").unlink()
+
+        # ④ 声明与文件无关（只声明不测）：beta 只在声明里出现，文件其余部分没有它。
+        #    这一步必须**把声明本身挖掉**再核，否则声明自己那几个字符串会让判据恒真。
+        (root / "tests" / "test_alpha.py").write_text(
+            'COVERS = ("alpha", "beta")\nimport alpha\n', encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        hit = any("beta" in m and "没出现过" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  声明了却在本文件里没出现，被判为假覆盖")
+
+        # scripts/ 下的 test_*.py 由清单检查判违规，覆盖检查不重复报同一件事
+        (root / "tests" / "test_alpha.py").write_text(
+            'COVERS = ("alpha", "beta")\nimport alpha\nimport beta\n', encoding="utf-8")
+        (root / "scripts" / "test_leak.py").write_text("# 混进来的用例\n", encoding="utf-8")
+        errs = CD.check_test_coverage(root)
+        ok &= errs == []
+        print(f"{'PASS' if not errs else 'FAIL'}  scripts/ 下的 test_*.py 不重复要求覆盖")
+
+        # 结构不是本仓库布局时不臆断（--root 指向外部目录）
+        empty = root / "lonely"
+        empty.mkdir()
+        ok &= CD.check_test_coverage(empty) == []
+        print(f"{'PASS' if CD.check_test_coverage(empty) == [] else 'FAIL'}  缺 scripts/ 或 tests/ 时不报")
+
+    # 真实仓库必须自己满足这条约束，否则规则只是写给别人的
+    real = CD.check_test_coverage(HERE.parent)
+    ok &= real == []
+    print(f"{'PASS' if not real else 'FAIL'}  本仓库每个脚本都有用例认领")
+    for m in real:
+        print("      ERR :", m)
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
@@ -446,6 +552,7 @@ if __name__ == "__main__":
     results.append(run_inventory_case())
     results.append(run_cross_ref_case())
     results.append(run_cli_flags_case())
+    results.append(run_coverage_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

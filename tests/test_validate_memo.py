@@ -7,6 +7,9 @@
 及既有硬限（两级标签），并锁住告警数量防止规则相互干扰。
 脏标签认定聚焦首行标签段本身（层级/字符/前缀）；正文 # 形态仍检查（flomo 会把 #xxx 当标签），正文斜杠（/词）属正常书写、不再扫描。
 """
+
+COVERS = ("validate_memo",)
+
 import importlib.util
 import json
 import sys

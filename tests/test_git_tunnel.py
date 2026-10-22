@@ -11,6 +11,9 @@
 用桩替换 socket.create_connection，全程在内存中判定，无真实网络 IO。
 退出码：0 = 全过。
 """
+
+COVERS = ("git_tunnel",)
+
 import importlib.util
 import sys
 from pathlib import Path

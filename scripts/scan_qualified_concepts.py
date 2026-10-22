@@ -59,8 +59,14 @@ def resolve_tags(argv):
 
 
 def collect_memos(c, tags):
-    """按标签簇取卡并按 id 去重。tag 须给完整路径（裸二级名查不到）。"""
-    seen = {}
+    """按标签簇取卡并按 id 去重。tag 须给完整路径（裸二级名查不到）。
+
+    返回 `(seen, failed)`，`failed` 是取数失败的标签簇。**必须由调用方打印出来**：
+    某一簇失败时只留一行 stderr，「占比」类结论就建立在一个悄悄缩水的分母上——
+    看起来是「库里只有三成卡带切片」，实际可能是「有三簇根本没取到」。样本量
+    偏小但输出正常，正是取证脚本最不该犯的错。
+    """
+    seen, failed = {}, []
     for t in tags:
         try:
             for m in _result_memos(c.tool("memo_search", {"tag": t, "limit": 50})):
@@ -68,7 +74,8 @@ def collect_memos(c, tags):
                     seen[m["id"]] = m
         except Exception as e:
             print(f"[warn] 标签 {t!r} 失败：{e}", file=sys.stderr)
-    return seen
+            failed.append(t)
+    return seen, failed
 
 
 def main():
@@ -81,8 +88,13 @@ def main():
     # 按标签簇抽样：裸关键词检索召回低（实测单轮仅 43 张），改按 tag 逐簇取，
     # 覆盖足够大样本才能取证。
     tags = resolve_tags(sys.argv[1:])
-    seen = collect_memos(c, tags)
-    print(f"[scan] 取回卡片 {len(seen)} 张（{len(tags)} 个标签簇）", file=sys.stderr)
+    seen, failed = collect_memos(c, tags)
+    ok_tags = len(tags) - len(failed)
+    print(f"[scan] 取回卡片 {len(seen)} 张（{ok_tags}/{len(tags)} 个标签簇取数成功）",
+          file=sys.stderr)
+    if failed:
+        print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
+              f"本次样本量偏小，下面的占比只能当这批卡的占比，不是全库事实", file=sys.stderr)
 
     flagged = []
     for mid, m in seen.items():

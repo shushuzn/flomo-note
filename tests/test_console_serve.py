@@ -27,7 +27,10 @@ client）覆盖，两层各管一段。
 
 用法：python tests/test_console_serve.py     退出码 0=全过，1=有失败。
 """
+
 from __future__ import annotations
+
+COVERS = ("serve_console",)
 
 import http.client
 import json
@@ -44,17 +47,14 @@ MCP = REPO / ".mcp.json"
 
 _RESULTS = []
 
-
 def check(name, ok, detail=""):
     _RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{detail}]" if detail and not ok else ""))
-
 
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def wait_listening(port: int, timeout: float = 12.0) -> bool:
     end = time.time() + timeout
@@ -65,7 +65,6 @@ def wait_listening(port: int, timeout: float = 12.0) -> bool:
                 return True
         time.sleep(0.15)
     return False
-
 
 def spawn(port: int) -> subprocess.Popen:
     """起服务；清掉代理变量，避免子进程把回环请求交给系统代理。"""
@@ -78,7 +77,6 @@ def spawn(port: int) -> subprocess.Popen:
         stderr=subprocess.PIPE,
         env=env,
     )
-
 
 def request(port: int, method: str, path: str, body: bytes | None = None,
             headers: dict | None = None):
@@ -95,7 +93,6 @@ def request(port: int, method: str, path: str, body: bytes | None = None,
         return 0, "", f"{type(e).__name__}: {e}"
     finally:
         conn.close()
-
 
 def main() -> int:
     if not SERVER.is_file():
@@ -308,7 +305,6 @@ def main() -> int:
     ok = all(_RESULTS)
     print(f"{'全部通过' if ok else '存在失败'}（{len(_RESULTS)} 项）")
     return 0 if ok else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

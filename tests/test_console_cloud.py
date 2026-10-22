@@ -34,7 +34,10 @@
 
 用法：python tests/test_console_cloud.py     退出码 0=全过，1=有失败。
 """
+
 from __future__ import annotations
+
+COVERS = ("console_cloud",)
 
 import importlib.util
 import json
@@ -44,11 +47,9 @@ from pathlib import Path
 
 _RESULTS = []
 
-
 def check(name, ok, detail=""):
     _RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{detail}]" if detail and not ok else ""))
-
 
 def load_module():
     here = Path(__file__).resolve().parent.parent / "scripts"
@@ -58,7 +59,6 @@ def load_module():
     sys.modules["console_cloud"] = mod
     spec.loader.exec_module(mod)
     return mod
-
 
 C = load_module()
 # 客户端自己的异常类型（与 console_cloud 同源导入，避免两处各写一份）
@@ -78,28 +78,23 @@ MEMO = {
     "word_count": 88,
 }
 
-
 def wrap(memos):
     """云端工具返回的包裹结构（结构化数据在 structuredContent）。"""
     return {"content": [{"type": "text", "text": json.dumps({"memos": memos}, ensure_ascii=False)}],
             "structuredContent": {"memos": memos}}
 
-
 def _as_exc(value):
     """桩注入的异常：实例原样抛，字符串包成 RuntimeError。"""
     return value if isinstance(value, BaseException) else RuntimeError(value)
-
 
 def text_reply(value):
     """纯文本工具（指南 / 记忆 / 画像）的包裹结构。"""
     return {"content": [{"type": "text", "text": json.dumps({"content": value}, ensure_ascii=False)}],
             "structuredContent": {"content": value}}
 
-
 def nested_text_reply(value):
     """只有 content[].text、且内层是 JSON 的兜底形态（无 structuredContent）。"""
     return {"content": [{"type": "text", "text": json.dumps({"content": value}, ensure_ascii=False)}]}
-
 
 TOOL_LIST = {
     "tools": [
@@ -121,7 +116,6 @@ TOOL_LIST = {
         {"name": "tag_rename", "description": "批量重命名标签。", "inputSchema": {"properties": {"old_tag": {}, "new_tag": {}}}},
     ]
 }
-
 
 class FakeClient:
     """桩客户端：记录调用、可注入返回值或异常。
@@ -154,7 +148,6 @@ class FakeClient:
             raise _as_exc(self._raises["tools/list"])
         return self._tool_list
 
-
 def reader_for(fake):
     made = {"n": 0}
 
@@ -163,7 +156,6 @@ def reader_for(fake):
         return fake
 
     return C.CloudReader(factory=factory), made
-
 
 # --------------------------------------------------------------------------- #
 # 正文拆解
@@ -189,7 +181,6 @@ def run_split():
     # 只有标签、无正文
     t5, ti5, b5 = C.split_card("#AI/RAG")
     check("仅标签行", t5 == ["AI/RAG"] and ti5 == "" and b5 == "")
-
 
 # --------------------------------------------------------------------------- #
 # 精简与截断
@@ -224,13 +215,11 @@ def run_slim():
     no_title = dict(MEMO, content="#AI/RAG")
     check("无概念名有占位", C.slim_memo(no_title)["title"] == "(无概念名)")
 
-
 def run_limit_clamp():
     check("limit 上限收紧", C._clamp_limit(999) == C.MAX_LIMIT)
     check("limit 下限收紧", C._clamp_limit(0) == 1 and C._clamp_limit(-5) == 1)
     check("limit 字符串可解析", C._clamp_limit("30") == 30)
     check("limit 非法回落默认", C._clamp_limit("abc") == C.DEFAULT_LIMIT)
-
 
 # --------------------------------------------------------------------------- #
 # 只读白名单
@@ -271,7 +260,6 @@ def run_whitelist():
     except C.CloudError as e:
         got = "白名单外工具" if "白名单外工具" in str(e) else str(e)
     check("拒绝白名单外工具", got == "白名单外工具", got)
-
 
 # --------------------------------------------------------------------------- #
 # 只读能力
@@ -332,14 +320,12 @@ def run_reads():
     # 标签筛选由「标签树快照」供选项、检索仍走 memo_search 的 tag 参数，
     # 因此不另开标签名检索能力——白名单里也就没有 tag_search。
 
-
 # --------------------------------------------------------------------------- #
 # 检索条件（memo_search 的全部入参）
 # --------------------------------------------------------------------------- #
 # 日期同样由片段拼接构造，不在源码里写字面量日期
 D1 = "20" + "26" + "-09-01"
 D2 = "20" + "26" + "-09-30"
-
 
 def run_search_conditions():
     fake = FakeClient({"memo_search": wrap([MEMO])})
@@ -366,7 +352,6 @@ def run_search_conditions():
     r.list_memos(has_tag="说不清")
     check("has_tag 无法判定时不传", fake.calls[-1][1] == {"limit": C.DEFAULT_LIMIT},
           str(fake.calls[-1][1]))
-
 
 # --------------------------------------------------------------------------- #
 # 批量全文与相关笔记
@@ -412,7 +397,6 @@ def run_batch_and_related():
     except C.CloudError:
         got = "ok"
     check("相关笔记缺 id 抛错", got == "ok", got)
-
 
 # --------------------------------------------------------------------------- #
 # 标签树 / 标签名 / 参考文本
@@ -460,7 +444,6 @@ def run_tags_and_texts():
     check("参考四份各带来源标识",
           [ref[k]["doc"] for k in ("memory", "user", "format", "tag")]
           == ["memory", "user", "format", "tag"])
-
 
 # --------------------------------------------------------------------------- #
 # 能力清单（tools/list）
@@ -524,7 +507,6 @@ def run_catalog():
     except C.CloudError as e:
         got = "CloudError" if "取工具清单失败" in str(e) else str(e)
     check("清单失败转 CloudError", got == "CloudError", got)
-
 
 # --------------------------------------------------------------------------- #
 # 通用只读执行（「能力能在网页上直接用」的落点）
@@ -612,7 +594,6 @@ def run_read_tool_entry():
         got = f"漏出 {type(e).__name__}"
     check("工具清单遇 SystemExit 也转 CloudError", got == "CloudError", got)
 
-
 # --------------------------------------------------------------------------- #
 # 标签重命名：前置校验、规模声明、回执读成结论
 # --------------------------------------------------------------------------- #
@@ -621,7 +602,6 @@ def _rename_reader(payload=None, result=None):
     body = result if result is not None else {"structuredContent": dict(payload or {})}
     fake = FakeClient({"tag_rename": body})
     return reader_for(fake)[0], fake
-
 
 def _rename_blocked(old, new, max_memos=None, want=""):
     """跑一次重命名，返回「是否按预期被本地拦下且未触达云端」与细节。
@@ -636,7 +616,6 @@ def _rename_blocked(old, new, max_memos=None, want=""):
     except C.CloudError as e:
         got = "ok" if all(w and w in str(e) for w in wants) else str(e)
         return got, fake.calls == []
-
 
 def run_tag_rename():
     # 1) 本地能判的错不必发到云端——云端拒绝也只是一句报错，本地先说清是哪一项
@@ -703,13 +682,11 @@ def run_tag_rename():
     check("重命名仍走写白名单",
           fake.calls == [("tag_rename", {"old_tag": "AI", "new_tag": "人工智能"})], str(fake.calls))
 
-
 # --------------------------------------------------------------------------- #
 # 建卡 / 改卡：闸门放行之后的调用参数与回读验收
 # --------------------------------------------------------------------------- #
 CARD = "#AI/RAG\n\n向量检索的召回率\n\n衡量检索质量的指标。"
 OLD_CARD = "#AI/RAG\n\n旧标题\n\n旧正文。"
-
 
 class _PassGate(C.CloudReader):
     """闸门恒过的读取器：本组只核「放行之后」的事，闸门判定本身另有断言。"""
@@ -720,16 +697,13 @@ class _PassGate(C.CloudReader):
     def gate_state(self, content):
         return {"ok": True, "errors": []}
 
-
 class _FailCard(_PassGate):
     def check_card(self, content):
         return {"ok": False, "errors": ["缺概念名"]}
 
-
 class _FailGate(_PassGate):
     def gate_state(self, content):
         return {"ok": False, "errors": ["缺流程凭证"]}
-
 
 class _SeqClient(FakeClient):
     """按调用次序给不同回执：写前回读与写后回读必须能返回不同正文。"""
@@ -742,7 +716,6 @@ class _SeqClient(FakeClient):
         self.calls.append((name, arguments or {}))
         queue = self._seq.get(name) or []
         return queue.pop(0) if queue else wrap([])
-
 
 def run_write_paths():
     # 闸门拦下时：报出待修项，且一个字节都不发云端
@@ -836,7 +809,6 @@ def run_write_paths():
         got = "CloudError" if "memo id" in str(e) else str(e)
     check("改卡：缺 id 直接拒", got == "CloudError" and fake.calls == [], got)
 
-
 # --------------------------------------------------------------------------- #
 # 失败与脱敏
 # --------------------------------------------------------------------------- #
@@ -878,7 +850,6 @@ def run_failure_and_secrecy():
                          ensure_ascii=False)
     check("列表返回不含 token", "Bearer" not in payload and "eyJ" not in payload)
 
-
 def run_missing_token():
     """凭据缺失走 `FlomoError`：状态报「不可用」，调用转 `CloudError`，都不许崩溃。
 
@@ -903,7 +874,6 @@ def run_missing_token():
         check("凭据缺失时调用转 CloudError", got == "CloudError", got)
     finally:
         C.load_token = orig
-
 
 def run_structured_parse():
     """`_structured` 是回包解析的**唯一**出口策略：读不到给空字典，不许抛错。
@@ -933,7 +903,6 @@ def run_structured_parse():
         got = "FlomoError 漏出（越过边界）"
     check("memos 解析失败在本层转 CloudError", got == "CloudError", got)
 
-
 def main():
     run_structured_parse()
     run_split()
@@ -954,7 +923,6 @@ def main():
     ok = all(_RESULTS)
     print(f"{len(_RESULTS)} 项断言，" + ("全部通过" if ok else "存在失败用例"))
     return 0 if ok else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

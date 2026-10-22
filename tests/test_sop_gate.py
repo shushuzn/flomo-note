@@ -7,6 +7,9 @@
 
 退出码 0 = 全部通过。
 """
+
+COVERS = ("sop_gate", "validate_memo",)
+
 import hashlib
 import importlib.util
 import json

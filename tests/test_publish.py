@@ -5,6 +5,9 @@
 失败不重发；写后复核失败只报告。
 退出码 0 = 全部通过。
 """
+
+COVERS = ("publish",)
+
 import contextlib
 import importlib.util
 import io

@@ -4,6 +4,9 @@
 只测「解码 / 抽取 / 元信息」这套纯函数；网络路径由 CLI 现场验证。
 退出码 0 = 全部通过。
 """
+
+COVERS = ("fetch_article",)
+
 import contextlib
 import importlib.util
 import io

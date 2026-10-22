@@ -75,7 +75,7 @@ JSON
 flomo-note/
 ├── SKILL.md / AGENTS.md / ENVIRONMENT.md   # 细则 / 总则 / 环境事实（三份各有唯一职责）
 ├── scripts/     # 工具：写卡流程、文档自检、控制台后端 —— 逐个职责见下表
-├── tests/       # 回归用例 test_*.py，与 scripts/ 一一配套，全离线
+├── tests/       # 回归用例 test_*.py，各自用 COVERS 声明它验的是哪些脚本，全离线
 ├── web/         # 项目控制台前端静态资源（index.html / styles.css / app.js）
 ├── .github/workflows/ci.yml   # 每次推送/PR 跑同一条 run_tests.sh（不配 secrets）
 ├── .gitignore                 # 忽略凭据、本机私有导出与现采缓存
@@ -122,7 +122,8 @@ flomo-note/
 
 | 文件 | 职责 |
 |------|------|
-| `check_skill_docs.py` | 内容纪律自检（日期 / 叙事）+ 四项跨文件结构检查（README 清单、用例命名、交叉引用、命令行选项） |
+| `covers.py` | 「脚本有没有用例」的唯一解析：读用例里的 `COVERS` 声明。闸门（`check_skill_docs`）与控制台 `has_test` 列共用这一份——两处各写一份会出现「闸门说有覆盖、页面说没有」这种相反结论 |
+| `check_skill_docs.py` | 内容纪律自检（日期 / 叙事）+ 五项跨文件结构检查（README 清单、用例命名、交叉引用、命令行选项、脚本-用例覆盖声明） |
 | `run_tests.sh` | 跑 `tests/` 下全部用例与上述自检；CI 与本地共用这一条命令 |
 | `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |
 | `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
@@ -141,7 +142,9 @@ flomo-note/
 
 | 文件 | 职责 |
 |------|------|
-| `tests/test_*.py` | 与 `scripts/` 下脚本一一配套，全离线。**必须叫 `test_*.py`**——`run_tests.sh` 按这个 glob 收集，名字不符就不会被跑，且不报任何错 |
+| `tests/test_*.py` | 全离线。**必须叫 `test_*.py`**——`run_tests.sh` 按这个 glob 收集，名字不符就不会被跑，且不报任何错。每个文件用模块级 `COVERS = ("脚本名",)` 声明自己验证了哪些脚本；**不靠文件名同名推断** |
+
+> **覆盖关系是声明，不是命名巧合**：`serve_console.py` 的用例叫 `test_console_serve.py`、`console_cloud.py` 的主要回归在 `test_console_web.py`、`memo_util` 的口径用例在 `test_memo_util.py`——三条都不是同名。按名字猜会把有覆盖的报成没覆盖、把没覆盖的报成有覆盖，两个方向都错且都不报错。`check_skill_docs.py` 会核四件事：每个脚本都有人认领（新增脚本不写用例即红）、声明的名字真实存在、声明之外文件里确实提到该模块、每个用例都有声明（`COVERS = ()` 表示有意不针对具体脚本）。**它不冒充覆盖率工具**：断言写得够不够只能人读。
 
 > 回归用例全部离线、不读 token（实测：移走 `.mcp.json` 后仍全过），因此 CI 不需要任何 secret；一旦有人给用例加上真实凭据依赖，流水线会直接红，而不是被 secret 掩盖。**有多少套不在这里写死**——`tests/test_*.py` 即清单，数量以 `bash scripts/run_tests.sh` 的输出为准。
 

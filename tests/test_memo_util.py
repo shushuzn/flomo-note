@@ -5,6 +5,9 @@ memo_util 是签名/指纹/关键词/标签拆分的**唯一实现**，被 flomo
 validate_memo 三处共用；本文件确保这条公共口径被独立锁住。
 退出码 0 = 全部通过。
 """
+
+COVERS = ("memo_util",)
+
 import importlib.util
 import re
 import sys
@@ -166,6 +169,16 @@ def run_slice_qualifiers():
     check("返回 (标签, 命中文本) 二元组", len(h) == 1 and h[0][1] == "v0.21.4")
     check("空串返回 []", MU.slice_qualifiers("") == [])
     check("None 返回 []（不抛异常）", MU.slice_qualifiers(None) == [])
+
+    # 年份区间必须整段命中。旧写法只匹到 `2023-20`，残余的 `24` 留在名字里：
+    # 对质检只是文案难读，对取证脚本却是**判据错**——归一化后「2023-2024 的 X」
+    # 与「2024 的 X」成了两个键（同一对象漏报），而不同对象的残串又可能撞键
+    # （报出不存在的重复）。两处都读同一份实现，所以这里钉住「整段」这一条。
+    for span in ("某峰会 2023-2024 议程", "某峰会 2023/2024 议程", "某峰会 2023 至 2024 议程"):
+        hits = MU.slice_qualifiers(span)
+        got = hits[0][1] if hits else ""
+        check(f"区间年份整段命中（{span}）：得到 {got!r}",
+              got.startswith("2023") and got.endswith("2024"))
 
     # 作用域：只扫概念名的**标题部分**。「标题：摘要」形态（H14 另判概念名写成整句）
     # 里的摘要用词不得被误判成概念名的切片——判据作用域错了会让合规卡因摘要用词被拦。

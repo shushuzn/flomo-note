@@ -21,6 +21,9 @@
 
 全部离线、纯源码扫描（ast），不执行被测模块。
 """
+
+COVERS = ()
+
 import ast
 import re
 import sys

@@ -16,7 +16,10 @@
 
 用法：python tests/test_console_web.py     退出码 0=全过，1=有失败。
 """
+
 from __future__ import annotations
+
+COVERS = ("serve_console", "console_cloud",)
 
 import re
 import sys
@@ -31,17 +34,14 @@ SERVER = REPO / "scripts" / "serve_console.py"
 
 _RESULTS = []
 
-
 def check(name, ok, detail=""):
     _RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{detail}]" if detail and not ok else ""))
-
 
 def block(text: str, head: str) -> str:
     """取 `head = { ... };` 这一段（用于 VIEWS / VIEW_META / state）。"""
     m = re.search(re.escape(head) + r"\s*=\s*\{(.*?)\n\};", text, re.S)
     return m.group(1) if m else ""
-
 
 def main() -> int:
     missing = [p for p in (HTML, CSS, JS, SERVER) if not p.is_file()]
@@ -208,7 +208,6 @@ def main() -> int:
     print("---")
     print(f"[test_console_web] {'全部通过' if not failed else f'存在失败（{failed}/{total}）'}（{total} 项）")
     return 1 if failed else 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

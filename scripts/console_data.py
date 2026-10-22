@@ -22,6 +22,8 @@ import re
 import sys
 from pathlib import Path
 
+import covers  # 配套关系判据的唯一实现：闸门与控制台读同一份声明
+
 # 控制台展示的技能文档（存在才收）
 DOC_FILES = ("SKILL.md", "AGENTS.md", "ENVIRONMENT.md", "README.md")
 
@@ -188,11 +190,18 @@ def load_scripts(root: Path):
     两目录分开收，但**配套关系必须跨目录核**：只扫 `scripts/` 会让每个工具的
     `has_test` 一律答 False——用例明明在，页面上却显示「没有回归覆盖」，比数字
     少一个更误导人。
+
+    判据是**用例里的 `COVERS` 声明**，不是文件名是否等于 `test_<脚本>.py`。
+    同名只是习惯，本仓库早有多处不成立（`serve_console.py` → `test_console_serve.py`、
+    `console_cloud.py` 的主要回归在 `test_console_web.py`）：按名字判会把这些脚本
+    显示成「没有回归覆盖」，而闸门那边按声明判是有覆盖的——同一事实两个出处给出
+    相反结论，页面那个更早被看到。解析实现在 `covers.py`，与闸门共用一份。
     """
     sdir = root / "scripts"
     tdir = root / "tests"
     if not sdir.is_dir():
         return []
+    covered, _ = covers.coverage_map(tdir)
     out = []
     for p in sorted(sdir.iterdir()):
         if p.suffix not in (".py", ".sh") or p.name == "__init__.py":
@@ -203,7 +212,7 @@ def load_scripts(root: Path):
                 "kind": "tool",
                 "bytes": p.stat().st_size,
                 "summary": _summary(p),
-                "has_test": (tdir / f"test_{p.stem}.py").is_file(),
+                "has_test": p.stem in covered,
             }
         )
     if tdir.is_dir():
