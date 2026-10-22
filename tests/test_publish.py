@@ -551,6 +551,99 @@ def test_tail_marks_truncation():
           got.splitlines()[-1])
 
 
+def test_readings_ignore_spaces_not_dates():
+    """读数按「数字+单位」取，平台补的空格不影响；日期不算读数（随来源一起删是常规）。
+
+    这两个口径必须分开：把日期算成读数，删「据 X 某年某月某日报道」天天被拦，
+    闸门一旦吵就会被绕过；而不归一化空格，云端回读的「320 万人」与快照「320万人」
+    会被算成两个不同读数，同样天天误报。
+    """
+    same = PB.readings("约320万人") == PB.readings("约 320 万人")
+    check("读数：空格不影响同一读数", same,
+          f"{PB.readings('约320万人')} vs {PB.readings('约 320 万人')}")
+    check("读数：日期不计入", not any("年" in t or "月" in t or "日" in t
+                                   for t in PB.readings("某年 1 月 2 日报道，")),
+          PB.readings("某年 1 月 2 日报道，"))
+    check("读数：百分比与亿都算", set(PB.readings("涨 15%，120 亿美元")) == {"15%", "120亿"},
+          PB.readings("涨 15%，120 亿美元"))
+
+
+def test_lost_readings_counts_multiplicity():
+    """同一读数出现两次、改后只剩一次，也算丢了一个——只看「有没有」会放过这类。"""
+    check("读数丢失：少一次也报",
+          PB.lost_readings("约 320 万人因空气污染死亡，另有 320 万人患病",
+                           "约 320 万人因空气污染死亡") == ["320万"],
+          PB.lost_readings("约 320 万人，另有 320 万人", "约 320 万人"))
+    check("读数丢失：读数没少就不报",
+          PB.lost_readings("约 320 万人", "约 320 万人，其余相同") == [],
+          PB.lost_readings("约 320 万人", "约 320 万人，其余相同"))
+
+
+def test_misaligned_deletions():
+    """断口判据：删除片段必须从行首或标点后开始，括号/引号要么整对删要么不删。"""
+    before = "世界卫生组织数据显示全球每年约有320万人死亡，这些污染源于烹饪"
+    after = "世界卫生组织数这些污染源于烹饪"
+    frags = PB.misaligned_deletions(before, after)
+    check("断口：从「数」后面起删被抓出", bool(frags) and frags[0][0] == "数", frags)
+    check("断口：片段内容一并给出", frags and "据显示全球每年约有320万人死亡，" in frags[0][1],
+          frags)
+    ok = PB.misaligned_deletions("正文（据路透社报道）继续", "正文继续")
+    check("断口：整对括号删除不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("第一段\n旧内容", "第一段")
+    check("断口：整行删除不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("正文；据某报 3 月 4 日报道，后续",
+                                 "正文；后续")
+    check("断口：标点后起删不算断口", ok == [], ok)
+
+
+def test_update_content_loss_blocks():
+    """写前拦：草稿比原卡少了读数就停，一个字节不发 update。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n- 结论：全球每年约有 90 万人因此患病")
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"):
+             (0, _card("- 结论：全球每年约有 320 万人因此患病"), "")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("内容丢失：退出码 7（未写云）", code == 7, code)
+        check("内容丢失：不发 memo_update", "memo_update" not in tools(calls), tools(calls))
+        check("内容丢失：点名少掉的读数", "读数「320万」" in err, err)
+        check("内容丢失：给出放行开关", "--allow-content-loss" in err, err)
+
+
+def test_update_fragment_blocks():
+    """写前拦：删出的断口同样阻塞——整篇替换下这类断口在写后对账里永远看不见。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n- 数千寻智能安排千人")
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"):
+             (0, _card("- 数据与成绩：千寻智能安排千人"), "")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("断口：退出码 7（未写云）", code == 7, code)
+        check("断口：不发 memo_update", "memo_update" not in tools(calls), tools(calls))
+        check("断口：点名片段与前一字符", "「据与成绩：」" in err and "「数」" in err, err)
+
+
+def test_update_content_loss_allowed():
+    """有意重写（如把长卡压成机制卡）显式放行：仍打印丢失项，让回读能逐条认领。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名\n\n- 重写后的机制要点")
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"):
+             (0, _card("- 原读数：约 320 万人"), "")})
+        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+                              "--update-id", "ABC", "--allow-content-loss"], exec_fn)
+        check("放行：退出码 0", code == 0, code)
+        check("放行：仍打印丢失的读数（stderr，与阻塞同一口径）",
+              "读数「320万」" in err, err[-300:])
+        check("放行：打印放行说明", "--allow-content-loss" in err, err[-300:])
+        check("放行：照常发 memo_update", "memo_update" in tools(calls), tools(calls))
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -567,6 +660,12 @@ if __name__ == "__main__":
                test_update_truncated_read_no_diff,
                test_update_target_without_concept,
                test_update_target_without_concept_allowed,
+               test_readings_ignore_spaces_not_dates,
+               test_lost_readings_counts_multiplicity,
+               test_misaligned_deletions,
+               test_update_content_loss_blocks,
+               test_update_fragment_blocks,
+               test_update_content_loss_allowed,
                test_verify_json_unparsable, test_tail_marks_truncation):
         fn()
     ok = all(RESULTS)

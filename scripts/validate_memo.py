@@ -392,25 +392,43 @@ def check(content):
     # **卡片取自什么载体**的信息写进概念卡正文（含首段括号与要点句内），与概念无关。
     # 5.5) 只认"行首白名单词 + 冒号 + 位于末两行"，括号式 / 句中式载体标注全部漏检，故补本项。
     #
-    # 分三层，防止误伤：
-    #   a) 行内强载体词（carrier_strong）：截图 / 讲义 / 课件 / 板书 / 字幕 / 批注 / 页码 / UP主 / B站 /
-    #      如图 等，几乎只可能用于交代取材方式，正文出现即 ERR。
-    #   b) 取材标注词（carrier_ctx）：公众号 / 视频号 / 哔哩哔哩 / 抖音 / 直播 / 课程 / 讲座 / 专栏 等，
+    # 分四层，防止误伤：
+    #   a) 材料结构词（carrier_hard）：如图 / 见图 / 上图 / 该图 / 第 N 页 / UP主 / B站 / PPT——
+    #      指向的是材料的排版位置或来源账号，正常正文不会用它描述概念本身，出现即 ERR。
+    #   b) 材料名（carrier_material）：截图 / 截屏 / 录屏 / 讲义 / 课件 / 板书 / 字幕 / 批注 /
+    #      原图 / 配图 等。原先把它们与 a) 并列、正文一出现就 ERR，理由是「几乎只可能用于
+    #      交代取材」。这个断言被真实卡证伪：截图压缩工具卡的主题就是「截图」，游戏卡的
+    #      「支持简体中文界面与字幕」是本地化范围，课件生成、字幕翻译同理——判错逼着人把
+    #      「字幕」改写成「文本」，等于用改写素材换取过检。
+    #      现改为**正面定义**：只在「出处标注语境」下判 ERR——行内另有出处引导词
+    #      （据 / 摘自 / 引自 / 来自 / 如图 / 所示 / 中可见 / 中显示），或该词落在括号注释里。
+    #      无出处语境只 WARN 交人读。取舍写明：宁可漏成人工判断项，不逼人改写素材术语。
+    #   c) 取材标注词（carrier_ctx）：公众号 / 视频号 / 哔哩哔哩 / 抖音 / 直播 / 课程 / 讲座 / 专栏 等，
     #      本身可能是卡片主体（如"微信公众号"是产品概念），故只在**括号式注释**里出现才 ERR。
-    #   c) 歧义词（carrier_weak）：视频 / 音频 / 直播 / 演讲 / 发布会 / 访谈 等，括号内出现只 WARN
+    #   d) 歧义词（carrier_weak）：视频 / 音频 / 直播 / 演讲 / 发布会 / 访谈 等，括号内出现只 WARN
     #      人工判断。"直播"原在 ctx 层，因可能是业务名词（如 "4D 直播"），降级到 weak：
     #      真载体语境（直播截图 / 直播间）必有 strong 词（截图 / UP主 / B站）兜底判 ERR，
     #      不靠 "直播" 单独阻断——专业名词不得为过检而改写。
     # 注意：本项 early-return 的字面量只针对"材料载体"（截图/讲义/课件）。
     # "报道 / 消息 / 通报 / 通报方 / 官网 / 作者"这类**事件自身的来源信息**不在此处判，
     # 而是由 5.8) 单独以 ERR 硬阻断（见 H15/H16：一切来源字样一律删除，无豁免）。
-    carrier_strong = re.compile(
-        r"截图|截屏|录屏|屏摄|讲义|课件|幻灯片|(?<![A-Za-z/\.])[Pp][Pp][Tt](?![A-Za-z])"
-        r"|板书|字幕|批注|听课|课程记录|课程笔记|续页|原图|配图"
+    carrier_hard = re.compile(
+        r"(?<![A-Za-z/\.])[Pp][Pp][Tt](?![A-Za-z])"
         r"|[Uu][Pp]\s*主|[Bb]\s*站|bili\s*bili"
         r"|第\s*\d+(?:\s*[-–—~]\s*\d+)?\s*页|\d+\s*[-–—~]?\s*\d+\s*/\s*\d+\s*页|\d+\s*[/／]\s*\d+\s*页"
         r"|如图|见图|图中所?示|上图|下图|该图|这张图"
+        # 自指式的取材说法：即便没有「据/如图」，也明确是在交代材料位置或省略理由
+        r"|见\s*(?:板书|截图|截屏|录屏|原图|配图|讲义|课件|字幕|附表|附件)"
+        r"|此处从略|不再赘述"
+        # 「课程字幕 / 直播录像」这类带限定语的复合词，无歧义地指材料本身
+        r"|(?:课程|直播|视频|课堂|会议|讲座)\s*(?:字幕|录像|录音|回放)"
     )
+    carrier_material = re.compile(
+        r"截图|截屏|录屏|屏摄|讲义|课件|幻灯片|板书|字幕|批注|听课|课程记录|课程笔记|续页|原图|配图"
+    )
+    # 出处标注语境：出现这些词，才把「截图 / 字幕」读成「交代取材」。
+    # 不收单字「见」「如」——「意见」「如果」会把整行污染成出处语境，反过来让 b) 层失效。
+    source_hint = re.compile(r"据|摘自|引自|转自|节选|来自|如图|见图|所示|中可见|中显示|详见")
     carrier_ctx = re.compile(
         r"公众号|视频号|小程序|哔哩哔哩|抖音|快手|小红书|录播|讲座|课堂|课程|订阅号|推文"
     )
@@ -422,12 +440,17 @@ def check(content):
         hard, soft = [], []
         if not text.strip():
             return hard, soft
+        groups = bracket_re.findall(text)
         if not only_brackets:
-            hard += [m.group(0).strip() for m in carrier_strong.finditer(text)]
-        for grp in bracket_re.findall(text):
+            hard += [m.group(0).strip() for m in carrier_hard.finditer(text)]
+            # 材料名只有在出处语境里才算「交代取材」；否则它是概念本身（截图压缩、字幕翻译）
+            target = hard if (source_hint.search(text) or groups) else soft
+            target += [m.group(0).strip() for m in carrier_material.finditer(text)]
+        for grp in groups:
             hard += [m.group(0).strip() for m in carrier_ctx.finditer(grp)]
             if not only_brackets:
-                hard += [m.group(0).strip() for m in carrier_strong.finditer(grp)]
+                # 括号注释本身就是交代取材的位置，括号里的材料名一律按标注判
+                hard += [m.group(0).strip() for m in carrier_material.finditer(grp)]
             soft += [m.group(0).strip() for m in carrier_weak.finditer(grp)]
         return list(dict.fromkeys(hard)), [w for w in dict.fromkeys(soft) if w not in hard]
 
@@ -440,15 +463,17 @@ def check(content):
                 f"载体上没有的信息直接省略，禁止用「截图未展开」之类说法保留")
             continue  # 已判错的行不再叠加同主题提示
         for w in soft:
-            warn(f"第 {i} 行括号注释含载体词「{w}」——若这是交代卡片取材来源（而非概念自身内容），"
-                 f"按卡片格式硬限删除")
+            warn(f"第 {i} 行含载体词「{w}」但没有出处引导词——若这是交代卡片取材来源（而非概念"
+                 f"自身内容）按硬限删除；若该词就是卡片主体（如截图压缩、字幕翻译），可保留")
 
-    # 概念名称行（第二行）不得含强载体词；平台 / 企业名（哔哩哔哩、微信公众号）作概念名合法，
-    # 故此处只查 carrier_strong，且只提示不阻塞。
+    # 概念名称行（第二行）不得用取材方式命名：材料结构词与材料名都提示（只 WARN，不阻塞）。
+    # 平台 / 企业名（哔哩哔哩、微信公众号）作概念名合法，不在本项判定范围内。
     name_hit = [m.group(0).strip()
-                for m in carrier_strong.finditer(lines[1] if len(lines) > 1 else "")]
+                for m in carrier_hard.finditer(lines[1] if len(lines) > 1 else "")]
+    name_hit += [m.group(0).strip()
+                 for m in carrier_material.finditer(lines[1] if len(lines) > 1 else "")]
     if name_hit:
-        warn(f"第 2 行概念名称含载体词「{'、'.join(name_hit)}」——概念名应只写概念本身，"
+        warn(f"第 2 行概念名称含载体词「{'、'.join(dict.fromkeys(name_hit))}」——概念名应只写概念本身，"
              f"不要用取材方式（截图 / 讲义 / 课件 等）命名")
 
     # 5.8) 事件来源信息检测（ERR，硬阻断）——对应 SKILL H15 / H16。
@@ -519,7 +544,10 @@ def check(content):
     )
     source_org = r"(?:" + _org_quoted + r"|" + _org_suffix + r"|" + _org_known + r")"
     source_lead = re.compile(
-        r"(?:据|根据|援引|源自|转自|转载自|引自)\s*"
+        # 前置守卫：`依据《巴黎协定》` 里的「据」是「依据」的第二字，不是引导词；
+        # 同理「数据」「根据」也常被误切。删除引导语时若不带这个守卫，会把
+        # 「依据《巴黎协定》…」删成「依该项目…」——语义直接反转，且校验照样通过。
+        r"(?<![依数根])(?:据|根据|援引|源自|转自|转载自|引自)\s*"
         r"(?:" + source_org + r")"
         r"(?:\s*(?:消息|报道|通报|披露|介绍|通稿|发布|发布的消息|电))?"
     )
