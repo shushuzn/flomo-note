@@ -9,6 +9,9 @@
 
 退出码 0 = 全部通过。
 """
+
+COVERS = ("flomo_client", "cli_util",)
+
 import importlib.util
 import json
 import sys

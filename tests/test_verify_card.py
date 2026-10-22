@@ -6,7 +6,10 @@
 
 用法：python tests/test_verify_card.py     退出码 0=全过，1=有失败。
 """
+
 from __future__ import annotations
+
+COVERS = ("verify_card",)
 
 import io
 import json
@@ -31,11 +34,9 @@ GOOD = (
     "- 服务端只存摘要，比对走常量时间。\n"
 )
 
-
 def check(name, ok, detail=""):
     _RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{detail}]" if detail and not ok else ""))
-
 
 class FakeClient:
     """只实现 `tool()`：返回一张卡，字段与云端回包同构。"""
@@ -48,7 +49,6 @@ class FakeClient:
         self.calls.append((name, arguments))
         return {"structuredContent": {"memos": [self.memo]}}
 
-
 def memo(content, *, wc=None, truncated=False, tags=None):
     return {
         "id": "TESTID",
@@ -58,10 +58,8 @@ def memo(content, *, wc=None, truncated=False, tags=None):
         "tags": tags if tags is not None else ["科技/安全"],
     }
 
-
 def by_name(checks):
     return {n: (ok, d) for n, ok, d in checks}
-
 
 def run_cases():
     # 1) 正常卡：全部机械项通过
@@ -300,14 +298,12 @@ def run_cases():
     check("--json 忽略 --show-body 时给出提示",
           "不与 --show-body 同时生效" in err6, err6[:160])
 
-
 def main() -> int:
     run_cases()
     print("---")
     ok = all(_RESULTS)
     print(f"{'全部通过' if ok else '存在失败'}（{len(_RESULTS)} 项）")
     return 0 if ok else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -5,6 +5,9 @@
 「失败不当无命中」这些机械口径。
 退出码 0 = 全部通过。
 """
+
+COVERS = ("dedup",)
+
 import contextlib
 import importlib.util
 import io

@@ -14,6 +14,9 @@
 不触碰真实 /tmp 与项目根，全部在 tempfile 沙箱内进行。
 退出码：0 = 全过。
 """
+
+COVERS = ("cleanup",)
+
 import importlib.util
 import os
 import sys

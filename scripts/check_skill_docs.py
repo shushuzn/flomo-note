@@ -10,9 +10,11 @@
   ERR  用例命名：`tests/` 下的 .py 必须以 test_ 开头，否则 run_tests.sh 不执行它
   ERR  内部交叉引用失效：引用的 H 编号 / 附录小节 / 流程步骤 / 脚本名并不存在
   ERR  命令行选项失效：文档里 `scripts/x.py --flag` 的 `--flag` 不是该脚本认识的选项
+  ERR  用例不声称覆盖：每个 `scripts/*.py` 都要出现在某个用例的 `COVERS` 里，
+       且每个用例都必须有 `COVERS` 声明（可用空元组表示不针对具体脚本）
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-后四条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后五条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
 
@@ -28,6 +30,13 @@
 未知参数**，打一行用法就退出，读者以为是环境问题；而参数改名恰恰是改脚本时最
 容易顺手带上的漂移。
 
+脚本与用例的绑定还要再上一层：README 只说得出「有这个脚本」，说不出「谁验证它」。
+此前靠「用例文件与脚本同名」推断，而这条约定在本仓库已多处不成立——按名字猜会
+把有覆盖的报成没覆盖、把没覆盖的报成有覆盖，两个方向都错，且都是静默的。故覆盖
+关系改由用例自己声明（`COVERS`），检查核三件事：每个脚本有人认领、声明指向的
+脚本真实存在、声明与文件里确实提到它。**它拦的是「完全没声明 / 声明指空 / 声明
+与文件无关」，不冒充覆盖率工具**——断言写得够不够，只能人读。
+
 **任何技能文档都不豁免日期**（H28 是严格禁止，无例外）：ENVIRONMENT.md 记录
 环境事实时只写「是什么」——IP、端口、路径、命令，不写「哪天发生的」。
 
@@ -42,12 +51,14 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cleanup import SCAN as _CLEANUP_SCAN  # noqa: E402  素材口径同源，不另写一份
+import covers  # noqa: E402  COVERS 声明的唯一解析（控制台读同一份）
 
 # 日期形态。用 \d 书写，脚本自身不含真实日期字面量，故不会自命中。
 # 月 / 日分支一律「两位在前」（1[0-2] 先于 0?[1-9]、3[01]/[12]\d 先于 0?[1-9]），
@@ -443,6 +454,52 @@ def check_doc_cli_flags(root: Path) -> list[str]:
     return errs
 
 
+def check_test_coverage(root: Path) -> list[str]:
+    """每个脚本都要有能指名道姓的用例，每个用例都要声明它验的是谁。
+
+    起因是可扩展性而非洁癖：`scripts/` 加一个文件，除了 README 那一行（`check_script_inventory`
+    已管），没有任何东西会提醒「它还没有回归覆盖」。结果是仓库越大，无覆盖面积越大，
+    而全量用例依旧全绿——绿的只是被写到的那几条路径。控制台页面上 `has_test` 会显示
+    False，但那是给人看的字段，不是闸门。
+
+    判据取正面定义，四个方向都拦：
+      ① 每个 `scripts/*.py` 至少被一个用例的 `COVERS` 提到——新增脚本不写用例即红；
+      ② `COVERS` 里的名字必须在 `scripts/` 真实存在——脚本改名后声明不能留悬空；
+      ③ 声明覆盖的脚本必须在本文件里留下痕迹（出现该标识符）——防「只声明不测」；
+      ④ 每个 `tests/test_*.py` 都必须有 `COVERS`（可为空）——否则新用例又退化成靠名字猜。
+
+    **限度要说清**：③ 只证明「这个用例碰过这个模块」，不证明断言覆盖了它的关键分支；
+    「清单写着已覆盖、实际零用例」这类事仍要靠人读用例。本检查拦的是**完全没声明、
+    声明到不存在的脚本、声明与文件毫无关系**这三种，不冒充覆盖率工具。
+    """
+    scripts_dir = root / "scripts"
+    tests_dir = root / "tests"
+    if not (scripts_dir.is_dir() and tests_dir.is_dir()):
+        return []  # 不是本仓库的布局（如 --root 指向外部目录），没有事实源可核，不臆断
+    scripts = {
+        p.stem for p in scripts_dir.glob("*.py") if not p.name.startswith("test_")
+    }
+    # `scripts/` 下的 test_*.py 由 `check_script_inventory` 判违规，本检查不重复报同一件事，
+    # 也不该要求「有人覆盖一个本就不该存在的文件」。
+    if not scripts or not sorted(tests_dir.glob("test_*.py")):
+        return []  # 空目录已由 run_tests.sh / 清单检查各自拦下，这里不重复报同一件事
+
+    # 声明解析与「有没有提到」的核对在 covers 模块里（控制台也读同一份，
+    # 两处各写一份会出现「闸门说有覆盖、页面说没有」这类相反结论）。
+    # 存在性在声明阶段就判：先当假覆盖踢掉的话，「改名后声明悬空」永远不会被报出来。
+    existing = {p.stem for p in scripts_dir.iterdir() if p.suffix in (".py", ".sh")}
+    covered, errs = covers.coverage_map(tests_dir, known=existing)
+
+    for n in sorted(scripts - set(covered)):
+        errs.append(
+            f"scripts/{n}.py: 没有任何用例在 `{covers.COVERS_VAR}` 里声明覆盖它——"
+            f"新增脚本不写用例也会全绿，回归覆盖跑不过仓库增长；"
+            f"补用例（或至少在最相关的用例里把 `{n}` 加进 `{covers.COVERS_VAR}` "
+            f"并真断言它的行为）"
+        )
+    return errs
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -473,6 +530,8 @@ def main(argv=None):
     errs += check_cross_refs(root)
     # 第三层：脚本名对了，选项名未必对——参数改名比脚本改名更常见，且更不容易被发现
     errs += check_doc_cli_flags(root)
+    # 第四层：清单里有这个脚本，不代表有人验证它——新增脚本不写用例同样全绿
+    errs += check_test_coverage(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):

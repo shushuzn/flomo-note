@@ -11,7 +11,10 @@
 
 用法：python tests/test_console_data.py     退出码 0=全过，1=有失败。
 """
+
 from __future__ import annotations
+
+COVERS = ("console_data",)
 
 import importlib.util
 import shutil
@@ -21,20 +24,20 @@ from pathlib import Path
 
 _RESULTS = []
 
-
 def check(name, ok, detail=""):
     _RESULTS.append(bool(ok))
     print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{detail}]" if detail and not ok else ""))
 
-
 def load_module():
     here = Path(__file__).resolve().parent.parent / "scripts"
+    if str(here) not in sys.path:
+        # console_data 现在依赖 covers（配套关系判据的唯一实现），得让 scripts/ 可导入
+        sys.path.insert(0, str(here))
     spec = importlib.util.spec_from_file_location("console_data", here / "console_data.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["console_data"] = mod
     spec.loader.exec_module(mod)
     return mod
-
 
 C = load_module()
 
@@ -91,8 +94,6 @@ SKILL_FIXTURE = """# 标题
 治理正文。
 """
 
-
-
 def make_repo(tmp: Path, skill=SKILL_FIXTURE):
     (tmp / "SKILL.md").write_text(skill, encoding="utf-8")
     (tmp / "AGENTS.md").write_text("# 总则\n\n一句话。\n", encoding="utf-8")
@@ -107,9 +108,15 @@ def make_repo(tmp: Path, skill=SKILL_FIXTURE):
     # 用例放在 tests/：配套关系跨目录核，避免「工具全无回归」这种假象
     tdir = tmp / "tests"
     tdir.mkdir(exist_ok=True)
-    (tdir / "test_tool_one.py").write_text('"""用例。"""\n', encoding="utf-8")
+    (tdir / "test_tool_one.py").write_text(
+        '"""用例。"""\n\nCOVERS = ("tool_one",)\nimport tool_one  # noqa: F401\n',
+        encoding="utf-8")
+    # 反向夹具：**同名但没声明 COVERS**。文件名对上不算覆盖——判据是声明，
+    # 两者必须能分开，否则「按名字猜」那套又从后门长回来了。
+    (sdir / "tool_three.py").write_text(
+        '#!/usr/bin/env python3\n"""tool_three — 同名但未被认领的工具。\n"""\n', encoding="utf-8")
+    (tdir / "test_tool_three.py").write_text('"""用例，但没声明覆盖谁。"""\n', encoding="utf-8")
     return tmp
-
 
 def run_limits(tmp: Path):
     limits = C.load_limits(tmp)
@@ -127,7 +134,6 @@ def run_limits(tmp: Path):
     h9 = next(l for l in limits if l["id"] == "H9")
     check("治理节归为治理", h9["governance"] is True and h9["group"] == "GOV")
 
-
 def run_pipeline(tmp: Path):
     steps = C.load_pipeline(tmp)
     check("管线步骤数与编号", [s["n"] for s in steps] == [1, 2, 9], [s["n"] for s in steps])
@@ -136,7 +142,6 @@ def run_pipeline(tmp: Path):
     check("末步抽取完整", steps[2]["title"] == "最后一步")
     check("节内引言不入步", all("按序执行" not in s["body"] for s in steps))
 
-
 def run_scripts(tmp: Path):
     scripts = C.load_scripts(tmp)
     by_name = {s["name"]: s for s in scripts}
@@ -144,25 +149,31 @@ def run_scripts(tmp: Path):
           and by_name["test_tool_one.py"]["kind"] == "test")
     check("配套用例存在性判定", by_name["tool_one.py"]["has_test"] is True
           and by_name["tool_two.sh"]["has_test"] is False)
+    check("同名文件不算覆盖：判据是 COVERS 声明",
+          by_name["tool_three.py"]["has_test"] is False,
+          by_name["tool_three.py"]["has_test"])
     check("py 说明取 docstring 首行", "演示工具" in by_name["tool_one.py"]["summary"])
     check("sh 说明取首个注释行", "演示脚本" in by_name["tool_two.sh"]["summary"])
     check("非脚本文件不入列", all(s["name"].endswith((".py", ".sh")) for s in scripts))
-
 
 def run_overview(tmp: Path):
     data = C.collect_all(tmp)
     st = data["stats"]
     check("统计字段齐全", set(st) >= {
         "steps", "steps_blocking", "limits", "limits_core", "tools", "tests"})
-    check("统计值与解析一致", st["steps"] == 3 and st["limits"] == 4
-          and st["steps_blocking"] == 1 and st["tools"] == 2 and st["tests"] == 1)
+    check("统计计数与夹具事实一致", st["steps"] == 3 and st["limits"] == 4
+          and st["steps_blocking"] == 1 and st["tools"] == 3 and st["tests"] == 2)
+    check("工具数与 kind 标记一致",
+          st["tools"] == sum(1 for s in C.load_scripts(tmp) if s["kind"] == "tool"),
+          (st["tools"], sum(1 for s in C.load_scripts(tmp) if s["kind"] == "tool")))
+    check("用例数与 tests/ 下文件数一致",
+          st["tests"] == len(list((tmp / "tests").glob("*.py"))), st["tests"])
     check("文档规模收集", {d["name"] for d in data["docs"]} == {"SKILL.md", "AGENTS.md"})
 
     # 缺 SKILL.md 时不得抛异常
     blank = Path(tempfile.mkdtemp())
     d2 = C.collect_all(blank)
     check("缺 SKILL.md 不抛异常", d2["stats"]["steps"] == 0 and d2["stats"]["limits"] == 0)
-
 
 def main():
     tmp = Path(tempfile.mkdtemp())
@@ -178,7 +189,6 @@ def main():
     ok = all(_RESULTS)
     print("全部通过" if ok else "存在失败用例")
     return 0 if ok else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

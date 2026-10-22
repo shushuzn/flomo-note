@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """tagcheck.py 的离线回归用例（不联网）。"""
+
+COVERS = ("tagcheck", "sop_gate",)
+
 import contextlib
 import importlib.util
 import json

@@ -15,6 +15,9 @@
 
 全部离线，临时文件内进行。退出码：0 = 全过。
 """
+
+COVERS = ("extract_arxiv_html",)
+
 import contextlib
 import io
 import re
