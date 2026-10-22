@@ -210,7 +210,8 @@ def test_bad_numeric_args():
         client = FakeClient()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = FC.cli_entry(lambda: DD.main(argv, client=client), usage_code=1)
+            code = DD.cli_entry(lambda: DD.main(argv, client=client),
+                                errors=(FC.FlomoError,), usage_code=1)
         label = f"{argv[2]} {argv[3]}"
         check(f"{label}：退出码 1", code == 1, code)
         check(f"{label}：一行提示、不冒 traceback",
@@ -236,7 +237,8 @@ def test_bad_option_syntax():
         client = FakeClient()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = FC.cli_entry(lambda: DD.main(argv, client=client), usage_code=1)
+            code = DD.cli_entry(lambda: DD.main(argv, client=client),
+                                errors=(FC.FlomoError,), usage_code=1)
         msg = err.getvalue()
         check(f"{label}：退出码 1", code == 1, code)
         check(f"{label}：提示含「{want}」", want in msg, msg)

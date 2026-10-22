@@ -27,6 +27,8 @@ def _load(name, filename):
 
 
 FC = _load("flomo_client", "flomo_client.py")
+# 命令行契约已从 flomo_client 拆出（云端通道不再负责参数解析），用例跟着走
+CU = _load("cli_util", "cli_util.py")
 
 RESULTS = []
 
@@ -312,14 +314,14 @@ def run_error_contract_cases():
                 os.environ["FLOMO_TOKEN"] = orig_env
 
     # cli_entry：正常返回值不改写，FlomoError 转成指定退出码，输出只有一行
-    check("cli_entry 原样返回 main 的退出码", FC.cli_entry(lambda: 0) == 0)
+    check("cli_entry 原样返回 main 的退出码", CU.cli_entry(lambda: 0, errors=()) == 0)
 
     def boom():
         raise FC.FlomoError("未找到 flomo token")
 
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
-        code = FC.cli_entry(boom, code=7, prefix="[失败] 查重未能进行：")
+        code = CU.cli_entry(boom, errors=(FC.FlomoError,), code=7, prefix="[失败] 查重未能进行：")
     line = err.getvalue().strip()
     check("cli_entry 把 FlomoError 转成指定退出码", code == 7, str(code))
     check("失败输出为一行，中文冒号后不补空格",
@@ -347,37 +349,41 @@ def run_error_contract_cases():
     check("引用 flomo_client 的脚本，入口一律走 cli_entry", not stray, ", ".join(stray))
 
     # 参数解析：`--limit abc` 此前是裸 int()，用户打错一个字得到一段 traceback
-    check("int_arg 正常值原样返回", FC.int_arg("2000", "--limit") == 2000)
-    check("int_arg 去首尾空白", FC.int_arg("  12  ", "--limit") == 12)
+    check("int_arg 正常值原样返回", CU.int_arg("2000", "--limit") == 2000)
+    check("int_arg 去首尾空白", CU.int_arg("  12  ", "--limit") == 12)
     bad = []
     for raw, want in [("abc", "需要整数"), ("", "需要整数"), ("2.5", "需要整数"),
                       ("0", "不能小于 1"), ("-3", "不能小于 1"),
                       ("2001", "不能大于 2000")]:
         try:
-            FC.int_arg(raw, "--limit", low=1, high=2000)
+            CU.int_arg(raw, "--limit", low=1, high=2000)
             bad.append(f"{raw!r} 未拦下")
-        except FC.UsageError as e:
+        except CU.UsageError as e:
             if want not in str(e):
                 bad.append(f"{raw!r} -> {e}")
     check("int_arg 非数字/越界一律抛 UsageError 并点明参数", not bad, "; ".join(bad))
-    check("float_arg 正常值", FC.float_arg("30.5", "--timeout") == 30.5)
+    check("float_arg 正常值", CU.float_arg("30.5", "--timeout") == 30.5)
     try:
-        FC.float_arg("abc", "--timeout")
+        CU.float_arg("abc", "--timeout")
         got = "未拦下"
-    except FC.UsageError as e:
+    except CU.UsageError as e:
         got = "ok" if "--timeout" in str(e) else str(e)
     check("float_arg 非数字抛 UsageError 并点明参数", got == "ok", got)
     # UsageError 是 FlomoError 的子类：既有的 `except FlomoError` 不会漏接
-    check("UsageError 属于 FlomoError", issubclass(FC.UsageError, FC.FlomoError))
+    # 反过来锁住：UsageError **不能**是 FlomoError 的子类。继承会让 `except FlomoError`
+    # 把「参数打错」读成云端失败，与它自己那条「两者的正确出口不同」正好相反；
+    # 「不漏接」改由 cli_entry 的 errors= 显式声明承担。
+    check("UsageError 不继承 FlomoError（否则打错参数会被读成云端失败）",
+          not issubclass(CU.UsageError, FC.FlomoError))
 
     # cli_entry 对用法错：走独立退出码，且**不套** `prefix`（「查重未能进行：」套在
     # 参数错上会读成云端失败，用户去查网络）
     def bad_limit():
-        raise FC.UsageError("--limit 需要整数，收到 'abc'")
+        raise CU.UsageError("--limit 需要整数，收到 'abc'")
 
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
-        code = FC.cli_entry(bad_limit, prefix="[失败] 查重未能进行：", usage_code=1)
+        code = CU.cli_entry(bad_limit, errors=(), prefix="[失败] 查重未能进行：", usage_code=1)
     line = err.getvalue().strip()
     check("cli_entry 用法错按 usage_code 退出", code == 1, str(code))
     check("cli_entry 用法错不套调用上下文前缀",
@@ -391,19 +397,19 @@ def run_parse_options_cases():
     「未知参数：--x」（用户以为选项名写错），重复给同一选项时后者静默覆盖前者。
     """
     spec = [
-        FC.Opt("--tags", "raw_tags", default=""),
-        FC.Opt("--tag", "tag", default=""),
-        FC.Opt("--limit", "limit", "int", low=1, default=10),
-        FC.Opt("--ratio", "ratio", "float", default=1.0),
-        FC.Opt("--no-full", "no_full", "flag"),
-        FC.Opt("--ids", "ids", default="", hint="；多个 id 用逗号"),
+        CU.Opt("--tags", "raw_tags", default=""),
+        CU.Opt("--tag", "tag", default=""),
+        CU.Opt("--limit", "limit", "int", low=1, default=10),
+        CU.Opt("--ratio", "ratio", "float", default=1.0),
+        CU.Opt("--no-full", "no_full", "flag"),
+        CU.Opt("--ids", "ids", default="", hint="；多个 id 用逗号"),
     ]
 
     def bad(argv, want, **kw):
         try:
-            FC.parse_options(argv, spec, **kw)
+            CU.parse_options(argv, spec, **kw)
             return f"未拦下"
-        except FC.UsageError as e:
+        except CU.UsageError as e:
             return "ok" if want in str(e) else str(e)
 
     check("parse_options 选项缺值报「缺少参数值」",
@@ -424,13 +430,13 @@ def run_parse_options_cases():
     check("parse_options 非整数交回 int_arg 口径",
           bad(["--limit", "abc"], "--limit 需要整数") == "ok")
 
-    ns, pos = FC.parse_options(["--tags", "AI/Agent", "--limit", "20", "--ratio", "0.5"], spec)
+    ns, pos = CU.parse_options(["--tags", "AI/Agent", "--limit", "20", "--ratio", "0.5"], spec)
     check("parse_options 取值与默认值",
           ns == {"raw_tags": "AI/Agent", "tag": "", "limit": 20, "ratio": 0.5,
                  "no_full": False, "ids": ""}, str(ns))
     check("parse_options 无位置参数时列表为空", pos == [], str(pos))
 
-    ns, pos = FC.parse_options(["--no-full", "https://x/y"], spec, positional_ok=True)
+    ns, pos = CU.parse_options(["--no-full", "https://x/y"], spec, positional_ok=True)
     check("parse_options 开关置 True（取反交给调用方）", ns["no_full"] is True, str(ns))
     check("parse_options positional_ok 时收位置参数", pos == ["https://x/y"], str(pos))
 
@@ -438,7 +444,7 @@ def run_parse_options_cases():
     # 「这个开关本该带范围」的意图消失。
     for kwargs, label in [({"kind": "string"}, "未知类型"), ({"kind": "flag", "low": 1}, "开关带范围")]:
         try:
-            FC.Opt("--x", "x", **kwargs)
+            CU.Opt("--x", "x", **kwargs)
             got = "未拦下"
         except ValueError:
             got = "ok"

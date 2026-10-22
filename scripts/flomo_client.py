@@ -45,6 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memo_util import concept_keywords, memo_signature  # noqa: E402
+from cli_util import cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
 
 ENDPOINT = "https://flomoapp.com/mcp"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -60,145 +61,6 @@ class FlomoError(RuntimeError):
     会直接穿透到进程顶层——在 HTTP 服务里表现为**连接被掐断、客户端拿到空响应**，
     错误原因一个字都传不出去。CLI 需要退出码，在入口处转成 `return 1` 即可。
     """
-
-
-class UsageError(FlomoError):
-    """命令行参数本身写错了（如 `--limit abc`）：不是云端或凭据问题。
-
-    单列一类，是因为两者的正确出口不同——参数错该指回那个参数、按各脚本自己的
-    「用法错」退出码结束；把它混进 `FlomoError` 会被读成「调用失败」，用户去查网络
-    和 token，实际只是少打了个数字。各脚本 `main` 里不各写一份报错文案，交给
-    `cli_entry(..., usage_code=本脚本的用法码)` 统一渲染。
-    """
-
-
-def _num_arg(raw, flag, cast, low=None, high=None):
-    """把命令行里的数字参数转成 `cast`，并在越界/非数字时抛 `UsageError`。
-
-    不做「宽松解析」——`int("2000条")` 会抛、`int("2_000")` 会过，都是意外的。
-    此前三个脚本直接写 `int(args[i+1])`，用户打错一个字得到的是 traceback。
-    """
-    text = (raw or "").strip()
-    try:
-        value = cast(text)
-    except (TypeError, ValueError):
-        kind = "整数" if cast is int else "数字"
-        raise UsageError(f"{flag} 需要{kind}，收到 {raw!r}") from None
-    if low is not None and value < low:
-        raise UsageError(f"{flag} 不能小于 {low}，收到 {value}")
-    if high is not None and value > high:
-        raise UsageError(f"{flag} 不能大于 {high}，收到 {value}")
-    return value
-
-
-def int_arg(raw, flag, *, low=None, high=None):
-    """`--limit 2000` 这类整数参数：见 `_num_arg`。"""
-    return _num_arg(raw, flag, int, low, high)
-
-
-def float_arg(raw, flag, *, low=None, high=None):
-    """`--timeout 30` 这类浮点参数：见 `_num_arg`。"""
-    return _num_arg(raw, flag, float, low, high)
-
-
-class Opt:
-    """一条命令行选项的声明：选项名、落到哪个字段、类型、取值范围、缺省值。
-
-    声明式而不是各脚本自己写 `if a == "--x" and i + 1 < len(args)`，是为了让
-    「缺值」「重复」「未知」这三种错误只在一处判定（见 `parse_options`）。
-    """
-
-    __slots__ = ("name", "dest", "kind", "low", "high", "default", "hint")
-
-    def __init__(self, name, dest, kind="str", *, low=None, high=None, default=None,
-                 hint=""):
-        if kind not in ("str", "int", "float", "flag"):
-            raise ValueError(f"未知的选项类型：{kind}")
-        if kind == "flag" and (low is not None or high is not None):
-            raise ValueError(f"{name} 是开关，不该有取值范围")
-        self.name = name
-        self.dest = dest
-        self.kind = kind
-        self.low = low
-        self.high = high
-        self.default = False if kind == "flag" else default
-        self.hint = hint
-
-
-def parse_options(argv, spec, *, positional_ok=False):
-    """按声明表解析命令行选项，返回 `(字段字典, 位置参数列表)`；用法错抛 `UsageError`。
-
-    收在一处，是因为此前四个脚本各写一遍 while 循环，带着两个一模一样的漏：
-
-    ① **选项落在末尾时被报成「未知参数」**。写成
-       `if a == "--draft" and i + 1 < len(args)`，当 `--draft` 是最后一个词时该条件为假，
-       直接掉进 else 分支——用户看到「未知参数：--draft」，会以为选项名写错、去翻文档，
-       而事实只是漏了值。两种错误的修法完全不同，不能共用一句提示。
-    ② **同一选项给两次时后者静默覆盖前者**。`--ids A --ids B` 只读了 B，用户以为两张
-       都核过；而「以为核过、其实漏了」正是查重与标签核对要防的事。
-
-    `positional_ok=False` 时出现裸词也按用法错报出（多半是把值写到了选项名前面）。
-    """
-    by_name = {o.name: o for o in spec}
-    values = {o.dest: o.default for o in spec}
-    positionals: list[str] = []
-    seen: set[str] = set()
-    i = 0
-    while i < len(argv):
-        token = argv[i]
-        opt = by_name.get(token)
-        if opt is None:
-            if token.startswith("-") and token != "-":
-                raise UsageError(f"未知参数：{token}")
-            if not positional_ok:
-                raise UsageError(f"多余的参数：{token}（选项名要以 -- 开头，值紧跟在选项后面）")
-            positionals.append(token)
-            i += 1
-            continue
-        if token in seen:
-            # 「怎么办」由选项自己声明：`--tags` 可以合并成一次给全，`--draft` 不行，
-            # 通用地建议「用逗号合并」会把路径选项说成能塞多个草稿。
-            raise UsageError(f"{token} 只能给一次{opt.hint}（重复时后者会静默覆盖前者）")
-        seen.add(token)
-        if opt.kind == "flag":
-            values[opt.dest] = True
-            i += 1
-            continue
-        # 缺值的判据是「后面没有词」或「后面那个词本身是个选项名」：`--limit -1`
-        # 要把 `-1` 当值交给 int_arg 报「不能小于 1」，不能在这里报「缺少参数值」。
-        if i + 1 >= len(argv) or argv[i + 1] in by_name:
-            raise UsageError(f"{token} 缺少参数值")
-        raw = argv[i + 1]
-        if opt.kind == "int":
-            values[opt.dest] = _num_arg(raw, token, int, opt.low, opt.high)
-        elif opt.kind == "float":
-            values[opt.dest] = _num_arg(raw, token, float, opt.low, opt.high)
-        else:
-            values[opt.dest] = raw
-        i += 2
-    return values, positionals
-
-
-def cli_entry(main, *, code=1, prefix="[失败]", usage_code=2):
-    """CLI 入口的统一出口：跑 `main`，把 `FlomoError` 转成退出码。
-
-    所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是**可预期**
-    的失败，该以「一行说明 + 非 0 退出码」结束；traceback 只该留给真缺陷。此前各脚本
-    各写各的（有的转了、有的没转），于是同一个「没配 token」在不同脚本里分别表现为
-    一行提示和一段 traceback——用户看不出这是同一件事。
-    """
-    try:
-        return main()
-    except UsageError as e:
-        # 用法错一律以「[失败] + 参数名」开头。`prefix` 是用来补调用上下文的
-        # （如「查重未能进行：」），而用法错根本没进到那一步，套上去会读成云端失败。
-        print(f"[失败] {e}", file=sys.stderr)
-        return usage_code
-    except FlomoError as e:
-        # 中文冒号后面不再补空格（`[失败] 查重未能进行：` 直接接原因）
-        sep = "" if prefix.endswith(("：", ":")) else " "
-        print(f"{prefix}{sep}{e}", file=sys.stderr)
-        return code
 
 
 def load_token():
@@ -712,4 +574,4 @@ FLOMO_MCP_TOOLS = [
 
 if __name__ == "__main__":
     # CLI 入口把库异常转成退出码（库层不再用 SystemExit 表达调用失败）
-    sys.exit(cli_entry(main))
+    sys.exit(cli_entry(main, errors=(FlomoError,)))

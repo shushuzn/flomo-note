@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, _result_memos, cli_entry  # noqa: E402
+from flomo_client import FlomoClient, FlomoError, _result_memos  # noqa: E402
+from cli_util import cli_entry  # noqa: E402
 from memo_util import memo_signature, slice_qualifiers  # noqa: E402  单一来源
 
 # 切片识别**走 memo_util.slice_qualifiers**（与质检拦截 5.8 同源）：
@@ -104,4 +105,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main))
+    sys.exit(cli_entry(main, errors=(FlomoError,)))

@@ -218,7 +218,8 @@ def test_option_syntax():
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             # 走真实入口：用法错由 cli_entry 渲染成一行，`main` 不再自己打印
-            code = PB.FC.cli_entry(lambda: PB.main(argv, exec_fn=exec_fn), usage_code=1)
+            code = PB.CLI.cli_entry(lambda: PB.main(argv, exec_fn=exec_fn),
+                                     errors=(PB.FC.FlomoError,), usage_code=1)
         msg = err.getvalue()
         check(f"参数错（{label}）：退出码 1", code == 1, code)
         check(f"参数错（{label}）：提示含「{want}」", want in msg, msg)

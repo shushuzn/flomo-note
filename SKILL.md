@@ -456,7 +456,8 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 
 ### 脚本（写卡流程用到的）
 
-- `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口（见 H3）；内置写前幂等查重与成功/失败判定（见「写成功判定与防重复」）。
+- `scripts/cli_util.py` — 命令行契约：选项声明与解析（`Opt`/`parse_options`）、数字参数（`int_arg`/`float_arg`）、统一出口（`cli_entry`）。**依赖图的叶子**，不 import 任何项目内模块；纯本地脚本（如 `fetch_article.py`）从这里取，不从云端模块借（分层约束见 `tests/test_layering.py`）。
+- `scripts/flomo_client.py` — 直连 flomo MCP 唯一入口（见 H3）；内置写前幂等查重与成功/失败判定（见「写成功判定与防重复」）。只管通道：命令行解析在 `cli_util.py`、卡片签名与切片在 `memo_util.py`。
 - `scripts/fetch_article.py` — 通用网页抓取与正文抽取，落 `_tmp/article_*.txt`（第 1 步）。
 - `scripts/dedup.py` — 查重 / 近邻逐次现查执行器（第 5、8 步）：每关键词单独调用、逐次打印，命中卡去重取全文，id 由程序提取；云端失败退出码非 0，不作「无命中」。
 - `scripts/tagcheck.py` — 定标签前核对（第 4 步）：存在性 / 严格两级 / 同顶层兄弟二级 / 与现有标签只差写法（判据取 `memo_util.tag_key`，与第 ⑧ 步闸门同一份）；树被截断即退出码 1。

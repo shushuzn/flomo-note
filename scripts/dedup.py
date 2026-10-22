@@ -34,16 +34,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from flomo_client import (  # noqa: E402
-    FlomoClient,
-    FlomoError,
-    Opt,
-    UsageError,
-    _result_memos,
-    cli_entry,
-    load_token,
-    parse_options,
-)
+from flomo_client import FlomoClient, FlomoError, _result_memos, load_token  # noqa: E402
+from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 
 BATCH_LIMIT = 10  # 服务端 memo_batch_get 单次上限，超过即整批报错
 
@@ -225,4 +217,4 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main, prefix="[失败] 查重未能进行：", usage_code=1))
+    sys.exit(cli_entry(main, errors=(FlomoError,), prefix="[失败] 查重未能进行：", usage_code=1))

@@ -98,8 +98,9 @@ flomo-note/
 
 | 文件 | 职责 |
 |------|------|
+| `cli_util.py` | 命令行契约的叶子层：`Opt`/`parse_options`（缺值 / 重复 / 未知三态分开报）、`int_arg`/`float_arg`（越界不夹取）、`cli_entry`（各脚本统一的失败出口，`errors=` 显式声明本脚本预期的失败类型）。**只依赖标准库、不 import 任何项目内模块**——纯本地脚本（如 `fetch_article.py`）因此不必牵出云端通道 |
 | `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现（多处共用，改动影响面最大） |
-| `flomo_client.py` | flomo MCP 调用唯一入口：握手、协议发现、写后回读验收；`cli_entry()` 是各命令行脚本统一的失败出口（`FlomoError` → 一行说明 + 退出码）；`Opt`/`parse_options` 是命令行选项的唯一解析（缺值 / 重复 / 未知三态分开报，`int_arg`/`float_arg` 管数字与越界） |
+| `flomo_client.py` | flomo MCP 调用唯一入口：握手、协议发现、写后回读验收。**只管通道**：命令行解析在 `cli_util.py`、卡片语义在 `memo_util.py`，改这两层不必动它 |
 | `fetch_article.py` | 取页并抽正文落 `_tmp/`：站内专用选择器优先、通用兜底，附带标题与字数 |
 | `tagcheck.py` | 标签树现采 + 存在性 / 严格两级 / 同顶层兄弟二级 / 只差空白·全半角·大小写的近义名（判据同写前闸门，树被截断即非 0 退出） |
 | `dedup.py` | 查重执行器：每个关键词单独调一次、id 去重后分批取全文；`--id` 走复盘路、`--ids` 点名读全文 |

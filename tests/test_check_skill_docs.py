@@ -373,7 +373,7 @@ def run_cli_flags_case():
     # `== "--x"`。采集口径若只认老写法，会把这个脚本的每个选项都判成「不认识」——
     # 检查报错而脚本没错，正是最容易被整片忽略的假报。
     DECL = (
-        "from flomo_client import Opt\n"
+        "from cli_util import Opt\n"
         "_OPTS = [\n"
         '    Opt("--draft", "draft", default=""),\n'
         "    FC.Opt(\"--update-id\", \"update_id\", default=\"\"),\n"

@@ -62,6 +62,7 @@ PY = sys.executable
 # （丢空行 / 还原 `_` `|` `[` 转义 / 去行内水平空白）。自己再写一份，两处迟早
 # 不同步，diff 会把渲染层补的空行当成「新增了一行」——噪声会训练出跳过习惯。
 sys.path.insert(0, str(SCRIPT_DIR))
+import cli_util as CLI  # noqa: E402
 import flomo_client as FC  # noqa: E402
 
 # 覆盖差异逐行列出，超过这个行数只列前 N 行 + 提示剩余
@@ -70,13 +71,13 @@ DIFF_SHOW = 80
 _SUCCESS_RE = re.compile(r"\[成功\] 已写入 memo id=(\S+)")
 
 _OPTS = [
-    FC.Opt("--draft", "draft", default=""),
-    FC.Opt("--verify", "verify", default=""),
-    FC.Opt("--update-id", "update_id", default=""),
-    FC.Opt("--allow-rename", "allow_rename", "flag"),
-    FC.Opt("--dry-run", "dry_run", "flag"),
-    FC.Opt("--skip-web", "skip_web", "flag"),
-    FC.Opt("--no-verify-card", "no_verify_card", "flag"),
+    CLI.Opt("--draft", "draft", default=""),
+    CLI.Opt("--verify", "verify", default=""),
+    CLI.Opt("--update-id", "update_id", default=""),
+    CLI.Opt("--allow-rename", "allow_rename", "flag"),
+    CLI.Opt("--dry-run", "dry_run", "flag"),
+    CLI.Opt("--skip-web", "skip_web", "flag"),
+    CLI.Opt("--no-verify-card", "no_verify_card", "flag"),
 ]
 
 
@@ -351,7 +352,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         print(__doc__)
         return 0
 
-    ns, _pos = FC.parse_options(args, _OPTS)
+    ns, _pos = CLI.parse_options(args, _OPTS)
     draft = ns["draft"]
     verify = ns["verify"]
     # id 是人工抄来的，首尾空白一律不算内容：`--update-id " ABC"` 否则会带空格去查
@@ -480,4 +481,4 @@ if __name__ == "__main__":
     # 与其余命令行脚本同一出口：`FlomoError` / `UsageError` 收成一行 + 退出码，
     # 不让「没配 token」变成 traceback（`main` 里子进程的失败是靠退出码判的，
     # 但本脚本自己也会解 JSON、读文件，兜底不能省）。
-    sys.exit(FC.cli_entry(main, usage_code=1))
+    sys.exit(CLI.cli_entry(main, errors=(FC.FlomoError,), usage_code=1))

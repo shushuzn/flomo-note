@@ -42,7 +42,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIN_CHARS = 300
@@ -548,4 +548,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     # 用法错（参数写成非数字等）由入口渲染：`main` 里不再各写一份报错文案。
-    sys.exit(cli_entry(main, usage_code=1))
+    sys.exit(cli_entry(main, errors=(), usage_code=1))
