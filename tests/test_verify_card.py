@@ -126,6 +126,31 @@ def run_cases():
         raised = True
     check("空回包抛错而非静默通过", raised)
 
+    # 9b) 回包只在 content[].text 里（协议层允许）：必须照样取到卡。
+    #     旧实现是 `structuredContent or res`，形态一变就把整个信封当卡片，
+    #     `memos` 取不到即报「未返回卡片」——把「协议变了」误诊成「云端没这张卡」。
+    class TextOnly:
+        def tool(self, name, arguments=None):
+            inner = json.dumps({"memos": [memo(GOOD)]}, ensure_ascii=False)
+            return {"content": [{"type": "text", "text": inner}]}
+
+    checks, info = VC.run("TESTID", TextOnly())
+    check("content[].text 形态照常回读", all(ok for ok, _ in by_name(checks).values()), str(info))
+    check("content[].text 形态取到概念名", info["lines"] >= 5 and info["tags"] == ["科技/安全"], str(info))
+
+    # 9c) 完全读不到：诊断必须指向「回包取不到」，不能指向「卡不存在」
+    class Garbage:
+        def tool(self, name, arguments=None):
+            return {"content": [{"type": "text", "text": "not json"}]}
+
+    detail = ""
+    try:
+        VC.run("TESTID", Garbage())
+    except Exception as e:  # noqa: BLE001 — 只断言诊断文本
+        detail = str(e)
+    check("回包取不到时诊断指向协议而非「卡不存在」", "取不到结构化数据" in detail, detail)
+    check("回包取不到时不再误报「未返回卡片」", "未返回卡片" not in detail, detail)
+
     # 10) 默认构造必须解包 `(token, 来源)`——load_token() 真实返回是元组。
     #    这条是被真机回读打出来的：直接把元组塞进构造器会报
     #    `can only concatenate str (not "tuple") to str`，而「整个替换掉客户端」的

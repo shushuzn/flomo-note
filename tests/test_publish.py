@@ -304,6 +304,25 @@ def test_update_target_missing():
         check("目标卡不存在：提示核对 id", "确认 --update-id" in err, err)
 
 
+def test_update_read_unparseable():
+    """回包读不出结构 ≠ 卡不存在：两者都退 6，但提示必须分开。
+
+    合成一句「回包里没有这张卡」会把人引向「换 id 再试」；真正的原因是协议形态
+    变了，重试一次还是同一句，而对照的草稿可能已经改成另一张卡的内容。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp)
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, "不是 JSON 的回包", "")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC"], exec_fn)
+        check("回包读不出结构：退出码 6", code == 6, code)
+        check("回包读不出结构：不写云", "memo_update" not in tools(calls), tools(calls))
+        check("回包读不出结构：提示指向协议形态", "无法解析" in err, err)
+        check("回包读不出结构：不误报「没有这张卡」", "没有这张卡" not in err, err)
+
+
 def test_update_read_failure():
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
@@ -535,6 +554,7 @@ if __name__ == "__main__":
                test_option_syntax,
                test_update_success, test_update_rename_blocked,
                test_update_rename_allowed, test_update_target_missing,
+               test_update_read_unparseable,
                test_update_read_failure, test_update_failure_no_dup,
                test_allow_rename_without_update, test_update_dry_run,
                test_update_diff_reported, test_update_diff_unchanged,

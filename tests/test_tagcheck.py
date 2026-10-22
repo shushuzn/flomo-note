@@ -2,6 +2,7 @@
 """tagcheck.py 的离线回归用例（不联网）。"""
 import contextlib
 import importlib.util
+import json
 import io
 import sys
 from pathlib import Path
@@ -90,6 +91,51 @@ def test_three_levels():
     code, out, _err = run(["--tags", "AI/Agent/子级"], FakeClient(TAGS))
     check("三级标签：退出码 2", code == 2, code)
     check("三级标签：指出 H17", "严格两级" in out, out)
+
+
+class ContentOnlyClient(FakeClient):
+    """回包只在 `content[].text` 里（协议层允许，云端可能这样回）。
+
+    此前 `load_tree` 只认 `structuredContent`，同一份数据它报「回包缺 total 字段」，
+    而 `sop_gate` 的逐字段兜底能读出来——同一个回包两个结论，还错怪了标签树。
+    """
+
+    def tool(self, name, args=None):
+        self.calls.append((name, dict(args or {})))
+        inner = json.dumps({"tags": self.tags, "total": self.total}, ensure_ascii=False)
+        return {"content": [{"type": "text", "text": inner}]}
+
+
+def test_content_only_shape():
+    client = ContentOnlyClient(TAGS)
+    code, out, err = run(["--tags", "AI/Agent,科技/测试"], client)
+    check("content[].text 形态：退出码 0（不再报缺 total）", code == 0, err)
+    check("content[].text 形态：判定与 structuredContent 形态一致", out.count("✓") == 2, out)
+
+    # 跨层对齐：同一个回包，tagcheck 与 sop_gate 必须给出同一个 total
+    gate = _load("sop_gate", "sop_gate.py")
+    # 注意两侧返回顺序不同：tagcheck 是 (tags, total)，sop_gate 是 (total, tags)
+    t_tags, t_total = TC.load_tree(ContentOnlyClient(TAGS), 2000)
+    g_total, g_tags = gate._tag_tree_total_and_count(ContentOnlyClient(TAGS))
+    check("同一回包：tagcheck 与 sop_gate 的 total 一致",
+          t_total == g_total == len(TAGS), (t_total, g_total))
+    check("同一回包：两侧标签集合一致", list(t_tags) == list(g_tags) or sorted(t_tags) == sorted(g_tags))
+
+    # 解析得出、但字段缺失（真截断）仍必须阻塞：宽容只给「回包形态」，不给「数据不全」
+    code, _out, err = run(["--tags", "AI/Agent"], FakeClient(TAGS, total=5))
+    check("字段缺失仍判截断（宽容不放行「数据不全」）", code == 1 and "截断" in err, err)
+
+    # 完全读不到：必须抛错，不能当成「标签树是空的」继续走
+    class DeadClient:
+        def tool(self, name, args=None):
+            return {"isError": True, "content": [{"type": "text", "text": "token expired"}]}
+
+    try:
+        TC.load_tree(DeadClient(), 2000)
+        raised = ""
+    except Exception as e:  # noqa: BLE001 — 只断言抛了且说清原因
+        raised = str(e)
+    check("工具级错误：抛错并带出错误正文", "token expired" in raised, raised)
 
 
 def test_truncated_tree():
@@ -189,7 +235,7 @@ def test_missing_value_and_unknown():
 if __name__ == "__main__":
     for fn in (test_existing_ok, test_missing_tag, test_missing_tag_leaf_only_tree,
                test_three_levels, test_truncated_tree, test_hash_prefix_and_split,
-               test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
+               test_content_only_shape, test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
                test_written_differently, test_fullwidth_slash_not_depth_error,
                test_case_only_top_exists, test_bad_limit, test_duplicate_flag,
                test_empty_grep, test_missing_value_and_unknown):

@@ -38,6 +38,7 @@ from flomo_client import (  # noqa: E402
     cli_entry,
     load_token,
     parse_options,
+    tool_data,
 )
 from memo_util import tag_key  # noqa: E402
 
@@ -64,9 +65,13 @@ def split_tags(raw: str) -> list[str]:
 
 
 def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int]:
-    """现采标签树，返回 (tags, total)。条数与 total 不符即视为截断（抛错）。"""
-    res = client.tool("tag_tree", {"limit": limit})
-    sc = res.get("structuredContent") or {}
+    """现采标签树，返回 (tags, total)。条数与 total 不符即视为截断（抛错）。
+
+    回包解析走 `flomo_client.tool_data`（唯一实现）。此前只认 `structuredContent`，
+    而 `sop_gate` 对同一回包做了逐字段兜底：云端一旦只给 `content[].text`，
+    闸门判通过、本脚本报「回包缺 total 字段」——同一份数据两个结论，且错怪了标签树。
+    """
+    sc = tool_data(client.tool("tag_tree", {"limit": limit}))
     tags = sc.get("tags") or []
     total = sc.get("total")
     if total is None:

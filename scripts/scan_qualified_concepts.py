@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, cli_entry  # noqa: E402
+from flomo_client import FlomoClient, _result_memos, cli_entry  # noqa: E402
 from memo_util import memo_signature, slice_qualifiers  # noqa: E402  单一来源
 
 # 切片识别**走 memo_util.slice_qualifiers**（与质检拦截 5.8 同源）：
@@ -62,7 +62,7 @@ def collect_memos(c, tags):
     seen = {}
     for t in tags:
         try:
-            for m in _memos(c.tool("memo_search", {"tag": t, "limit": 50})):
+            for m in _result_memos(c.tool("memo_search", {"tag": t, "limit": 50})):
                 if m.get("id") and m["id"] not in seen:
                     seen[m["id"]] = m
         except Exception as e:
@@ -101,23 +101,6 @@ def main():
             {"id": m, "concept": n, "kinds": h} for m, n, h in flagged]},
         ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[out] {out}")
-
-
-def _memos(result):
-    if result.get("structuredContent"):
-        sc = result["structuredContent"]
-        if isinstance(sc, dict) and "memos" in sc:
-            return sc["memos"] or []
-    import json as _j
-    for blk in result.get("content", []):
-        if blk.get("type") == "text":
-            try:
-                inner = _j.loads(blk["text"])
-            except Exception:
-                continue
-            if isinstance(inner, dict) and "memos" in inner:
-                return inner["memos"] or []
-    return []
 
 
 if __name__ == "__main__":

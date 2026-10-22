@@ -215,6 +215,55 @@ def run_brief_cases():
     check("brief 通过剥离参数实现，不改工具名解析", 'a != "--brief"' in main_src)
 
 
+def run_tool_data_cases():
+    """回包解析只有一份实现，且「读不到」与「取到空」必须分开。
+
+    事故形态：云端返回工具级错误（token 过期最常见），回包里没有可解析的 JSON，
+    旧 `_result_memos` 一律退化成 `[]`——查重于是报「没有相近的卡」、写前幂等检查
+    判「不是重复卡」，两个安全阀同时无声打开，报出来的结论还长得像正常结果。
+    """
+    # 1) structuredContent 直取
+    check("tool_data 直取 structuredContent",
+          FC.tool_data({"structuredContent": {"total": 3}}) == {"total": 3})
+
+    # 2) 只在 content[].text 里的内层 JSON
+    only_text = {"content": [{"type": "text", "text": json.dumps({"total": 7})}]}
+    check("tool_data 回落解析 content[].text", FC.tool_data(only_text) == {"total": 7})
+
+    # 3) 工具级错误：带出错误正文，不许当成空结果
+    err = {"isError": True, "content": [{"type": "text", "text": "token expired"}]}
+    try:
+        FC.tool_data(err)
+        got = "未抛错"
+    except FC.FlomoError as e:
+        got = str(e)
+    check("tool_data 对 isError 抛错并带出错误正文", "token expired" in got, got)
+    check("tool_data_or_none 对 isError 只返回 None（写后回读不许抛）",
+          FC.tool_data_or_none(err) is None)
+
+    # 4) 两个出口都取不到
+    for bad, label in [({}, "空回包"), (None, "无返回"), ({"content": [{"text": "不是JSON"}]}, "非 JSON 文本")]:
+        try:
+            FC.tool_data(bad)
+            got = "未抛错"
+        except FC.FlomoError:
+            got = "ok"
+        check(f"tool_data 对{label}抛错（读不到不等于 0 条）", got == "ok", got)
+
+    # 5) _result_memos：读不到抛错；读得到但确无 memos 才算空
+    try:
+        FC._result_memos(err)
+        got = "返回了列表"
+    except FC.FlomoError:
+        got = "ok"
+    check("_result_memos 对工具错误抛错（不再静默返回空列表）", got == "ok", got)
+    check("_result_memos 正常回包但无 memos 字段仍返回空列表",
+          FC._result_memos({"structuredContent": {"total": 0}}) == [])
+    check("_result_memos 认 content[].text 形态的 memos",
+          [m["id"] for m in FC._result_memos(
+              {"content": [{"text": json.dumps({"memos": [{"id": "M9"}]})}]})] == ["M9"])
+
+
 def run_error_contract_cases():
     """失败一律走 `FlomoError`：库层不抛 `SystemExit`，CLI 一律以退出码收场。
 
@@ -401,6 +450,7 @@ if __name__ == "__main__":
     run_readback_cases()
     run_write_path_cases()
     run_brief_cases()
+    run_tool_data_cases()
     run_parse_options_cases()
     run_error_contract_cases()
     print("---")

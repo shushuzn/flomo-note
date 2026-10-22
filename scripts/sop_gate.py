@@ -75,7 +75,14 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, cli_entry, load_token, _result_memos  # noqa: E402
+from flomo_client import (  # noqa: E402
+    FlomoClient,
+    FlomoError,
+    _result_memos,
+    cli_entry,
+    load_token,
+    tool_data,
+)
 from memo_util import (  # noqa: E402
     body_hash,
     keywords_of_concept,
@@ -318,21 +325,16 @@ def _check_tags(tags, tagline, blockers, notes):
 def _tag_tree_total_and_count(client):
     """现采 tag_tree，返回 (total, 覆盖全部标签的集合)。
 
-    limit 必须传大值（服务端默认 200 会截断）；以 structuredContent.total 为准。
+    limit 必须传大值（服务端默认 200 会截断）；以 `total` 为准。
+    回包解析走 `flomo_client.tool_data`（唯一实现）：逐字段兜底那套已删——
+    它与 `tagcheck` 的「缺 total 就抛」是同一件事的两种写法，同一个回包会在
+    两个脚本里得到相反结论。
     """
-    res = client.tool("tag_tree", {"limit": 2000})
-    sc = (res or {}).get("structuredContent") or {}
+    sc = tool_data(client.tool("tag_tree", {"limit": 2000}))
     total = sc.get("total")
     tags = sc.get("tags")
-    if total is None or tags is None:
-        # 兜底：解析 content[].text 内层 JSON
-        for block in (res or {}).get("content") or []:
-            try:
-                inner = json.loads(block.get("text") or "")
-            except Exception:
-                continue
-            total = total if total is not None else inner.get("total")
-            tags = tags if tags is not None else inner.get("tags")
+    if total is None:
+        raise FlomoError("tag_tree 回包缺 total 字段，无法判断标签树是否被截断")
     return total, tags or []
 
 

@@ -326,6 +326,56 @@ def usage():
     return 2
 
 
+def _extract_data(result):
+    """从一次 tools/call 回包取出结构化数据，返回 `(数据字典, 取不到的原因)`。
+
+    MCP 的回包形态是 `{"content":[{"type":"text","text":"<内层JSON>"}], "structuredContent":{...}}`：
+    正常情况数据在 `structuredContent`，极少数工具只给 `content[].text` 的内层 JSON。
+
+    **「取不到」与「取到空」是两件事**：这里一律返回 `None` 并附原因，出口交给调用方分叉——
+    读路径用 `tool_data`（读不到就抛），写后回读用 `tool_data_or_none`（只能标未知，
+    抛错会被当成失败而重发）。此前每个脚本各写一份解析、各定一套兜底，同一个回包在
+    `tagcheck` 判「缺 total」、在 `sop_gate` 判通过，结论分叉而没人报错。
+
+    工具级错误（`isError` 为真）也走这里并带出错误正文：这类回包此前被解析失败后读成
+    「0 条」，查重与幂等检查拿着「没撞车」的结论放行。
+    """
+    if not isinstance(result, dict):
+        return None, f"回包不是对象（{type(result).__name__}）"
+    if result.get("isError"):
+        msg = " ".join(
+            b.get("text") or "" for b in (result.get("content") or []) if isinstance(b, dict)
+        ).strip()
+        return None, "工具返回错误" + ("：" + msg[:120] if msg else "（无正文）")
+    sc = result.get("structuredContent")
+    if isinstance(sc, dict) and sc:
+        return sc, ""
+    for block in result.get("content") or []:
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str):
+            continue
+        try:
+            inner = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(inner, dict) and inner:
+            return inner, ""
+    return None, "既没有 structuredContent，也没有可解析的 content[].text 内层 JSON"
+
+
+def tool_data(result):
+    """结构化数据；取不到即抛 `FlomoError`（读路径出口：读不到必须当场知道）。"""
+    data, why = _extract_data(result)
+    if data is None:
+        raise FlomoError(f"工具回包取不到结构化数据：{why}；读不到不等于「0 条」")
+    return data
+
+
+def tool_data_or_none(result):
+    """结构化数据；取不到返回 None（写后回读出口：只许标未知，不许抛）。"""
+    return _extract_data(result)[0]
+
+
 def brief_text(name, payload):
     """把一次工具返回压成可核对的短表（供 `--brief`）。
 
@@ -335,18 +385,8 @@ def brief_text(name, payload):
 
     返回 None 表示这个形态不适合压缩，调用方应退回完整 JSON。
     """
-    sc = (payload or {}).get("structuredContent") or {}
+    sc = tool_data_or_none(payload)
     if not sc:
-        # 兼容只有 content[].text 的回包形态
-        for block in (payload or {}).get("content") or []:
-            try:
-                parsed = json.loads((block or {}).get("text") or "")
-            except Exception:
-                continue
-            if isinstance(parsed, dict) and parsed:
-                sc = parsed
-                break
-    if not isinstance(sc, dict) or not sc:
         return None
 
     memos = sc.get("memos")
@@ -395,31 +435,13 @@ def brief_text(name, payload):
 def _result_memos(result):
     """从 flomo 工具返回中提取 memos 列表。
 
-    工具返回是 {"content":[{"type":"text","text":"<内层JSON>"}], "structuredContent":{...}} 包裹结构，
-    结构化数据位于 structuredContent；极少数工具只给 content[].text 的内层 JSON。
-    统一优先读 structuredContent.memos，兜底解析 content[].text。
+    回包解析走 `tool_data`（唯一实现）；取不到结构化数据即抛错——不返回空列表。
+    **「0 条」与「没读到」此前同形**：云端的工具级错误、或协议形态一变，解析失败
+    都退化成 `[]`，查重据此报「没有相近的卡」、写前幂等检查据此判「不是重复」，
+    两处安全阀同时无声失效。工具正常返回但确无 memos 字段时仍返回 `[]`。
     """
-    if not isinstance(result, dict):
-        return []
-    sc = result.get("structuredContent")
-    if isinstance(sc, dict):
-        memos = sc.get("memos")
-        if isinstance(memos, list):
-            return memos
-    for block in (result.get("content") or []):
-        if not isinstance(block, dict):
-            continue
-        text = block.get("text")
-        if not isinstance(text, str):
-            continue
-        try:
-            inner = json.loads(text)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        mm = (inner or {}).get("memos")
-        if isinstance(mm, list):
-            return mm
-    return []
+    memos = tool_data(result).get("memos")
+    return memos if isinstance(memos, list) else []
 
 
 def _exact_content_dup(client, content):
@@ -552,11 +574,12 @@ def main():
     # flomo 成功响应中 id 位于 result.structuredContent.id（嵌套结构），
     # 取不到即视为失败，退出码非 0，下游自动化不会据此重试。
     if name in ("memo_create", "memo_update"):
-        try:
-            created_id = result["structuredContent"]["id"]
-        except (TypeError, KeyError):
+        # 取 id 同样走唯一那份回包解析：只认 `structuredContent` 时，云端一旦把数据
+        # 放进 `content[].text`，这里会把一次**成功**的写判成「未取到 id」并退出非 0。
+        created_id = (tool_data_or_none(result) or {}).get("id")
+        if not created_id:
             sys.stderr.write(
-                "[失败] 写操作响应中未取到 structuredContent.id，"
+                "[失败] 写操作响应中未取到 id，"
                 "按失败处理，禁止基于猜测重发写请求。\n"
             )
             return 1
