@@ -905,7 +905,37 @@ def run_missing_token():
         C.load_token = orig
 
 
+def run_structured_parse():
+    """`_structured` 是回包解析的**唯一**出口策略：读不到给空字典，不许抛错。
+
+    抛错会被上层当成「写失败」而重发（`tag_rename` 重发是幂等的，`memo_create`
+    重发就是重复卡），所以写后回读这一路只能标未知。解析口径本身在
+    `flomo_client._extract_data`，本脚本不再自带一份——两份口径必然漂移：
+    严格版不认 `content[].text`，同一份回包在这里读成空、在别处读得到。
+    """
+    check("_structured 直取 structuredContent",
+          C._structured({"structuredContent": {"memos": []}}) == {"memos": []})
+    check("_structured 认 content[].text 内层 JSON（与别处同口径）",
+          C._structured(nested_text_reply("x")) == {"content": "x"})
+    check("_structured 读不到给空字典，不抛错",
+          C._structured({"content": [{"text": "不是JSON"}]}) == {})
+    check("_structured 对工具级错误给空字典（写后回读只能标未知）",
+          C._structured({"isError": True, "content": [{"text": "boom"}]}) == {})
+
+    # 读路径上解析失败要在本层边界收成 CloudError：漏出 FlomoError 会越过
+    # `except CloudError` 落到通用分支，提示变成一句与云端无关的异常。
+    try:
+        C.CloudReader._memos(None, {"content": [{"text": "不是JSON"}]})
+        got = "未抛错"
+    except C.CloudError:
+        got = "CloudError"
+    except FlomoError:
+        got = "FlomoError 漏出（越过边界）"
+    check("memos 解析失败在本层转 CloudError", got == "CloudError", got)
+
+
 def main():
+    run_structured_parse()
     run_split()
     run_slim()
     run_limit_clamp()

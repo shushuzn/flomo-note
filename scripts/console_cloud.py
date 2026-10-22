@@ -72,7 +72,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import validate_memo as _vm  # noqa: E402
-from flomo_client import FlomoClient, FlomoError, _result_memos, load_token  # noqa: E402
+from flomo_client import (  # noqa: E402
+    FlomoClient,
+    FlomoError,
+    _result_memos,
+    load_token,
+    tool_data_or_none,
+)
 from memo_util import memo_signature  # noqa: E402
 
 # 云端只读工具白名单：**恰好等于**本模块各读方法实际调用的工具，一个不多。
@@ -171,33 +177,17 @@ def _tri_bool(value):
 
 
 def _structured(result) -> dict:
-    """取工具返回的结构化数据（包裹结构见 H4）。"""
-    if not isinstance(result, dict):
-        return {}
-    sc = result.get("structuredContent")
-    return sc if isinstance(sc, dict) else {}
+    """取工具返回的结构化数据（包裹结构见 H4）。
 
+    解析只有一份实现（`flomo_client._extract_data`：优先 `structuredContent`，
+    退回 `content[].text` 的内层 JSON）。本函数只决定**出口策略**——取不到给空字典，
+    由调用方按「读不到」处理：写回执少一层就不该整条判成「无法判定」，更不该抛错，
+    抛错会被当成失败而重发。
 
-def _struct_or_text(result) -> dict:
-    """结构化数据；缺 `structuredContent` 时退回解析 `content[].text` 里的内层 JSON。
-
-    写回执里的数字是判「写没写成」的唯一依据，回包形态少一层就不该整条判成
-    「无法判定」；两边都取不到才返回空字典，由调用方按「读不到」处理。
+    此前这里与写后回读各写了一份解析、解析口径还不一样（严格版不认 `content[].text`），
+    同一份回包在一个脚本里读得到、在另一个脚本里读成空。
     """
-    sc = _structured(result)
-    if sc:
-        return sc
-    for block in (result.get("content") or []):
-        text = block.get("text") if isinstance(block, dict) else None
-        if not isinstance(text, str):
-            continue
-        try:
-            inner = json.loads(text)
-        except Exception:  # noqa: BLE001 — 不是 JSON 就不是回执载体
-            continue
-        if isinstance(inner, dict):
-            return inner
-    return {}
+    return tool_data_or_none(result) or {}
 
 
 def _as_int(value):
@@ -484,6 +474,18 @@ class CloudReader:
             raise CloudError(f"云端调用失败（{name}）：{type(e).__name__}: {e}") from None
 
     # ---- 卡片 ----------------------------------------------------------- #
+    def _memos(self, result):
+        """取回包里的 memos；解析不出转 `CloudError`。
+
+        `flomo_client._result_memos` 在「读不到」时抛 `FlomoError`（不再静默返回空列表）；
+        本层是控制台与云端之间的唯一边界，漏出去的 `FlomoError` 会越过 `except CloudError`
+        落到通用分支，提示从「云端调用失败」变成一句与云端无关的异常。故在此收口。
+        """
+        try:
+            return _result_memos(result)
+        except FlomoError as e:
+            raise CloudError(str(e)) from None
+
     def list_memos(
         self,
         keywords=None,
@@ -514,7 +516,7 @@ class CloudReader:
         tri = _tri_bool(has_tag)
         if tri is not None:
             args["has_tag"] = tri
-        memos = _result_memos(self.call("memo_search", args))
+        memos = self._memos(self.call("memo_search", args))
         return {
             "count": len(memos),
             "limit": n,
@@ -533,7 +535,7 @@ class CloudReader:
         if not memo_id:
             raise CloudError("缺少 memo id")
         result = self.call("memo_batch_get", {"ids": [memo_id]})
-        memos = _result_memos(result)
+        memos = self._memos(result)
         if not memos:
             raise CloudError(f"未取到 memo：{memo_id}")
         return {"memo": full_memo(memos[0]), "omitted_ids": list(_structured(result).get("omitted_ids") or [])}
@@ -550,7 +552,7 @@ class CloudReader:
         if not clean:
             raise CloudError("缺少 memo id")
         result = self.call("memo_batch_get", {"ids": clean})
-        memos = _result_memos(result)
+        memos = self._memos(result)
         return {
             "count": len(memos),
             "requested": len(clean),
@@ -567,12 +569,12 @@ class CloudReader:
         tri = _tri_bool(no_same_tag)
         if tri is not None:
             args["no_same_tag"] = tri
-        memos = _result_memos(self.call("memo_recommended", args))
+        memos = self._memos(self.call("memo_recommended", args))
         return {"id": memo_id, "count": len(memos), "memos": [slim_memo(m) for m in memos]}
 
     def daily_review(self) -> dict:
         """今日回顾：云端挑选的历史卡片，与列表同构。"""
-        memos = _result_memos(self.call("get_daily_review", {}))
+        memos = self._memos(self.call("get_daily_review", {}))
         return {"count": len(memos), "memos": [slim_memo(m) for m in memos]}
 
     # ---- 标签 ----------------------------------------------------------- #
@@ -755,7 +757,7 @@ class CloudReader:
         _tags, concept, _body = split_card(content)
         if not concept:
             return ""
-        memos = _result_memos(self.call("memo_search", {"keywords": concept, "limit": 5}))
+        memos = self._memos(self.call("memo_search", {"keywords": concept, "limit": 5}))
         for m in memos:
             _t, title, _b = split_card(m.get("content") or "")
             if title.strip() == concept.strip():
@@ -847,7 +849,7 @@ class CloudReader:
         args: dict = {"old_tag": old_tag, "new_tag": new_tag}
         if granted:
             args["max_memos"] = granted
-        sc = _struct_or_text(self.call("tag_rename", args, write=True))
+        sc = _structured(self.call("tag_rename", args, write=True))
         return _rename_verdict(old_tag, new_tag, granted, sc)
 
     # ---- 能力清单 ------------------------------------------------------- #
@@ -922,7 +924,7 @@ class CloudReader:
         args = {k: v for k, v in (arguments or {}).items() if v not in (None, "")}
         result = self.call(name, args)  # 读白名单在 call 内强制
         sc = _structured(result)
-        memos = _result_memos(result)
+        memos = self._memos(result)
         tags = []
         for t in (sc.get("tags") or []):
             if isinstance(t, str):

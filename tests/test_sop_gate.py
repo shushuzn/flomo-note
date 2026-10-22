@@ -492,9 +492,17 @@ def run_tag_tree_net_cases():
     total, tags = GATE._tag_tree_total_and_count(FakeClient(tag_tree=fallback))
     check("tag_tree 回落解析 content[].text", total == 42 and len(tags) == 1)
 
-    # 3) 两者皆无 → (None, [])
-    total, tags = GATE._tag_tree_total_and_count(FakeClient(tag_tree={}))
-    check("tag_tree 无数据返回 None", total is None and tags == [])
+    # 3) 两者皆无 → 抛错，不再返回 (None, [])
+    #    旧断言钉的是「无数据返回 None」，而这正是缺陷：total 为 None 时上层继续走，
+    #    「标签树读不到」与「标签树是空的」同形，查重标签路会报「近邻 0 个」。
+    try:
+        GATE._tag_tree_total_and_count(FakeClient(tag_tree={}))
+        raised = None
+    except Exception as e:  # noqa: BLE001 — 只断言「抛了且说清原因」
+        raised = e
+    check("tag_tree 两个出口都取不到时抛错（不再静默返回 None）", raised is not None)
+    check("tag_tree 抛错带出取不到的原因",
+          raised is not None and "取不到结构化数据" in str(raised))
 
 
 def run_dedup_net_cases():

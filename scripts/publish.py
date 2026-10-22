@@ -233,7 +233,14 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[i
         print("[失败] 读不到目标卡，未写云——确认 --update-id 指向的卡存在、网络正常",
               file=sys.stderr)
         return 6, ""
-    memos = (_cloud_json(out).get("structuredContent") or {}).get("memos") or []
+    # 回包解析走唯一实现（`FC.tool_data_or_none`）；解析不出与「没有这张卡」必须分开说：
+    # 前者是协议形态问题（重试无用、更不能据此重建卡），后者才是 --update-id 抄错。
+    sc = FC.tool_data_or_none(_cloud_json(out))
+    if sc is None:
+        print("[失败] 回读回包无法解析（既无 structuredContent，也无可解析的内层 JSON），"
+              "未写云——先核对协议形态，别把它读成「卡不存在」", file=sys.stderr)
+        return 6, ""
+    memos = sc.get("memos") or []
     if not memos:
         print("[失败] 回包里没有这张卡，未写云——确认 --update-id 是否正确", file=sys.stderr)
         return 6, ""

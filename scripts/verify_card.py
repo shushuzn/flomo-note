@@ -95,10 +95,14 @@ def _default_client():
 
 
 def fetch(memo_id: str, client=None):
-    """取回卡片全文。`client` 可注入（用例传假 client，避免联网）。"""
+    """取回卡片全文。`client` 可注入（用例传假 client，避免联网）。
+
+    回包解析走 `FC.tool_data`（唯一实现）。此前是 `structuredContent or res`——
+    形态一变就把**整个回包信封**当卡片，`memos` 取不到即报「回读失败：未返回卡片」，
+    把「协议变了」误诊成「云端没有这张卡」，接着就会有人去重建一张重复卡。
+    """
     client = client or _default_client()
-    res = client.tool("memo_batch_get", {"ids": [memo_id]})
-    sc = res.get("structuredContent") or res
+    sc = FC.tool_data(client.tool("memo_batch_get", {"ids": [memo_id]}))
     memos = sc.get("memos") or []
     if not memos:
         raise RuntimeError(f"回读失败：未返回卡片 {memo_id}")
