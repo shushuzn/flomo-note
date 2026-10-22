@@ -68,7 +68,11 @@ _DELETION_RE = re.compile(r"~~(?=\S)(?:[^~]|\*(?!\*))*?(?<=\S)~~")
 #  ④ 前置星号不是**转义星号**（`\*`）：flomo 存储层会把正文里的 `*` 转义成 `\*`，
 #     数学记号 `p\*=2d/(d−2)`、`L^{p\*}` 回读后就是转义形态。不排反斜杠会把
 #     转义星号当成斜体起点，判错整张数学卡。
-_ITALIC_RE = re.compile(r"(?<![\\*])\*(?!\s|\*)(\S[^*\s]{0,78}?\S?)\*(?!\*)")
+#  ⑤ 内文不以**运算符**起头（`+ - = / < > *`）：强调的内文是词句，不会以算符开头；
+#     而 `dd*+d*d`（伴随算子 `d*` 与拉普拉斯 `dd*+d*d`）的星号对内文正是 `+d`——
+#     实测被 _ITALIC_RE 判成斜体 `*+d*`，逼人改掉数学记号。判 ERR 会逼人删内容，
+#     按取舍原则收紧判据而不是让人改写法。
+_ITALIC_RE = re.compile(r"(?<![\\*])\*(?!\s|\*|[-+=/<>])(\S[^*\s]{0,78}?\S?)\*(?!\*)")
 # 英文斜体 `*italic word*`：内容含空格，被 _ITALIC_RE 的整段排空白规则豁免，
 # 但它同样是 markdown 斜体、同样不渲染。**用「全 ASCII 词 + 含空格」与数学记号区分**——
 # `f*g 与复共轭 z*` 混了中文与数学算符，而英文斜体是纯拉丁词组。
@@ -91,6 +95,8 @@ _UNSUPPORTED_TAG_RE = re.compile(
     r"(?:\s+[^<>]*?)?"
     r"(/?)>",
 )
+# 汉字：真 HTML 标签的标签体（标签名 + 属性）不会含汉字，含汉字即误匹配。
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
 # HTML 自闭合（void）标签：无闭标签形态，本身即完整标签。
@@ -136,6 +142,11 @@ def _unsupported_tags_in(s):
         name = m.group(1)
         low = name.lower()
         if _is_supported_tag(name):
+            continue
+        # 标签体内含汉字 → 不是标签。shell 的 heredoc「cmd <<EOF … cat > file.txt」
+        # 会被 `<EOF …>` 形态吞掉（开尖括号 + 之后的第一个 `>`），逼人改 shell 语法
+        # 属于用改写素材换取过检，故按「真标签不含 CJK」放行。
+        if _CJK_RE.search(m.group(0)):
             continue
         if len(name) == 1 and m.group(2) != "/" and low not in _VOID_TAGS:
             # 单字母、未自闭合、本行也无闭标签 → 判作数学记号（如 |x|<R），放行。
@@ -328,7 +339,9 @@ def check(content):
         bad_tags = _unsupported_tags_in(s)
         if bad_tags:
             err(f"第 {i} 行含 HTML 标签 <{'>, <'.join(bad_tags)}>（本库禁止任何 HTML 强调"
-                f"标记，含 <mark> 与 <u>）——改写为纯文本")
+                f"标记，含 <mark> 与 <u>）——改写为纯文本。尖括号里的占位符也算："
+                f"渲染层会把它当标签吞掉，实测 pair <origin> 写入后 <origin> 直接消失"
+                f"（写入成功、回读少字），命令占位符请写成 pair origin 或 [origin]")
 
     # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
     #      约定：标签只写在首行；正文行内的 #词 / #数字 / #( 等属意外，必须改。
@@ -405,6 +418,9 @@ def check(content):
     #      无出处语境只 WARN 交人读。取舍写明：宁可漏成人工判断项，不逼人改写素材术语。
     #   c) 取材标注词（carrier_ctx）：公众号 / 视频号 / 哔哩哔哩 / 抖音 / 直播 / 课程 / 讲座 / 专栏 等，
     #      本身可能是卡片主体（如"微信公众号"是产品概念），故只在**括号式注释**里出现才 ERR。
+    #      「课程」「课堂」已从本层移除：教育类卡片的正文里「（校本课程建设）」「（课堂教学）」
+    #      是内容不是取材，实测把西部县中振兴卡的五条路径整条判错——逼人改教育术语换过检。
+    #      真的取材语境（课程字幕 / 课堂录像）由 carrier_hard 的复合词分支兜住。
     #   d) 歧义词（carrier_weak）：视频 / 音频 / 直播 / 演讲 / 发布会 / 访谈 等，括号内出现只 WARN
     #      人工判断。"直播"原在 ctx 层，因可能是业务名词（如 "4D 直播"），降级到 weak：
     #      真载体语境（直播截图 / 直播间）必有 strong 词（截图 / UP主 / B站）兜底判 ERR，
@@ -416,7 +432,9 @@ def check(content):
         r"(?<![A-Za-z/\.])[Pp][Pp][Tt](?![A-Za-z])"
         r"|[Uu][Pp]\s*主|[Bb]\s*站|bili\s*bili"
         r"|第\s*\d+(?:\s*[-–—~]\s*\d+)?\s*页|\d+\s*[-–—~]?\s*\d+\s*/\s*\d+\s*页|\d+\s*[/／]\s*\d+\s*页"
-        r"|如图|见图|图中所?示|上图|下图|该图|这张图"
+        # 「该图」指代材料的排版位置；「该图片」是普通名词（诉讼里的包装盒图片），
+        # 不指材料位置。不加这个负向断言，凡正文提到「该图片」一律判错并逼人改词。
+        r"|如图|见图|图中所?示|上图|下图|该图(?!片)|这张图"
         # 自指式的取材说法：即便没有「据/如图」，也明确是在交代材料位置或省略理由
         r"|见\s*(?:板书|截图|截屏|录屏|原图|配图|讲义|课件|字幕|附表|附件)"
         r"|此处从略|不再赘述"
@@ -428,12 +446,24 @@ def check(content):
     )
     # 出处标注语境：出现这些词，才把「截图 / 字幕」读成「交代取材」。
     # 不收单字「见」「如」——「意见」「如果」会把整行污染成出处语境，反过来让 b) 层失效。
-    source_hint = re.compile(r"据|摘自|引自|转自|节选|来自|如图|见图|所示|中可见|中显示|详见")
+    # 「据」也不收裸字：`数据` / `依据` / `根据` 里都有它，实测把「可点击、截屏、控制
+    # 浏览器」这类能力描述污染成取材自述（真实误报见 Cursor 卡的能力扩展一条）。
+    source_hint = re.compile(
+        r"(?<![依数根证占票单])据|摘自|引自|转自|节选|来自|如图|见图|所示|中可见|中显示|详见")
     carrier_ctx = re.compile(
-        r"公众号|视频号|小程序|哔哩哔哩|抖音|快手|小红书|录播|讲座|课堂|课程|订阅号|推文"
+        r"公众号|视频号|小程序|哔哩哔哩|抖音|快手|小红书|录播|讲座|订阅号|推文"
     )
     carrier_weak = re.compile(r"视频|音频|回放|演讲|发布会|访谈|播客|直播")
     bracket_re = re.compile(r"[（(][^（()）]*[）)]")
+
+    def _bracket_is_enum(grp):
+        """括号内是不是**多项并列清单**（含顿号/分号）。
+
+        出处标注括号里通常只有材料名（可能带页码/日期），不会用顿号串起一串
+        并列项。把清单也算成「交代取材」，会把「清理旧下载、构建缓存、陈旧截屏
+        等」这类**概念自身的内容**判成载体标注（实测真实误报）。
+        """
+        return bool(re.search(r"[、；;]", grp[1:-1]))
 
     def _carrier_scan(line_no, text, only_brackets):
         """扫描一行，返回 (强/标注类命中列表, 歧义类命中列表)；only_brackets=True 时只查括号注释。"""
@@ -443,13 +473,24 @@ def check(content):
         groups = bracket_re.findall(text)
         if not only_brackets:
             hard += [m.group(0).strip() for m in carrier_hard.finditer(text)]
-            # 材料名只有在出处语境里才算「交代取材」；否则它是概念本身（截图压缩、字幕翻译）
-            target = hard if (source_hint.search(text) or groups) else soft
-            target += [m.group(0).strip() for m in carrier_material.finditer(text)]
+            # 材料名只有在出处语境里才算「交代取材」；否则它是概念本身（截图压缩、字幕翻译）。
+            # 出处语境 = 行内有出处引导词，**或这个词本身落在某个括号注释里**。
+            # 不能写成「行内只要有任何括号」——能力描述句里的括号（`（需装 Chrome 或
+            # Chromium）`）与该材料名无关，却把整行判成取材自述（实测真实误报）。
+            spans = [(m.span(), m.group(0)) for m in bracket_re.finditer(text)]
+            for m in carrier_material.finditer(text):
+                in_bracket = any(
+                    s <= m.start() < e and not _bracket_is_enum(g)
+                    for (s, e), g in spans)
+                if source_hint.search(text) or in_bracket:
+                    hard.append(m.group(0).strip())
+                else:
+                    soft.append(m.group(0).strip())
         for grp in groups:
             hard += [m.group(0).strip() for m in carrier_ctx.finditer(grp)]
-            if not only_brackets:
-                # 括号注释本身就是交代取材的位置，括号里的材料名一律按标注判
+            if not only_brackets and not _bracket_is_enum(grp):
+                # 括号注释本身就是交代取材的位置，括号里的材料名一律按标注判；
+                # 多项并列清单除外（那是内容里的枚举，不是取材说明）
                 hard += [m.group(0).strip() for m in carrier_material.finditer(grp)]
             soft += [m.group(0).strip() for m in carrier_weak.finditer(grp)]
         return list(dict.fromkeys(hard)), [w for w in dict.fromkeys(soft) if w not in hard]
@@ -504,12 +545,17 @@ def check(content):
     # 引号内的来源主体须含**文字**（汉字或拉丁字母）：`据"1+3"政策体系` 里的引号是政策
     # 简称的引号，`据` 只是前一个词「公共数据」的尾字，旧写法把整段判成来源（实测误报）。
     # 真实来源名的形态下限是「有字」，纯数字加符号的不是名称。
+    # 且首字必须是文字：报告原文的引语（「据"——三名此前健康活跃的"天线工程师」）以
+    # 破折号起头，是引来的句子不是来源名，按首字非文字放行（实测 UAP 档案卡）。
     _org_quoted = (
-        r"[「『“\"《](?=[^」』”\"》]*[\u4e00-\u9fffA-Za-z])"
+        r"[「『“\"《](?=[\u4e00-\u9fffA-Za-z])"
         r"[^」』”\"》]{1,30}[」』”\"》]"
     )
     _org_suffix = (
-        r"[^，。；：\s（()）「」『』“”\"《》]{1,30}?"
+        # 来源主体是名词短语，不以系动词收尾：「最大主题为新闻报道 13880」是语料主题
+        # 计数，「为」把前半截变成谓语，整串不是机构名（实测情绪分析卡）。加上守卫后
+        # 这类主题计数放行，而「海阳发布」「中央纪委国家监委网站」不受影响。
+        r"[^，。；：\s（()）「」『』“”\"《》]{1,30}?(?<![为是])"
         r"(?:纪委监委|纪检(?:监察)?组|监委|派驻[^，。；：\s]{0,12}纪检监察组|"
         r"网站|官网|公众号|视频号|订阅号|"
         r"报社|通讯社|新闻社|日报|时报|周报|晚报|新闻网|"
@@ -551,7 +597,7 @@ def check(content):
         r"(?:" + source_org + r")"
         r"(?:\s*(?:消息|报道|通报|披露|介绍|通稿|发布|发布的消息|电))?"
     )
-    source_bare = re.compile(r"(?:据|根据)\s*(?:报道|消息|通报|披露|介绍|外媒|港媒|台媒)\s*[，,：:，]?")
+    source_bare = re.compile(r"(?<![依数根证占票单])(?:据|根据)\s*(?:报道|消息|通报|披露|介绍|外媒|港媒|台媒)\s*[，,：:，]?")
 
     # 豁免：法条 / 党内法规 / 制度名称——「依据《中国共产党纪律处分条例》…」是处分决定的
     # 法定依据（事件自身程序要素），不是交代来源。命中即整行跳过来源检测。
@@ -729,13 +775,20 @@ def check(content):
         # 概念名须是**名词短语**（H14），写成整句即失去签名作用：分句标点（逗号 / 句号 /
         # 分号 / 问叹号）只在成句时出现，名词短语里没有。实测存量卡有把整个定义句
         # 抄进概念名行的（「X 是研究…的分支，核心是用…」），切片与谓语检测都放过了。
-        clause_punct = [p for p in "，。；！？,;" if p in lines[cname_idx]]
+        # 整行被书名号 / 引号包裹时，标点属**作品名本身**（《Repent, Harlequin! Said the
+        # Ticktockman》）。判 ERR 会逼人改书名，故先认出这种包裹形态再判分句。
+        _wrapped_title = re.fullmatch(
+            r"《[^》]+》|「[^」]+」|“[^”]+”|\"[^\"]+\"", lines[cname_idx].strip())
+        clause_punct = [] if _wrapped_title else [
+            p for p in "，。；！？,;" if p in lines[cname_idx]]
         if clause_punct:
             err(f"第 {cname_idx + 1} 行概念名称含分句标点「{''.join(clause_punct)}」——"
                 f"概念名是概括主题的名词短语，不是整句（H14）；整句放进概念名会让签名、"
                 f"幂等查重与闸门凭证同时失去稳定指称。请把概念名改成名词短语，"
                 f"原句移入正文首段")
-        hits = slice_qualifiers(lines[cname_idx].strip())
+        # 书名号整体包裹时，里面的年份/版本号属**作品名本身**（《智能世界 2035》），
+        # 与标点同理：判 ERR 会逼人改书名。
+        hits = [] if _wrapped_title else slice_qualifiers(lines[cname_idx].strip())
         if hits:
             detail = "、".join(f"{k}「{v}」" for k, v in hits)
             err(f"第 {cname_idx + 1} 行概念名称含切片限定（{detail}）——"
