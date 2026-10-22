@@ -154,6 +154,30 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[console] %s\n" % (fmt % args))
 
     # ---- 请求来源校验 ----------------------------------------------------- #
+    def _drain_body(self, limit: int = 8 << 20) -> None:
+        """拒绝请求之前，先把请求体读掉再回 403。
+
+        **不读就关连接，403 常常送不到客户端**：客户端还在写 body，服务端已 close，
+        Windows 内核直接回 RST，客户端 `read()` 得到的是
+        `WinError 10053（你的主机中的软件中止了一个已建立的连接）`——「被拒绝」和
+        「服务崩了」在客户端看来一模一样，而这条路径本身就发生在最该说清楚的时候
+        （跨站写、DNS 重绑定）。回归用例里表现为约六轮一次 `ConnectionAbortedError`，
+        起初被当成用例抖动，实为这条连接语义。
+
+        `limit` 只防「Content-Length 撒谎要我们吃掉海量数据」；超过上限读不完则照旧
+        断连——那种请求本来也不该得到可读的回应。
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return
+        if length <= 0:
+            return
+        try:
+            self.rfile.read(min(length, limit))
+        except OSError:
+            pass
+
     def _reject_foreign(self) -> bool:
         """来源不合法就回 403 并返回 True（调用方直接 return）。
 
@@ -175,12 +199,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         allowed = ALLOWED_HOSTNAMES or LOOPBACK_HOSTNAMES
         host = _hostname_of(self.headers.get("Host", ""))
         if host not in allowed:
+            self._drain_body()
             self._send(403, _reject_body(
                 "Host", self.headers.get("Host", "") or "（缺失）", allowed), "text/plain; charset=utf-8")
             return True
         origin = self.headers.get("Origin")
         if origin is not None:
             if _hostname_of(urlparse(origin).netloc or origin) not in allowed:
+                self._drain_body()
                 self._send(403, _reject_body("Origin", origin or "（空）", allowed),
                            "text/plain; charset=utf-8")
                 return True

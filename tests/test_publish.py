@@ -202,6 +202,29 @@ def test_missing_draft():
     check("草稿不存在：不调用任何子脚本", calls == [], calls)
 
 
+def test_option_syntax():
+    """参数写法错：缺值 / 重复 / 未知，一律在跑任何子脚本之前拦下。
+
+    `--draft` 落在末尾时旧循环报「未知参数：--draft」——用户会以为选项名写错；
+    `--draft a --draft b` 则静默用 b，闸门核的是 b，用户以为核的是 a。
+    """
+    for argv, want, label in (
+        (["--draft"], "缺少参数值", "缺值"),
+        (["--draft", "a.txt", "--draft", "b.txt"], "只能给一次", "重复 --draft"),
+        (["--draft", "a.txt", "--bogus"], "未知参数：--bogus", "未知选项"),
+        (["a.txt"], "多余的参数", "值写在选项前面"),
+    ):
+        exec_fn, calls = make_exec()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            # 走真实入口：用法错由 cli_entry 渲染成一行，`main` 不再自己打印
+            code = PB.FC.cli_entry(lambda: PB.main(argv, exec_fn=exec_fn), usage_code=1)
+        msg = err.getvalue()
+        check(f"参数错（{label}）：退出码 1", code == 1, code)
+        check(f"参数错（{label}）：提示含「{want}」", want in msg, msg)
+        check(f"参数错（{label}）：不调用任何子脚本", calls == [], calls)
+
+
 # ── 覆盖既有卡（--update-id）：比建卡更危险，写前必须确认目标卡 ──────────────
 
 def tools(calls):
@@ -509,6 +532,7 @@ if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
                test_verify_card_failure, test_dry_run, test_missing_draft,
+               test_option_syntax,
                test_update_success, test_update_rename_blocked,
                test_update_rename_allowed, test_update_target_missing,
                test_update_read_failure, test_update_failure_no_dup,

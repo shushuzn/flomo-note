@@ -278,4 +278,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 与其他命令行脚本同一出口：`FlomoError`（凭据缺失/握手失败）收成一行 + 退出码。
+    # `main` 里只兜了 `run()` 这一段，argparse 之后还有 `--draft` 读文件等分支。
+    sys.exit(FC.cli_entry(main))

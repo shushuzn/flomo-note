@@ -99,7 +99,7 @@ flomo-note/
 | 文件 | 职责 |
 |------|------|
 | `memo_util.py` | 卡片签名 / 正文指纹 / 检索关键词 / 标签拆分的唯一实现（多处共用，改动影响面最大） |
-| `flomo_client.py` | flomo MCP 调用唯一入口：握手、协议发现、写后回读验收；`cli_entry()` 是各命令行脚本统一的失败出口（`FlomoError` → 一行说明 + 退出码）；`int_arg`/`float_arg` 是命令行数字参数的唯一解析（越界与非数字抛 `UsageError`） |
+| `flomo_client.py` | flomo MCP 调用唯一入口：握手、协议发现、写后回读验收；`cli_entry()` 是各命令行脚本统一的失败出口（`FlomoError` → 一行说明 + 退出码）；`Opt`/`parse_options` 是命令行选项的唯一解析（缺值 / 重复 / 未知三态分开报，`int_arg`/`float_arg` 管数字与越界） |
 | `fetch_article.py` | 取页并抽正文落 `_tmp/`：站内专用选择器优先、通用兜底，附带标题与字数 |
 | `tagcheck.py` | 标签树现采 + 存在性 / 严格两级 / 同顶层兄弟二级 / 只差空白·全半角·大小写的近义名（判据同写前闸门，树被截断即非 0 退出） |
 | `dedup.py` | 查重执行器：每个关键词单独调一次、id 去重后分批取全文；`--id` 走复盘路、`--ids` 点名读全文 |

@@ -37,13 +37,27 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from flomo_client import (  # noqa: E402
     FlomoClient,
     FlomoError,
+    Opt,
+    UsageError,
     _result_memos,
     cli_entry,
-    int_arg,
     load_token,
+    parse_options,
 )
 
 BATCH_LIMIT = 10  # 服务端 memo_batch_get 单次上限，超过即整批报错
+
+_OPTS = [
+    Opt("--keywords", "keywords_raw", default="",
+        hint="；多个关键词请用逗号在一次里给全"),
+    Opt("--tag", "tag", default=""),
+    Opt("--id", "anchor", default=""),
+    Opt("--ids", "ids_raw", default="", hint="；多个 id 请用逗号在一次里给全"),
+    Opt("--limit", "limit", "int", low=1, default=10),
+    Opt("--max-full", "max_full", "int", low=0, default=8),
+    # 取反开关：`--no-full` 给的是「不取全文」，落到 full 上要用 `not`
+    Opt("--no-full", "no_full", "flag"),
+]
 
 
 def split_keywords(raw: str) -> list[str]:
@@ -127,40 +141,17 @@ def main(argv: list[str] | None = None, client=None) -> int:
         print(__doc__)
         return 0
 
-    keywords_raw = ""
-    tag = ""
-    anchor = ""
-    ids_raw = ""
-    limit = 10
-    full = True
-    max_full = 8
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--keywords" and i + 1 < len(args):
-            keywords_raw = args[i + 1]
-            i += 2
-        elif a == "--tag" and i + 1 < len(args):
-            tag = args[i + 1]
-            i += 2
-        elif a == "--id" and i + 1 < len(args):
-            anchor = args[i + 1]
-            i += 2
-        elif a == "--ids" and i + 1 < len(args):
-            ids_raw = args[i + 1]
-            i += 2
-        elif a == "--limit" and i + 1 < len(args):
-            limit = int_arg(args[i + 1], "--limit", low=1)
-            i += 2
-        elif a == "--max-full" and i + 1 < len(args):
-            max_full = int_arg(args[i + 1], "--max-full", low=0)
-            i += 2
-        elif a == "--no-full":
-            full = False
-            i += 1
-        else:
-            print(f"[失败] 未知参数：{a}", file=sys.stderr)
-            return 1
+    ns, _pos = parse_options(args, _OPTS)
+    keywords_raw = ns["keywords_raw"]
+    tag = ns["tag"]
+    anchor = ns["anchor"]
+    ids_raw = ns["ids_raw"]
+    limit = ns["limit"]
+    full = not ns["no_full"]
+    max_full = ns["max_full"]
+
+    if not keywords_raw and not tag and not anchor and not ids_raw:
+        raise UsageError("至少给 --keywords / --tag / --id / --ids 之一")
 
     if not keywords_raw and not tag and not anchor and not ids_raw:
         print("[失败] 至少给 --keywords / --tag / --id / --ids 之一", file=sys.stderr)

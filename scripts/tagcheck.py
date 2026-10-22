@@ -33,15 +33,25 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from flomo_client import (  # noqa: E402
     FlomoClient,
     FlomoError,
+    Opt,
+    UsageError,
     cli_entry,
-    int_arg,
     load_token,
+    parse_options,
 )
 from memo_util import tag_key  # noqa: E402
 
 DEFAULT_LIMIT = 2000
 SIBLING_SHOW = 12
 GREP_SHOW = 60
+
+_OPTS = [
+    Opt("--tags", "raw_tags", default="",
+        hint="；多个标签请用逗号在一次 --tags 里给全"),
+    # None = 没给；"" = 给了空值（空正则会命中全部标签，另判）
+    Opt("--grep", "pattern", default=None),
+    Opt("--limit", "limit", "int", low=1, default=DEFAULT_LIMIT),
+]
 
 
 def split_tags(raw: str) -> list[str]:
@@ -114,50 +124,21 @@ def main(argv: list[str] | None = None, client=None) -> int:
         print(__doc__)
         return 0
 
-    raw_tags = ""
-    pattern: str | None = None       # None = 没给；"" = 给了空值（空正则会命中全部标签）
-    limit_raw: str | None = None
-    seen: set[str] = set()
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a not in ("--tags", "--grep", "--limit"):
-            print(f"[失败] 未知参数：{a}", file=sys.stderr)
-            return 2
-        if a in seen:
-            # 重复给同一个选项时后者会静默覆盖前者：`--tags A --tags B` 只核了 B，
-            # 用户以为两个都核过（漏核正是本脚本要防的事）。
-            print(f"[失败] {a} 只能给一次；多个标签请用逗号在一次 --tags 里给全", file=sys.stderr)
-            return 2
-        if i + 1 >= len(args):
-            print(f"[失败] {a} 缺少参数值", file=sys.stderr)
-            return 2
-        seen.add(a)
-        if a == "--tags":
-            raw_tags = args[i + 1]
-        elif a == "--grep":
-            pattern = args[i + 1]
-        else:
-            limit_raw = args[i + 1]
-        i += 2
-
-    limit = DEFAULT_LIMIT
-    if limit_raw is not None:
-        # 参数写错抛 UsageError，由 `__main__` 的 cli_entry 按本脚本的用法码退出
-        # （`main` 自己不再各写一份报错文案——那正是三份「非法整数」提示的来源）。
-        limit = int_arg(limit_raw, "--limit", low=1)
+    # 参数写错（缺值/重复/未知/非整数）一律抛 UsageError，由入口按本脚本的用法码
+    # 渲染成一行提示——`main` 里不再各写一份报错文案。
+    ns, _pos = parse_options(args, _OPTS)
+    raw_tags = ns["raw_tags"]
+    pattern = ns["pattern"]
+    limit = ns["limit"]
 
     tags_wanted = split_tags(raw_tags)
     if pattern == "":
-        print(
-            "[失败] --grep 为空：空正则会命中全部标签，「命中 N 个」不构成任何证据；"
-            "给个词或正则（只核指定标签则用 --tags）",
-            file=sys.stderr,
+        raise UsageError(
+            "--grep 为空：空正则会命中全部标签，「命中 N 个」不构成任何证据；"
+            "给个词或正则（只核指定标签则用 --tags）"
         )
-        return 2
     if not tags_wanted and pattern is None:
-        print("[失败] 未给 --tags 或 --grep", file=sys.stderr)
-        return 2
+        raise UsageError("未给 --tags 或 --grep")
 
     try:
         if client is None:

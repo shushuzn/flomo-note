@@ -2,7 +2,10 @@
 """flomo_client.py 写后回读验收（H11）的离线回归用例。
 
 全部用例**不联网**：`readback_check` 通过注入假 client 桩验证，
-只测「比对与判定」这套机械逻辑本身。
+只测「比对与判定」这套机械逻辑本身；末尾另测共享入口的三处契约——
+异常出口（`FlomoError` 而非 `SystemExit`）、数值参数（`int_arg`/`float_arg`）、
+选项解析（`Opt`/`parse_options` 的缺值 / 重复 / 未知三态），以及
+「凡引用本模块的脚本，`__main__` 必须走 `cli_entry`」这条结构约束。
 
 退出码 0 = 全部通过。
 """
@@ -278,6 +281,22 @@ def run_error_contract_cases():
     check("库层源码不出现 raise SystemExit", "raise SystemExit" not in src,
           "库层又用 SystemExit 表示失败了")
 
+    # 结构锁定：凡用 flomo_client 的命令行脚本，`__main__` 必须走 cli_entry。
+    # 这条契约此前只写在 AGENTS.md 里，publish.py 与 verify_card.py 各自 `sys.exit(main())`
+    # 了半年没人发现——「没配 token」在它们那里仍是 traceback。缺项不会让任何东西报错，
+    # 只表现为「同一个失败在其中一个脚本里长得不一样」。
+    stray = []
+    for path in sorted(SCRIPT_DIR.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "import flomo_client" not in text and "from flomo_client" not in text:
+            continue
+        if '__name__ == "__main__"' not in text:
+            continue
+        tail = text.rsplit('__name__ == "__main__"', 1)[1]
+        if "cli_entry(" not in tail:
+            stray.append(path.name)
+    check("引用 flomo_client 的脚本，入口一律走 cli_entry", not stray, ", ".join(stray))
+
     # 参数解析：`--limit abc` 此前是裸 int()，用户打错一个字得到一段 traceback
     check("int_arg 正常值原样返回", FC.int_arg("2000", "--limit") == 2000)
     check("int_arg 去首尾空白", FC.int_arg("  12  ", "--limit") == 12)
@@ -316,11 +335,73 @@ def run_error_contract_cases():
           line == "[失败] --limit 需要整数，收到 'abc'", repr(line))
 
 
+def run_parse_options_cases():
+    """共享选项解析：缺值 / 重复 / 未知 / 类型 / 位置参数各一个出口。
+
+    这四个脚本原先各写一遍 while 循环，带着两个相同的漏：`--x` 落在末尾时报
+    「未知参数：--x」（用户以为选项名写错），重复给同一选项时后者静默覆盖前者。
+    """
+    spec = [
+        FC.Opt("--tags", "raw_tags", default=""),
+        FC.Opt("--tag", "tag", default=""),
+        FC.Opt("--limit", "limit", "int", low=1, default=10),
+        FC.Opt("--ratio", "ratio", "float", default=1.0),
+        FC.Opt("--no-full", "no_full", "flag"),
+        FC.Opt("--ids", "ids", default="", hint="；多个 id 用逗号"),
+    ]
+
+    def bad(argv, want, **kw):
+        try:
+            FC.parse_options(argv, spec, **kw)
+            return f"未拦下"
+        except FC.UsageError as e:
+            return "ok" if want in str(e) else str(e)
+
+    check("parse_options 选项缺值报「缺少参数值」",
+          bad(["--tags"], "缺少参数值") == "ok")
+    check("parse_options 后跟另一个选项名也算缺值",
+          bad(["--tags", "--limit", "5"], "缺少参数值") == "ok")
+    check("parse_options 未知选项", bad(["--bogus"], "未知参数：--bogus") == "ok")
+    check("parse_options 裸词默认报多余参数",
+          bad(["AI/Agent"], "多余的参数：AI/Agent") == "ok")
+    check("parse_options 重复给同一选项",
+          bad(["--tags", "a", "--tags", "b"], "只能给一次") == "ok")
+    check("parse_options 重复时带该选项自己的提示",
+          bad(["--ids", "A", "--ids", "B"], "多个 id 用逗号") == "ok")
+    # 负数是值而不是缺值：要落到「不能小于 1」，否则 `--max-full -1` 会被说成
+    # 表达式缺失，而真正的问题是那个数是负的（后者会静默少读一张卡）。
+    check("parse_options 负数交给范围判定",
+          bad(["--limit", "-1"], "不能小于 1") == "ok")
+    check("parse_options 非整数交回 int_arg 口径",
+          bad(["--limit", "abc"], "--limit 需要整数") == "ok")
+
+    ns, pos = FC.parse_options(["--tags", "AI/Agent", "--limit", "20", "--ratio", "0.5"], spec)
+    check("parse_options 取值与默认值",
+          ns == {"raw_tags": "AI/Agent", "tag": "", "limit": 20, "ratio": 0.5,
+                 "no_full": False, "ids": ""}, str(ns))
+    check("parse_options 无位置参数时列表为空", pos == [], str(pos))
+
+    ns, pos = FC.parse_options(["--no-full", "https://x/y"], spec, positional_ok=True)
+    check("parse_options 开关置 True（取反交给调用方）", ns["no_full"] is True, str(ns))
+    check("parse_options positional_ok 时收位置参数", pos == ["https://x/y"], str(pos))
+
+    # 声明本身写错要在构造时就炸：给开关配取值范围是自我矛盾，静默忽略会让
+    # 「这个开关本该带范围」的意图消失。
+    for kwargs, label in [({"kind": "string"}, "未知类型"), ({"kind": "flag", "low": 1}, "开关带范围")]:
+        try:
+            FC.Opt("--x", "x", **kwargs)
+            got = "未拦下"
+        except ValueError:
+            got = "ok"
+        check(f"Opt 声明校验（{label}）", got == "ok", got)
+
+
 if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
     run_write_path_cases()
     run_brief_cases()
+    run_parse_options_cases()
     run_error_contract_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")

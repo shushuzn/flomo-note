@@ -161,16 +161,29 @@ def test_bad_limit():
 
 def test_duplicate_flag():
     # 重复给同一选项时后者会静默覆盖前者（只核了最后一个），而漏核正是本脚本要防的。
-    code, _out, err = run(["--tags", "AI/Agent", "--tags", "科技/测试"], FakeClient(TAGS))
+    # 参数错误一律由入口渲染（`main` 不再自己打印），故这条路要走 run_cli。
+    code, _out, err = run_cli(["--tags", "AI/Agent", "--tags", "科技/测试"], FakeClient(TAGS))
     check("重复 --tags：退出码 2", code == 2, code)
     check("重复 --tags：点明只能给一次", "只能给一次" in err, err)
 
 
 def test_empty_grep():
     # 空正则会命中全部标签，打出的「命中 N 个」不构成任何证据。
-    code, _out, err = run(["--grep", ""], FakeClient(TAGS))
+    code, _out, err = run_cli(["--grep", ""], FakeClient(TAGS))
     check("空 --grep：退出码 2", code == 2, code)
     check("空 --grep：说明空正则命中全部", "空正则" in err, err)
+
+
+def test_missing_value_and_unknown():
+    # `--tags` 落在末尾时，旧实现报「未知参数：--tags」——用户以为选项名写错、去翻文档，
+    # 而事实只是漏了值。两种错误的修法不同，不能共用一句提示。
+    for argv, want in [(["--tags"], "缺少参数值"),
+                       (["--tags", "--grep", "x"], "缺少参数值"),
+                       (["--tags", "AI/Agent", "--bogus"], "未知参数"),
+                       (["AI/Agent"], "多余的参数")]:
+        code, _out, err = run_cli(argv, FakeClient(TAGS))
+        check(f"用法错（{' '.join(argv)}）：退出码 2", code == 2, code)
+        check(f"用法错（{' '.join(argv)}）：提示含「{want}」", want in err, err)
 
 
 if __name__ == "__main__":
@@ -179,7 +192,7 @@ if __name__ == "__main__":
                test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
                test_written_differently, test_fullwidth_slash_not_depth_error,
                test_case_only_top_exists, test_bad_limit, test_duplicate_flag,
-               test_empty_grep):
+               test_empty_grep, test_missing_value_and_unknown):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

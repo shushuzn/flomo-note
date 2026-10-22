@@ -369,6 +369,16 @@ def run_cli_flags_case():
         '    elif a in ("--keep", "--dry-run"):\n'
         "        pass\n"
     )
+    # 声明式解析：脚本把选项写进 `_OPTS = [Opt("--x", …)]`，源码里不再出现
+    # `== "--x"`。采集口径若只认老写法，会把这个脚本的每个选项都判成「不认识」——
+    # 检查报错而脚本没错，正是最容易被整片忽略的假报。
+    DECL = (
+        "from flomo_client import Opt\n"
+        "_OPTS = [\n"
+        '    Opt("--draft", "draft", default=""),\n'
+        "    FC.Opt(\"--update-id\", \"update_id\", default=\"\"),\n"
+        "]\n"
+    )
 
     def errs_for(doc_body):
         with tempfile.TemporaryDirectory() as d:
@@ -376,6 +386,7 @@ def run_cli_flags_case():
             (root / "scripts").mkdir()
             (root / "scripts" / "real.py").write_text(ARG, encoding="utf-8")
             (root / "scripts" / "hand.py").write_text(HAND, encoding="utf-8")
+            (root / "scripts" / "decl.py").write_text(DECL, encoding="utf-8")
             (root / "SKILL.md").write_text("# 规则\n", encoding="utf-8")
             (root / "DOC.md").write_text(doc_body, encoding="utf-8")
             return CD.check_doc_cli_flags(root)
@@ -401,6 +412,13 @@ def run_cli_flags_case():
            "# 说明\n\n跑 `scripts/hand.py --update-id abc`。\n", 0)
     expect("手写解析的选项也采得到（in 元组形态）",
            "# 说明\n\n跑 `scripts/hand.py --keep`。\n", 0)
+    # 声明式（Opt 表）与前缀写法（FC.Opt）都要采到，否则改写法就等于关掉这项检查
+    expect("声明式选项表也采得到",
+           "# 说明\n\n跑 `scripts/decl.py --draft x`。\n", 0)
+    expect("声明式选项表（带模块前缀）也采得到",
+           "# 说明\n\n跑 `scripts/decl.py --update-id abc`。\n", 0)
+    expect("声明式脚本的未知选项仍判错",
+           "# 说明\n\n跑 `scripts/decl.py --draftt x`。\n", 1, "--draftt")
     expect("代码块里的命令同样核",
            "# 说明\n\n```bash\npython scripts/real.py --ghost\n```\n", 1, "--ghost")
     # 不按「最近脚本名」归属：只有片段开头即命令才核对，句中的脚本名不吞后文参数

@@ -42,10 +42,17 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import cli_entry, float_arg, int_arg  # noqa: E402
+from flomo_client import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIN_CHARS = 300
+
+_OPTS = [
+    Opt("--out", "out", default=None),
+    Opt("--min-chars", "min_chars", "int", low=1, default=DEFAULT_MIN_CHARS),
+    Opt("--timeout", "timeout", "float", low=1, default=30.0),
+    Opt("--print", "echo", "flag"),
+]
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -462,29 +469,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0
-    url = args[0]
-    out: Path | None = None
-    min_chars = DEFAULT_MIN_CHARS
-    timeout = 30.0
-    echo = False
-    i = 1
-    while i < len(args):
-        a = args[i]
-        if a == "--out" and i + 1 < len(args):
-            out = Path(args[i + 1])
-            i += 2
-        elif a == "--min-chars" and i + 1 < len(args):
-            min_chars = int_arg(args[i + 1], "--min-chars", low=1)
-            i += 2
-        elif a == "--timeout" and i + 1 < len(args):
-            timeout = float_arg(args[i + 1], "--timeout", low=1)
-            i += 2
-        elif a == "--print":
-            echo = True
-            i += 1
-        else:
-            print(f"[失败] 未知参数：{a}", file=sys.stderr)
-            return 1
+    # URL 是位置参数，选项可在它前后（旧实现把 args[0] 直接当 URL，
+    # `--out p.html <url>` 会把 `--out` 当链接、报「不是 http(s) 链接：--out」）。
+    ns, pos = parse_options(args, _OPTS, positional_ok=True)
+    if not pos:
+        raise UsageError("缺 URL：python scripts/fetch_article.py <url> [选项]")
+    if len(pos) > 1:
+        raise UsageError(f"只接受一个 URL，多给了 {len(pos) - 1} 个：{' '.join(pos[1:])}")
+    url = pos[0]
+    out = Path(ns["out"]) if ns["out"] else None
+    min_chars = ns["min_chars"]
+    timeout = ns["timeout"]
+    echo = ns["echo"]
     if not url.lower().startswith(("http://", "https://")):
         print(f"[失败] 不是 http(s) 链接：{url}", file=sys.stderr)
         return 1
