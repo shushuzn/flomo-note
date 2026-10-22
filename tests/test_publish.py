@@ -577,6 +577,40 @@ def test_lost_readings_counts_multiplicity():
     check("读数丢失：读数没少就不报",
           PB.lost_readings("约 320 万人", "约 320 万人，其余相同") == [],
           PB.lost_readings("约 320 万人", "约 320 万人，其余相同"))
+    # 删来源行会带走行内复述的读数（公司卡末尾来源行普遍如此），这不算丢正文读数；
+    # 但整行删掉的若是要点行，里面的读数就是真丢了，仍须报。
+    check("读数：删来源行带走同值读数不算丢失",
+          PB.lost_readings("正文 8.68 亿元\n来源: 报道称营收 8.68 亿元", "正文 8.68 亿元") == [],
+          PB.lost_readings("正文 8.68 亿元\n来源: 报道称营收 8.68 亿元", "正文 8.68 亿元"))
+    check("读数：整行删要点仍报",
+          PB.lost_readings("正文 8.68 亿元\n- 要点：净利 1.45 亿元", "正文 8.68 亿元") == ["1.45亿"],
+          PB.lost_readings("正文 8.68 亿元\n- 要点：净利 1.45 亿元", "正文 8.68 亿元"))
+    # 旧格式状态行把定价复述一遍（工具卡「商业模式=订阅 17 美元/月」），删状态行是
+    # 格式硬限要求，行里的同值读数不算丢正文读数（实测 CoolPlugz 卡）。
+    check("读数：删状态行带走同值读数不算丢失",
+          PB.lost_readings("- 定价：Pro 17 美元/月\n状态：订阅 17 美元/月 + 企业定制",
+                           "- 定价：Pro 17 美元/月") == [],
+          PB.lost_readings("- 定价：Pro 17 美元/月\n状态：订阅 17 美元/月 + 企业定制",
+                           "- 定价：Pro 17 美元/月"))
+    check("读数：删状态行里独有的读数仍报",
+          PB.lost_readings("- 定价：Pro 17 美元/月\n状态：累计 3 家客户",
+                           "- 定价：Pro 17 美元/月") == ["3家"],
+          PB.lost_readings("- 定价：Pro 17 美元/月\n状态：累计 3 家客户",
+                           "- 定价：Pro 17 美元/月"))
+    # 来源行里的数字是引文标题的一部分（「品牌价值 2756 亿」「每日研究第 130 家」），
+    # 不是卡片内容，整行免除——即便正文没有同值读数（实测通威/大北农两卡）。
+    check("读数：删来源行里独有的读数不算丢失",
+          PB.lost_readings("正文写营收\n来源: [链接]（官网 品牌价值 2756 亿）",
+                           "正文写营收") == [],
+          PB.lost_readings("正文写营收\n来源: [链接]（官网 品牌价值 2756 亿）", "正文写营收"))
+    # 同一个读数两种写法（12.70% / 12.7%）是同一个数，尾零不承载信息。
+    # 不归一化时，删掉末尾来源行里那个重复读数会被判成「读数丢失」（实测 6 张公司卡）。
+    check("读数归一：小数尾零不算不同读数",
+          PB.lost_readings("同比 -12.70%", "同比 -12.7%") == [],
+          PB.lost_readings("同比 -12.70%", "同比 -12.7%"))
+    check("读数归一后仍能抓真丢失",
+          PB.lost_readings("同比 -12.70% 与 +3.27%", "同比 -12.70%") == ["3.27%"],
+          PB.lost_readings("同比 -12.70% 与 +3.27%", "同比 -12.70%"))
 
 
 def test_misaligned_deletions():
@@ -594,6 +628,33 @@ def test_misaligned_deletions():
     ok = PB.misaligned_deletions("正文；据某报 3 月 4 日报道，后续",
                                  "正文；后续")
     check("断口：标点后起删不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions(
+        "#A/B\n\nClaude Code 桌面端新增 /resume 命令，支持跨端续接与检查点回退。\n\n要点：",
+        "#A/B\n\nClaude Code /resume 命令\n\n"
+        "Claude Code 桌面端新增 /resume 命令，支持跨端续接与检查点回退。\n\n要点：")
+    check("断口：原概念名整句移到正文首段不算断口（改名场景）", ok == [], ok)
+    ok = PB.misaligned_deletions("某基金新增68亿美元外汇额度（作者署名，发布日期）",
+                                 "某基金新增68亿美元外汇额度")
+    check("断口：删括号来源时把正文一起框进片段不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("陆续有大批玩家发文称此前被 Ban 的 Switch 2 已自动恢复正常",
+                                 "陆续有此前被 Ban 的 Switch 2 已自动恢复正常")
+    check("断口：删在「有」后面（真事故）仍抓", ok and ok[0][0] == "有", ok)
+    ok = PB.misaligned_deletions("安装时选**全盘加密**并记口令", "安装时选全盘加密并记口令")
+    check("断口：剥掉强调标记不算断口（内容逐字仍在）", ok == [], ok)
+    ok = PB.misaligned_deletions("入口写 if __name__ == \"**main**\":", "入口写 if __name__ == \"main\":")
+    check("断口：行内代码剥掉反斜粗体不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("需电信业务资质的服务（电子邮件、语音信箱、信息发布平台）不在范围",
+                                 "需电信业务资质的服务（电子邮件、语音信箱、信息服务）不在范围")
+    check("断口：定点替换（中段换成新文字）不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("报告全文1.5万余字，以中英文通过网站、期刊等平台发布。报告系统梳理",
+                                 "报告全文1.5万余字。报告系统梳理")
+    check("断口：删掉逗号后的整句不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("性能稳健。性质：厂商发布博客，含可验证规格。后续要点",
+                                 "性能稳健。后续要点")
+    check("断口：删掉句号后的整条注行不算断口", ok == [], ok)
+    ok = PB.misaligned_deletions("数据显示，全球每年约有320万人死亡，这些污染源于烹饪",
+                                 "数据显示这些污染源于烹饪")
+    check("断口：删掉逗号后的句中分句仍抓", ok and ok[0][1].startswith("，全球"), ok)
 
 
 def test_update_content_loss_blocks():

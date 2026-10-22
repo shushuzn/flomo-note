@@ -173,24 +173,73 @@ _READING_RE = re.compile(
     r"\d+(?:[.,]\d+)*\s*(?:%|％|‰|万|亿|千万|百|倍|吨|元|美元|港元|人|名|次|家|台|架|款|"
     r"项|个|小时|分钟|天|公里|千米|纳米|毫米|GB|TB|MB|nm|mm|℃)"
 )
-# 删除片段允许的起点：行首、标点后、空白后；括号整体删除另判（见 `_span_is_closed`）。
-_SPAN_BOUNDARY = "，；。：、,;:．.!！?？（）()《》“”\"' \t"
+# 删除片段允许的起点：行首、标点后、空白后、列表符号后；括号整体删除另判（见 `_span_is_closed`）。
+# 「-」「—」「–」是列表符号/连接号，删掉紧跟其后的「作者」不构成断口——
+# 缺了它，「- 作者评价：」改成「- 评价：」会被判成删在词中间（实测宋亚东卡）。
+_SPAN_BOUNDARY = "，；。：、,;:．.!！?？（）()《》“”\"' \t-—–"
 _OPEN_CLOSE = {"（": "）", "(": ")", "《": "》", "“": "”", "\"": "\""}
+# 只含这些字符的删除片段不算断口：标点替换（「：」→「显示，」、破折号改逗号）不丢内容。
+_PUNCT_ONLY = "，；。：、,;:．.!！?？（）()《》“”\"'—-–·…／/\\| \t"
+# 句末标点：删除片段以此收尾（或抵达行尾）才算「删掉了完整一句」。
+_SENT_END = "。！？；.!?;"
 
 
 def readings(text: str) -> dict:
-    """正文里的「数字 + 单位」计数表（空白不参与比较，平台会插空格）。"""
+    """正文里的「数字 + 单位」计数表（空白不参与比较，平台会插空格）。
+
+    数字部分去掉小数尾零再计：同一个读数在一张卡里常有两种写法——正文写
+    「同比 -12.70%」，末尾来源行写「净利降 12.7%」。按字面比对会把后者判成
+    「读数丢失」（实测 6 张公司卡全部如此），而丢的只是被删的来源行里那个重复
+    读数。尾零不承载信息，「12.70」与「12.7」是同一个数。
+    """
     counts: dict[str, int] = {}
     for m in _READING_RE.finditer(text or ""):
         tok = re.sub(r"\s+", "", m.group(0))
+        tok = re.sub(r"(?<=\d)\.(\d+?)(0+)(?=\D|$)", lambda x: "." + x.group(1) if x.group(1) else "", tok)
+        tok = re.sub(r"(?<=\d)\.(0+)(?=\D|$)", "", tok)
         counts[tok] = counts.get(tok, 0) + 1
     return counts
 
 
+_SRC_LINE_RE = re.compile(r"^(?:-\s*)?(?:来源|出处|发布|作者|参考资料|原文链接)\s*[:：]")
+# 旧格式状态行（「状态：状态=… / 结论=…」）：格式硬限禁状态行，整行删除是格式要求。
+# 与来源行同样整行删，但免除口径不同：来源行是纯引文元数据（URL + 出处名 + 文章标题），
+# 行里的数字（「品牌价值 2756 亿」「每日研究第 130 家」）是引文标题的一部分，从来不是
+# 卡片内容，故整行免除；状态行复述的是结论/条件/定价，可能是某个读数的唯一载体，
+# 故只免「保留行里也有同值读数」的那几份——实测状态行里的客户数若只存在于状态行，
+# 删掉它就是真丢。
+_STATUS_LINE_RE = re.compile(r"^(?:-\s*)?状态\s*[:：]")
+
+
 def lost_readings(before: str, after: str) -> list[str]:
-    """改前有、改后没有的读数。整篇替换下这类丢失在写后对账里两边都不存在，必须写前查。"""
+    """改前有、改后少了的读数。整篇替换下这类丢失在写后对账里两边都不存在，必须写前查。
+
+    计数比较（少一次也报）能抓住「同一读数在正文出现两次、删掉其中一处」，但删整行
+    来源时会把来源行里复述的读数一并带走，同样表现为计数下降——实测 6 张公司卡的
+    末尾来源行都复述了一遍正文读数，全被判成「读数丢失」，而卡里那组读数一个不少。
+    故**整行删除的来源行**里的读数全部从基准里扣掉（引文标题里的数字不是卡片内容），
+    **整行删除的状态行**里的读数只扣「保留行里也有同值读数」的那几份（它可能是某个
+    读数的唯一载体）。整行删掉的是要点行时照旧报（那才是真丢），行内删改也照旧报。
+    """
     old, new = readings(before), readings(after)
-    return sorted(t for t, n in old.items() if n > new.get(t, 0))
+    old_lines, new_lines = _norm_lines(before), _norm_lines(after)
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    src_idx, status_idx = set(), set()
+    for tag, i1, i2, _j1, _j2 in sm.get_opcodes():
+        if tag != "delete":
+            continue
+        for k in range(i1, i2):
+            ln = old_lines[k]
+            if _SRC_LINE_RE.match(ln):
+                src_idx.add(k)
+            elif _STATUS_LINE_RE.match(ln):
+                status_idx.add(k)
+    allow = readings("\n".join(old_lines[k] for k in sorted(src_idx)))
+    kept = readings("\n".join(ln for k, ln in enumerate(old_lines)
+                              if k not in src_idx and k not in status_idx))
+    for t, n in readings("\n".join(old_lines[k] for k in sorted(status_idx))).items():
+        allow[t] = allow.get(t, 0) + min(n, kept.get(t, 0))
+    return sorted(t for t, n in old.items() if new.get(t, 0) + allow.get(t, 0) < n)
 
 
 def _span_is_closed(span: str) -> bool:
@@ -199,6 +248,43 @@ def _span_is_closed(span: str) -> bool:
     if len(span) < 2:
         return False
     return _OPEN_CLOSE.get(span[0]) == span[-1]
+
+
+def _strip_brackets(s: str) -> str:
+    """去掉片段里的括号注释（含括号本身），用于「正文 + 括注」被一起框进删除片段的情形。"""
+    return re.sub(r"[（(][^（()）]*[）)]", "", s).strip()
+
+
+def _mostly_kept(span: str, blob: str) -> bool:
+    """删除片段是否大部分仍留在草稿里。
+
+    覆盖两种不该报的情形：
+      ① 整段文字换了位置（原概念名移到正文首段）——片段逐字仍在；
+      ② 片段其实包住了「删来源 + 保留正文」的组合：字符级对齐不保证最小编辑，
+         一次删「核心发现：」可能把后面整段正文一起框进 delete span。这时片段里
+         绝大部分文字仍逐字留在草稿中，只是被框进来的正文。
+
+    只统计连续 ≥4 字的匹配块：单字在中文正文里随处可见（的/是/了），按单字累计
+    会让任何片段都「大部分仍在」，判据直接失效。真断口（删到逗号）的特征正是
+    「被删的那一段在草稿里彻底没有」，不会留下成串的连续匹配。
+    """
+    if not span or not blob:
+        return False
+    sm = difflib.SequenceMatcher(None, span, blob, autojunk=False)
+    kept = sum(b.size for b in sm.get_matching_blocks() if b.size >= 4)
+    return kept / len(span) >= 0.6
+
+
+def _marks_only(span: str, blob: str) -> bool:
+    """删除片段只是被剥掉强调标记的文字。
+
+    批量改造统一剥 `**` / 反引号 / HTML 强调标签：原文「选**全盘加密**」→ 草稿
+    「选全盘加密」，公共前缀把起点带到「选」之后，于是「**全盘加密**」被判成删在
+    词中间。同类实测 5 张（全盘加密 / `name==main` / `**2**` / `**init**` 两处），
+    全是把语法当内容。整段剥掉标记后逐字留在草稿里，说明删的只是标记。
+    """
+    core = re.sub(r"[*`~_]", "", span)
+    return bool(core) and core != span and core in blob
 
 
 def misaligned_deletions(before: str, after: str) -> list[tuple[str, str]]:
@@ -210,9 +296,23 @@ def misaligned_deletions(before: str, after: str) -> list[tuple[str, str]]:
     字数也够，写后逐字对账更是两边一致（草稿本身就少了一段），任何既有检查都不报错。
 
     判据用正面定义：删除片段必须从行首或分隔符后开始；括号 / 引号要么整对删掉，要么不删。
+
+    **同一条正面判据还有一半：真丢失的片段不可能在草稿里还找得到。** 补齐前的实际
+    误报来自「行位置移动」——把原概念名整句移到正文首段、前面插进一行名词短语时，
+    行级对齐把「长句 → 短名词」判成 replace，字符级比对再把长句的剩余部分当成
+    「从词中间一路删到句尾」，于是每一次正常改名都被拦成事故。实测 20 张改名里
+    20 张报断口，全是这种形态。移动过的文字仍在草稿里，写后逐字对账也照样一致，
+    没有任何真实损失，故以「草稿中是否仍有这段文字」作正面判据放行。
+
+    **删除段取「公共前缀 / 公共后缀」之外的中间部分，不用字符级 difflib 对齐。**
+    difflib 不保证最小编辑：把首段开头一大截来源（「徐向东（…）载《学术月刊》，公众号发布。核心追问：」）
+    换成短句时，它会把整段后半判成 delete span，起点落在句中任意位置，于是
+    「《…》载《学术月刊》…道德地位。」整段被当成删在词中间（实测 172 卡）。
+    前缀/后缀模型正好对应真实改法——删来源就是删开头那一段，起点必是行首。
     """
     out: list[tuple[str, str]] = []
     old_lines, new_lines = _norm_lines(before), _norm_lines(after)
+    after_blob = "\n".join(new_lines)
     sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag not in ("replace", "delete"):
@@ -222,17 +322,57 @@ def misaligned_deletions(before: str, after: str) -> list[tuple[str, str]]:
             b = new_lines[j1 + k] if (j1 + k) < j2 else ""
             if not a or a == b:
                 continue
-            csm = difflib.SequenceMatcher(None, a, b, autojunk=False)
-            for tg, x1, x2, _, _ in csm.get_opcodes():
-                if tg not in ("delete", "replace") or x2 <= x1:
-                    continue
-                span = a[x1:x2]
-                if not span.strip() or _span_is_closed(span):
-                    continue
-                prev = a[x1 - 1] if x1 > 0 else ""
-                if prev == "" or prev in _SPAN_BOUNDARY:
-                    continue
-                out.append((prev, span))
+            p = 0
+            lim = min(len(a), len(b))
+            while p < lim and a[p] == b[p]:
+                p += 1
+            suf = 0
+            while suf < lim - p and a[-1 - suf] == b[-1 - suf]:
+                suf += 1
+            x1, x2 = p, len(a) - suf
+            if x2 <= x1:
+                continue
+            span = a[x1:x2]
+            # 旧的中段被换成了新文字（「信息发布平台」→「信息服务」）是**替换**不是删除：
+            # 新文字就在草稿里，没有任何内容消失。真正的断口（正则起点落进构词）必然
+            # 是中段被删空、只留前后两截。实测小程序卡、Qwen3.8 卡、MiniMax 卡全是
+            # 定点替换被当成删在词中间。
+            if b[p:len(b) - suf]:
+                continue
+            if not span.strip("`*~_ \t") or _span_is_closed(span):
+                continue
+            if _mostly_kept(span, after_blob):
+                continue
+            if _marks_only(span, after_blob):
+                continue
+            # 删「（来源标注）」时，公共前缀会把括号前的正文一起框进删除片段：
+            # 原句「新增某额度（作者，发布日期）」→ 草稿「新增某额度」，
+            # 片段却是「新增某额度（…）」。
+            # 去掉括号段后仍能在草稿里找到，说明正文没丢，删的只是那个括号。
+            if _strip_brackets(span) and _strip_brackets(span) in after_blob:
+                continue
+            if span[0] in "（(【[「“\"'":
+                # 片段以开括号/引号起头：这里删的是「据某方（某某）报道」这类整体标注，
+                # 括号成对性由 _span_is_closed 负责，起点不在词中间。真实误报见
+                # DeepSeek Harness 漏洞卡——公共前缀「DeepSeek Harness」把起点带到
+                # 「Harness」之后，于是「（DSH）极危漏洞：…披露」被判成删在词中间。
+                continue
+            if not span.strip(_PUNCT_ONLY):
+                # 删掉的只是标点（「：」→「显示，」这类改写），没有内容损失。
+                continue
+            prev = a[x1 - 1] if x1 > 0 else ""
+            if prev == "" or prev in _SPAN_BOUNDARY:
+                continue
+            # 整句删除：片段以分隔符起头、且到句尾（或下一个句末标点）收尾，说明删掉的
+            # 是完整一句/一个分句，不是从词中间切开。两种真实形态：
+            #   「…万余字，以中英文通过网站、期刊等平台发布。报告…」→ 删「，以中英文…发布」
+            #   「…性能。性质：厂商发布博客，含可验证规格…。」→ 删整条注行
+            #   「Debate-to-Skill：能力有界过程监督（…）」→ 删冒号后的完整副标题
+            # 反向保险：句末标点之后还有正文时不放行（那可能是把句中分句挖掉）。
+            nxt = a[x2] if x2 < len(a) else ""
+            if span[0] in _SPAN_BOUNDARY and (not nxt or nxt in _SENT_END):
+                continue
+            out.append((prev, span))
     return out
 
 
