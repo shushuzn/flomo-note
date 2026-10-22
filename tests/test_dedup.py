@@ -219,12 +219,36 @@ def test_bad_numeric_args():
         check(f"{label}：未发起任何云端调用", client.calls == [], client.calls)
 
 
+def test_bad_option_syntax():
+    """缺值 / 重复 / 未知三类各有说法，且都不发起云端调用。
+
+    旧循环把 `--ids`（落在末尾，漏了值）报成「未知参数：--ids」——用户会去翻文档确认
+    选项名，实际只是漏了值；而 `--ids A --ids B` 只读 B 且不吭声，「以为核过两张」正是
+    查重最该防的事。
+    """
+    cases = [
+        (["--ids"], "缺少参数值", "缺值"),
+        (["--keywords", "x", "--ids", "A", "--ids", "B"], "只能给一次", "重复 --ids"),
+        (["--keywords", "x", "--bogus"], "未知参数：--bogus", "未知选项"),
+        (["--keywords", "x", "AI/Agent"], "多余的参数", "值写在选项前面"),
+    ]
+    for argv, want, label in cases:
+        client = FakeClient()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = FC.cli_entry(lambda: DD.main(argv, client=client), usage_code=1)
+        msg = err.getvalue()
+        check(f"{label}：退出码 1", code == 1, code)
+        check(f"{label}：提示含「{want}」", want in msg, msg)
+        check(f"{label}：未发起任何云端调用", client.calls == [], client.calls)
+
+
 if __name__ == "__main__":
     for fn in (test_per_keyword_calls, test_id_dedup_and_batching,
                test_default_full_cap_is_explicit, test_explicit_ids,
                test_id_and_keywords_together, test_dedup_across_keywords,
                test_no_full, test_failure_not_empty, test_recommended_mode,
-               test_bad_numeric_args):
+               test_bad_numeric_args, test_bad_option_syntax):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

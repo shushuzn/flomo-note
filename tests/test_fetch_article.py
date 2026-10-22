@@ -300,13 +300,45 @@ def test_bad_numeric_args():
           err.getvalue())
 
 
+def test_url_is_positional():
+    """URL 是位置参数，选项写在它前面也得认。
+
+    旧实现把 `args[0]` 直接当 URL：`--out p.html <url>` 会把 `--out` 当成链接
+    （报「不是 http(s) 链接：--out」），而真正的链接被当成未知参数。这里用非 http
+    协议撞出「链接是哪个」这句话——它证明 URL 确实是从位置参数取的，且不联网。
+    """
+    for argv, want, label in (
+        (["--out", "p.html", "ftp://example.com/a"], "不是 http(s) 链接：ftp://example.com/a",
+         "选项写在 URL 前"),
+        (["--print", "--min-chars", "500", "ftp://example.com/b"], "ftp://example.com/b",
+         "开关与数值选项都在 URL 前"),
+    ):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = FA.main(argv)
+        check(f"{label}：退出码 1", code == 1, code)
+        check(f"{label}：认出的链接是那个 URL", want in err.getvalue(), err.getvalue())
+
+    for argv, want, label in (
+        (["--print"], "缺 URL", "只有开关没有 URL"),
+        (["https://a.example.com", "https://b.example.com"], "只接受一个 URL", "两个 URL"),
+        (["--timeout"], "缺少参数值", "选项缺值"),
+    ):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = FA.cli_entry(lambda: FA.main(argv), usage_code=1)
+        check(f"{label}：退出码 1", code == 1, code)
+        check(f"{label}：提示含「{want}」", want in err.getvalue(), err.getvalue())
+
+
 if __name__ == "__main__":
     for fn in (test_decode, test_to_text, test_extract_site_pattern,
                test_extract_site_pattern_nested_divs,
                test_extract_site_pattern_comment_fallback,
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
-               test_published_from_text, test_heading_gap, test_bad_numeric_args):
+               test_published_from_text, test_heading_gap, test_bad_numeric_args,
+               test_url_is_positional):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

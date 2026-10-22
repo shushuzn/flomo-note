@@ -69,6 +69,16 @@ DIFF_SHOW = 80
 
 _SUCCESS_RE = re.compile(r"\[成功\] 已写入 memo id=(\S+)")
 
+_OPTS = [
+    FC.Opt("--draft", "draft", default=""),
+    FC.Opt("--verify", "verify", default=""),
+    FC.Opt("--update-id", "update_id", default=""),
+    FC.Opt("--allow-rename", "allow_rename", "flag"),
+    FC.Opt("--dry-run", "dry_run", "flag"),
+    FC.Opt("--skip-web", "skip_web", "flag"),
+    FC.Opt("--no-verify-card", "no_verify_card", "flag"),
+]
+
 
 def _env() -> dict:
     """子进程统一 UTF-8：GBK 控制台下子脚本打印会崩（环境事实见 ENVIRONMENT.md）。"""
@@ -334,40 +344,15 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         print(__doc__)
         return 0
 
-    draft = ""
-    verify = ""
-    update_id = ""
-    allow_rename = False
-    dry_run = False
-    skip_web = False
-    verify_card = True
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--draft" and i + 1 < len(args):
-            draft = args[i + 1]
-            i += 2
-        elif a == "--verify" and i + 1 < len(args):
-            verify = args[i + 1]
-            i += 2
-        elif a == "--update-id" and i + 1 < len(args):
-            update_id = args[i + 1].strip()
-            i += 2
-        elif a == "--allow-rename":
-            allow_rename = True
-            i += 1
-        elif a == "--dry-run":
-            dry_run = True
-            i += 1
-        elif a == "--skip-web":
-            skip_web = True
-            i += 1
-        elif a == "--no-verify-card":
-            verify_card = False
-            i += 1
-        else:
-            print(f"[失败] 未知参数：{a}", file=sys.stderr)
-            return 1
+    ns, _pos = FC.parse_options(args, _OPTS)
+    draft = ns["draft"]
+    verify = ns["verify"]
+    # id 是人工抄来的，首尾空白一律不算内容：`--update-id " ABC"` 否则会带空格去查
+    update_id = ns["update_id"].strip()
+    allow_rename = ns["allow_rename"]
+    dry_run = ns["dry_run"]
+    skip_web = ns["skip_web"]
+    verify_card = not ns["no_verify_card"]
 
     if allow_rename and not update_id:
         print("[失败] --allow-rename 只对 --update-id 有意义（建卡没有既有概念名可比）",
@@ -485,4 +470,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 与其余命令行脚本同一出口：`FlomoError` / `UsageError` 收成一行 + 退出码，
+    # 不让「没配 token」变成 traceback（`main` 里子进程的失败是靠退出码判的，
+    # 但本脚本自己也会解 JSON、读文件，兜底不能省）。
+    sys.exit(FC.cli_entry(main, usage_code=1))

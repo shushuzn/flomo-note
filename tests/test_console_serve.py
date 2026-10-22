@@ -211,6 +211,10 @@ def main() -> int:
         draft = json.dumps({"content": "#AI/RAG\n测试\n"}, ensure_ascii=False).encode()
         evil_host = f"evil.example:{port}"
 
+        # 这几条都**带请求体**，且断言里要求 403 的正文到了（`"Host" in text`）。
+        # 不是凑字数：服务端若不先把请求体读掉就回 403 并 close，Windows 内核会回 RST，
+        # 客户端读到的是 WinError 10053 而不是任何响应（实测约六轮一次）——「被拒绝」
+        # 变成「连接被掐断」，恰恰在最该说清楚的时候。别把断言简化成只看状态码。
         code, _, text = request(port, "POST", "/api/cloud/validate", draft,
                                 {"Host": evil_host})
         check("伪造 Host 的写请求被拒（拦 DNS 重绑定）",
