@@ -75,6 +75,17 @@ def run_cases():
     check("回读被截断时判失败", not ok, detail)
     check("截断时给出处置提示", "memo_batch_get" in detail, detail)
 
+    # 2b) 正文里存着检索回包的截断占位符。这一项与 2) 不同源：`content_truncated`
+    #     说的是「本次回包被截」，与「卡里存着占位符」是两件事——后者是内容已缺一段，
+    #     形态检查也看不出（占位符自成一行，不触发任何结构判据）。
+    holed = GOOD.replace("- 服务端只存摘要，比对走常量时间。", "...[此处省略419字]...")
+    checks, _ = VC.run("TESTID", FakeClient(memo(holed)))
+    ok, detail = by_name(checks)["无截断占位符（正文未取自检索回包）"]
+    check("正文含截断占位符时判失败", not ok, detail)
+    check("占位符项报出标记原文", "此处省略419字" in detail, detail)
+    check("干净的卡不误报该项",
+          by_name(VC.run("TESTID", FakeClient(memo(GOOD)))[0])["无截断占位符（正文未取自检索回包）"][0])
+
     # 3) 云端回读形态：渲染层在标签段后补一个空行，概念名落到第三行。
     #    这不是「缺概念名」——真机上每张合规卡都是这个形态，判错等于全部误报。
     cloud_style = "#科技/安全\n\n持有型会话凭证\n\n要点：\n- 内容。\n"

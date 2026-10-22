@@ -181,6 +181,14 @@ def run_write_path_cases():
           "回读验收未过" in m and "return 1" in m)
     check("写入正文取自本次请求参数（验收对象正确）",
           'arguments.get("content")' in m)
+    # 截断占位符的写前拒绝：必须挡在 client.tool 之前。放在写后毫无用处——
+    # 回读对账比的是同一段坏文本，两边都缺同一段，照样判「一致」。
+    idx_guard = m.find("find_truncation(")
+    idx_call = m.find("result = client.tool(")
+    check("正文含截断占位符时拒绝写入", "拒绝写入" in m and idx_guard >= 0)
+    check("拒绝发生在发请求之前", 0 <= idx_guard < idx_call, (idx_guard, idx_call))
+    check("拒绝时给独立退出码（非 1，避免被读成网络失败）",
+          "return 4" in m[idx_guard:idx_call] if idx_guard >= 0 else False)
 
 
 def run_brief_cases():

@@ -44,7 +44,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import concept_keywords, memo_signature  # noqa: E402
+from memo_util import concept_keywords, find_truncation, memo_signature  # noqa: E402
 from cli_util import cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
 
 ENDPOINT = "https://flomoapp.com/mcp"
@@ -417,6 +417,19 @@ def main():
         arguments = json.loads(argv[1]) if len(argv) > 1 else {}
     if name in ("memo_create", "memo_update", "tag_rename"):
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
+    # 写前最后一道闸：正文里若含截断占位符（`...[此处省略N字]...`），发出去就是把
+    # 「内容缺失」永久固化，而且写后回读逐字对账**发现不了**——它比的是同一段坏文本。
+    # 故拦在发请求之前，退出码 4（内容受损，与网络失败、参数错、闸门不过都区分开）。
+    if name in ("memo_create", "memo_update"):
+        marks = find_truncation(arguments.get("content") or "")
+        if marks:
+            sys.stderr.write(
+                f"[失败] 正文含截断占位符 {marks[0]}，拒绝写入（退出码 4）。\n"
+                "  检索类回包（memo_search / memo_recommended）会把长正文中段挖掉，\n"
+                "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
+            )
+            return 4
+
     # 幂等保护：memo_create 写前先查重，若云端已存在
     # 正文逐字相同的卡片则直接复用其 id、不再新建。无论 create 被触发几次，
     # 第二次起都会命中既有卡，杜绝重复建卡。

@@ -44,6 +44,7 @@ sys.path.insert(0, str(_SCRIPTS))
 import cli_util as CLI  # noqa: E402
 import flomo_client as FC  # noqa: E402
 import validate_memo as VM  # noqa: E402
+from memo_util import find_truncation  # noqa: E402
 
 # 抽取器丢公式时留下的占位符（arXiv HTML 抽取的已知失败形态）：
 # 正文里成片出现即说明抽取坏了，卡片只能靠摘要写成，属降级例外。
@@ -149,6 +150,14 @@ def run(memo_id: str, client=None, draft_path=None):
     hits = PLACEHOLDER.findall(norm)
     checks.append(("无内容占位符残留（抽取未丢正文）", not hits,
                    f"命中 {len(hits)} 处：{hits[:3]}"))
+
+    # 截断占位符与上一条不同源：那边是「抽取器丢公式」，这边是「正文取自检索回包的
+    # 截断版本」。一旦如此，云端正文的中段就是永久缺失，且此前的判据都看不出来
+    # （结尾完好、字数够、逐字对账两边同缺），只能靠标记本身识别。
+    trunc_marks = find_truncation(norm)
+    checks.append(("无截断占位符（正文未取自检索回包）", not trunc_marks,
+                   f"命中 {len(trunc_marks)} 处：{trunc_marks[:3]}，正文中段已缺失"
+                   if trunc_marks else ""))
 
     # 正文常以换行收尾，直接取 lines[-1] 会得到空串——「末行」是人读首尾时的
     # 落点，给空串等于误导（曾据此误判末句为逗号收尾）。取最后一个非空行。
