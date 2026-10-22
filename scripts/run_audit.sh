@@ -43,6 +43,11 @@ rc=0
 echo "== 技能文档内容纪律自检（H28，离线） =="
 "$PY" scripts/check_skill_docs.py || rc=1
 
+# 规则是否真的生效：技能加载读的是安装目录的副本，与仓库版脱钩时
+# 全部 H 条目都只是仓库里的文本，执行时按旧规则走（不会报任何错）
+echo "== 技能目录副本漂移检查 =="
+bash scripts/sync_skill.sh --check || rc=1
+
 if [[ "$IS_WINDOWS" == "1" ]]; then
   export PATH="/c/Program Files/Git/bin:/c/Program Files/Git/usr/bin:$PATH"
   export SOUNDING_TMP="${SOUNDING_TMP:-C:/Users/${USERNAME:-$USER}/AppData/Local/Temp/sounding_flomo}"

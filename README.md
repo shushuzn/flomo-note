@@ -126,6 +126,7 @@ flomo-note/
 | `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |
 | `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
 | `push_skill.sh` | 文档改动强制推送（提交 + 推送 + 远端 HEAD 回读核对） |
+| `sync_skill.sh` | 把仓库 `SKILL.md` 同步到实际被加载的技能目录；`--check` 只比对（审计用），不一致即非 0 |
 
 ### 取件与通道
 
