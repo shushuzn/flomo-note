@@ -195,6 +195,15 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 其中**「云端存的正文与写入的一致」这一半已由写命令机械强制**：`memo_create` / `memo_update` 写入成功后自动按 id 回读全文逐字比对（只宽容空白差异），不一致、取不到卡、id 对错卡或被截断一律判失败并给出差异位置（退出码非 0）。剩下 ①–③ 属语义判断，仍须人工核对并留凭据。
 **反向那一半另有来源**：覆盖更新时「草稿是不是少了原卡的段落」永远不在这份对账里（基准就是草稿），须看 publish 第 ⑥ 段的删除行——删除行一律逐条认领，未认领的按漏抄处理。
 
+**正文完整性另有一条独立判据：不得含检索回包的截断占位符。**
+`memo_search` / `memo_recommended` 会把长正文的**中段**挖成 `...[此处省略N字]...`，前后文俱在。
+它因此同时骗过三条看起来够严的判据：结尾读起来仍像自然收尾（截断在中间）、字数不会明显偏少、
+写后逐字对账两边缺的是同一段。**判据只能是标记本身**，三处已落地：写前拒绝（`flomo_client`
+建卡/更新，退出码 4，与网络失败区分）、质检 ERR（`validate_memo`）、回读复核（`verify_card`）；
+存量用 `scripts/scan_truncated.py` 扫。**进入改写草稿的正文只能来自 `memo_batch_get` 或写前快照**，
+检索回包一律只用来挑 id——同理，判定「这张卡有没有占位符」也只能看真实正文，不能看检索回包的
+`content`（它自己就可能是截断的，据它判会得到成片假阳性）。
+
 ②④ 的机器可判部分走 `scripts/verify_card.py`（回读全文、复用写前校验器跑形态检查——同源不另立口径、扫公式占位符、打印标签/概念名/末行与实测字数），它**固定列出 ①③ 为「须人读」**——脚本绿了不等于四条都查过。**不传 `--draft` 时它只报数字，不假装对过账**；要机械对账就带上当轮草稿，参数口径与两个已知形态见附录「脚本」的 `verify_card.py` 条目。
 
 **H12 · 禁止关联卡片。**
@@ -412,6 +421,7 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 - **清空 ≠ 删除**：写法与边界见 H23，属常规写云动作，免确认。
 - **参数（写）**：`memo_create(content；format 可选 markdown / html，省略即纯文本)`；`memo_update(id / content)`；`tag_rename(old_tag / new_tag / max_memos)`（依赖 flomo Max 会员）。
 - **参数（读）**：`memo_search(keywords；可选 tag / limit / start_date / end_date / from / has_tag)`——**关键词字段名是 `keywords`，不是 `query`**（传错会被服务端按 `additionalProperties: false` 拒绝，报 `unexpected additional properties`）；`memo_batch_get(ids)`；`memo_recommended(id；可选 limit / no_same_tag)`；`tag_tree(limit)`（见「标签树现采」）；`tag_search` 传关键词字段同样是 `keywords`。
+- **两个读接口的「少给」是常态，不是卡不存在**：① `memo_search` / `memo_recommended` 会把长正文中段换成截断占位符（见 H11）；② `memo_batch_get` 一次要 10 张正文很长的卡时，回包挤不下会**静默少回几条**（回包成功、条数变少）。同一批里缺的 id 要**逐张补取**再判——补得到说明是「要得太多」，补不到才是卡已删除。把「这次没回来」直接当成「卡不在」，会得出与事实相反的结论。
 - **禁 `linked_memos`**：`memo_create`/`memo_update` 均不得传 `linked_memos`（见 H12）；正文 `((memo_id))` 不被解析为链接。
 - 端点、鉴权、代理与推送通道见 `ENVIRONMENT.md`。
 
@@ -469,6 +479,7 @@ H1 的触发条件是**用户发了链接**，不是「材料恰好是一个概�
 - `scripts/extract_arxiv_html.py` — arXiv LaTeX HTML 正文抽取（保护 MathML 公式，转纯文本）。
 - `scripts/scan_concept_duplication.py` — 概念名取证：归一化后找出被限定切成平行卡的同名簇（H6b 取证，只读）。
 - `scripts/scan_qualified_concepts.py` — 概念名取证：统计概念名带切片限定的卡占比（H6b 定量依据，只读）。两者共用同一份标签解析与取卡实现。
+- `scripts/scan_truncated.py` — 存量取证：找正文被检索回包截断版覆盖过的卡（中段缺一段）。候选只从检索回包取 id、判定只看 `memo_batch_get` 的真实正文；有取不回的就退出码 2，不把「没读到」报成干净（H11）。
 
 > 其余脚本（`memo_util.py` 公共实现、`tests/` 下各回归用例、`run_tests.sh` 一键回归、`check_skill_docs.py` / `run_audit.sh` 文档自校、`cleanup.py` 收尾清理、`git_tunnel.py` / `push_skill.sh` 推送通道、`sync_skill.sh` 把本文件同步到技能加载目录）服务于**维护与治理**，写卡时无需了解；清单与职责见各脚本自身用法说明与 `AGENTS.md`。
 

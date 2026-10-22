@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memo_util import (  # noqa: E402
-    body_hash, memo_signature, signature_key, slice_qualifiers,
+    body_hash, find_truncation, memo_signature, signature_key, slice_qualifiers,
 )
 
 ERR, WARN = [], []
@@ -95,6 +95,10 @@ _UNSUPPORTED_TAG_RE = re.compile(
 
 # HTML 自闭合（void）标签：无闭标签形态，本身即完整标签。
 _VOID_TAGS = ("br", "hr", "img")
+
+# 行内 URL：来源检测前先剥掉，剥完仍剩文字才继续判。
+# 不能按「含 http 就整行跳过」处理——那会让「来源: https://…」这类行彻底逃过来源检测。
+URL_IN_LINE = re.compile(r"https?://\S+")
 
 
 def _strip_bold(s):
@@ -195,6 +199,15 @@ def check(content):
     # CRLF / CR 归一化：不归一化时 \r 会留在行尾，影响行首行尾判定
     content = content.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
     lines = content.split("\n")
+
+    # 0) 截断占位符：草稿一旦取自检索回包（memo_search / memo_recommended），长正文的
+    # 中段就已被挖成 `...[此处省略N字]...`。它不是格式问题而是**内容已缺失**：
+    # 写进去即永久固化，且写后逐字对账会拿同一段坏文本比同一段坏文本、照判「一致」。
+    # 放在所有形态检查之前，是因为后面那些检查对着一份缺了中段的正文都会给出误导性结论
+    # （比如「要点不足」「字数偏少」都会让人去补写，而不是回去重取全文）。
+    for mark in find_truncation(content):
+        err(f"正文含截断占位符 {mark}：内容已缺失，须用 memo_batch_get 现取全文重写成稿"
+            "（检索回包 memo_search / memo_recommended 都会把长正文中段挖掉）")
 
     # 1) 首行标签段
     first = lines[0].strip()
@@ -463,7 +476,13 @@ def check(content):
     #    报社 / 通讯社 / 新闻 / 日报 / 时报 / 周报 / 网 / 社 / 部 / 厅 / 局 / 委 / 办
     # ③ 已知媒体清单（中文全称 + 常见英文站名）：路透/新华社/澎湃/The Information/NikonRumors 等
     # 反面：不为穷举名称而写死，故用结构匹配，避免「路透及多家媒体」这类变体漏检。
-    _org_quoted = r"[「『“\"《][^」』”\"》]{1,30}[」』”\"》]"
+    # 引号内的来源主体须含**文字**（汉字或拉丁字母）：`据"1+3"政策体系` 里的引号是政策
+    # 简称的引号，`据` 只是前一个词「公共数据」的尾字，旧写法把整段判成来源（实测误报）。
+    # 真实来源名的形态下限是「有字」，纯数字加符号的不是名称。
+    _org_quoted = (
+        r"[「『“\"《](?=[^」』”\"》]*[\u4e00-\u9fffA-Za-z])"
+        r"[^」』”\"》]{1,30}[」』”\"》]"
+    )
     _org_suffix = (
         r"[^，。；：\s（()）「」『』“”\"《》]{1,30}?"
         r"(?:纪委监委|纪检(?:监察)?组|监委|派驻[^，。；：\s]{0,12}纪检监察组|"
@@ -553,7 +572,14 @@ def check(content):
 
     for i, ln in enumerate(lines[2:], start=3):  # 正文从第 3 行起（跳过标签段与概念名）
         s = ln.strip()
-        if not s or "http" in s:
+        if not s:
+            continue
+        # URL 不参与来源判定（链接本身另有 4) 的 WARN），但**不得因此整行放过**：
+        # 「来源: https://…」「参考链接：https://…」去掉 URL 后仍是一条来源行。
+        # 旧实现是 `"http" in s → skip`，于是带链接的来源行在「来源行 ERR」与
+        # 「Markdown 链接 WARN」之间同时漏网（存量卡实测）。
+        s = URL_IN_LINE.sub(" ", s).strip()
+        if not s:
             continue
         hit = None
         for probe in (source_lead, source_bare, source_subj, source_act):
@@ -643,6 +669,15 @@ def check(content):
     # 概念名行号由 concept_name_index 统一给出（与 5.6 来源检测共用同一实现）。
     cname_idx = concept_name_index(lines)
     if cname_idx is not None:
+        # 概念名须是**名词短语**（H14），写成整句即失去签名作用：分句标点（逗号 / 句号 /
+        # 分号 / 问叹号）只在成句时出现，名词短语里没有。实测存量卡有把整个定义句
+        # 抄进概念名行的（「X 是研究…的分支，核心是用…」），切片与谓语检测都放过了。
+        clause_punct = [p for p in "，。；！？,;" if p in lines[cname_idx]]
+        if clause_punct:
+            err(f"第 {cname_idx + 1} 行概念名称含分句标点「{''.join(clause_punct)}」——"
+                f"概念名是概括主题的名词短语，不是整句（H14）；整句放进概念名会让签名、"
+                f"幂等查重与闸门凭证同时失去稳定指称。请把概念名改成名词短语，"
+                f"原句移入正文首段")
         hits = slice_qualifiers(lines[cname_idx].strip())
         if hits:
             detail = "、".join(f"{k}「{v}」" for k, v in hits)

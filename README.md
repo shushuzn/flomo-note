@@ -127,6 +127,7 @@ flomo-note/
 | `run_tests.sh` | 跑 `tests/` 下全部用例与上述自检；CI 与本地共用这一条命令 |
 | `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |
 | `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
+| `scan_truncated.py` | 存量取证：找正文被「检索回包截断版」覆盖过的卡（正文中段缺一段）。候选只从检索回包取 id、判定只看 `memo_batch_get` 的真实正文；取不回正文即退出码 2，不把「没读到」报成干净 |
 | `push_skill.sh` | 文档改动强制推送（提交 + 推送 + 远端 HEAD 回读核对） |
 | `sync_skill.sh` | 把仓库 `SKILL.md` 同步到实际被加载的技能目录；`--check` 只比对（审计用），不一致即非 0 |
 
