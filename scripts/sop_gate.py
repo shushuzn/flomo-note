@@ -79,10 +79,10 @@ from flomo_client import (  # noqa: E402
     FlomoClient,
     FlomoError,
     _result_memos,
-    cli_entry,
     load_token,
     tool_data,
 )
+from cli_util import cli_entry  # noqa: E402
 from memo_util import (  # noqa: E402
     body_hash,
     keywords_of_concept,
@@ -591,4 +591,4 @@ def main():
 
 if __name__ == "__main__":
     # CLI 入口把库异常转成退出码（非 0，自动化不会据此重试写操作）
-    sys.exit(cli_entry(main, code=2, prefix="[失败] 云端调用出错："))
+    sys.exit(cli_entry(main, errors=(FlomoError,), code=2, prefix="[失败] 云端调用出错："))

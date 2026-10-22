@@ -30,16 +30,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from flomo_client import (  # noqa: E402
-    FlomoClient,
-    FlomoError,
-    Opt,
-    UsageError,
-    cli_entry,
-    load_token,
-    parse_options,
-    tool_data,
-)
+from flomo_client import FlomoClient, FlomoError, load_token, tool_data  # noqa: E402
+from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 from memo_util import tag_key  # noqa: E402
 
 DEFAULT_LIMIT = 2000
@@ -206,4 +198,4 @@ def main(argv: list[str] | None = None, client=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main))
+    sys.exit(cli_entry(main, errors=(FlomoError,)))

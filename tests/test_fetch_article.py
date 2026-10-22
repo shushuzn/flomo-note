@@ -25,7 +25,7 @@ def _load(name, filename):
 FA = _load("fetch_article", "fetch_article.py")
 # 取**同一份**模块（fetch_article 已导入过它，这里只是取回来）：另 `_load` 一份会
 # 得到另一个 `UsageError` 类对象，`except` 就接不住脚本真正抛的那个。
-from flomo_client import UsageError  # noqa: E402
+from cli_util import UsageError  # noqa: E402
 RESULTS = []
 
 # 用例需要「日期形态」的输入，但 H28 禁止在技能文档里写具体日期（无例外）。
@@ -294,7 +294,7 @@ def test_bad_numeric_args():
     err = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
         code = FA.cli_entry(lambda: FA.main(["https://example.com", "--timeout", "abc"]),
-                            usage_code=1)
+                            errors=(), usage_code=1)
     check("用法错经入口变成一行提示 + 非 0",
           code == 1 and err.getvalue().startswith("[失败] ") and "Traceback" not in err.getvalue(),
           err.getvalue())
@@ -326,7 +326,7 @@ def test_url_is_positional():
     ):
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = FA.cli_entry(lambda: FA.main(argv), usage_code=1)
+            code = FA.cli_entry(lambda: FA.main(argv), errors=(), usage_code=1)
         check(f"{label}：退出码 1", code == 1, code)
         check(f"{label}：提示含「{want}」", want in err.getvalue(), err.getvalue())
 

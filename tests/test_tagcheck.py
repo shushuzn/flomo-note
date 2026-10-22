@@ -20,7 +20,7 @@ def _load(name, filename):
 
 
 TC = _load("tagcheck", "tagcheck.py")
-from flomo_client import cli_entry as CLI_ENTRY  # noqa: E402  （SCRIPT_DIR 已在 sys.path）
+from cli_util import cli_entry as CLI_ENTRY  # noqa: E402  （SCRIPT_DIR 已在 sys.path）
 RESULTS = []
 
 
@@ -57,7 +57,7 @@ def run_cli(argv, client):
     """
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = CLI_ENTRY(lambda: TC.main(argv, client=client))
+        code = CLI_ENTRY(lambda: TC.main(argv, client=client), errors=(TC.FlomoError,))
     return code, out.getvalue(), err.getvalue()
 
 

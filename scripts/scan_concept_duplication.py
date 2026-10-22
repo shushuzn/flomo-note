@@ -11,10 +11,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, cli_entry  # noqa: E402
-from scan_qualified_concepts import (  # noqa: E402
-    _memos, concept_of, resolve_tags, collect_memos,
-)
+from flomo_client import FlomoClient, FlomoError  # noqa: E402
+from cli_util import cli_entry  # noqa: E402
+from scan_qualified_concepts import concept_of, resolve_tags, collect_memos  # noqa: E402
 from memo_util import slice_qualifiers  # noqa: E402  切片识别单一来源
 
 # 括号包裹形态的剥离（本脚本特有）：切片常被写在括号里，
@@ -87,4 +86,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main))
+    sys.exit(cli_entry(main, errors=(FlomoError,)))
