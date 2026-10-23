@@ -46,10 +46,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memo_util import concept_keywords, find_truncation, memo_signature  # noqa: E402
 from cli_util import cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
+import net_util  # noqa: E402  出网通道与「请求是否已发出」的唯一实现
 
 ENDPOINT = "https://flomoapp.com/mcp"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _IDS = itertools.count(1)
+
+# 不幂等的工具：重复执行会产生第二张卡，或让读数变化。
+# **回包没回来时绝不许换出口重发**——`memo_create` 的签名幂等有索引滞后窗口
+# （实测 13 秒内重发即重复建卡），所以「重试」在这里不是省事，是造脏数据。
+# 未登记的工具按不幂等处理（见 `FlomoClient.tool`）：新加工具忘了登记时，
+# 落在「不重发」这侧只多报一次错，落在「重发」那侧就多一张卡。
+WRITE_TOOLS = frozenset({"memo_create", "memo_update", "tag_rename"})
 
 
 class FlomoError(RuntimeError):
@@ -87,27 +95,59 @@ def load_token():
     raise FlomoError("未找到 flomo token：请补全 .mcp.json，或设置 FLOMO_TOKEN 并 Export")
 
 
+class CloudUnreachable(FlomoError):
+    """出网通道不可用（连接被拒 / 超时 / DNS / 中断），不是服务端拒绝。
+
+    **必须与「服务端返回错误」分开**：两者处置相反——服务端报错要改内容或参数，
+    通道报错只要换个出口再试。混成一个错误，人会照着「云端失败」去改卡片，
+    而真正的病根在网络出口。
+
+    `request_sent` 是给写操作的护栏：
+      False（连接被拒 / 域名解析失败）→ 请求确定没发出，换通道重发安全；
+      True（超时 / 连接中断）→ 可能已到达服务端，**不许重发**，
+              `memo_create` 重发就是第二张卡。此时只能报「需人工核对」。
+    """
+
+    def __init__(self, message, *, request_sent):
+        super().__init__(message)
+        self.request_sent = bool(request_sent)
+
+
 class FlomoClient:
-    def __init__(self, token):
+    def __init__(self, token, timeout=30.0):
         self._headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "Authorization": "Bearer " + token,
         }
         self._session = None
+        self._timeout = timeout
 
-    def _post(self, payload, with_session=True):
+    def _post(self, payload, with_session=True, idempotent=True):
         headers = dict(self._headers)
         if with_session and self._session:
             headers["Mcp-Session-Id"] = self._session
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(ENDPOINT, data=data, headers=headers, method="POST")
+        # 出网走 net_util：代理端口每次会话重新分配，裸调 urlopen 会让「端口没对上」
+        # 表现为整轮写卡失败，而且抛的是 URLError——`except FlomoError` 接不住，
+        # 上层只能看到 traceback，误以为是云端出了事。
         try:
-            resp = urllib.request.urlopen(req)
+            reply = net_util.request(
+                ENDPOINT,
+                data=data,
+                headers=headers,
+                timeout=self._timeout,
+                idempotent=idempotent,
+            )
         except urllib.error.HTTPError as e:
             raise FlomoError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')}") from None
-        body = resp.read().decode("utf-8", "replace")
-        sid = resp.headers.get("Mcp-Session-Id")
+        except net_util.TransportError as exc:
+            raise CloudUnreachable(
+                f"云端不可达：{exc}（环境代理：{net_util.proxy_label()}）",
+                request_sent=exc.request_sent,
+            ) from None
+        body = reply.body.decode("utf-8", "replace")
+        sid = reply.headers.get("Mcp-Session-Id")
         if sid and not self._session:
             self._session = sid
         return self._parse_sse(body, payload.get("id"))
@@ -171,7 +211,9 @@ class FlomoClient:
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments or {}},
         }
-        return self._post(payload)
+        # 只有**读**工具允许在通道失败时换出口重发；写工具一律不重发
+        # （判定与「不幂等」同源，见 WRITE_TOOLS 的注释）。
+        return self._post(payload, idempotent=name not in WRITE_TOOLS)
 
     def tools_list(self):
         """列出云端 MCP 暴露的全部工具（协议层元信息，不读任何卡片数据）。
@@ -415,7 +457,7 @@ def main():
         arguments = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
     else:
         arguments = json.loads(argv[1]) if len(argv) > 1 else {}
-    if name in ("memo_create", "memo_update", "tag_rename"):
+    if name in WRITE_TOOLS:
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
     # 写前最后一道闸：正文里若含截断占位符（`...[此处省略N字]...`），发出去就是把
     # 「内容缺失」永久固化，而且写后回读逐字对账**发现不了**——它比的是同一段坏文本。

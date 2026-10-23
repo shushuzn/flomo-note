@@ -249,7 +249,7 @@ def run_source_guards():
     import re
 
     pattern = re.compile(r"127\.0\.0\.1:\d{2,5}")
-    for name in ("fetch_article.py", "netdoctor.py"):
+    for name in ("fetch_article.py", "netdoctor.py", "net_util.py"):
         source = (SCRIPT_DIR / name).read_text(encoding="utf-8")
         hits = pattern.findall(source)
         check(f"{name} 内无写死的回环端口", not hits, hits)
