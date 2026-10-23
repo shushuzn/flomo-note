@@ -193,6 +193,22 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.config\opencode\skills\flom
 
 ---
 
+## 技能注册（Qoder Desktop）
+
+Qoder 扫描 `C:\Users\35234\.qoder-cn\skills\<name>\SKILL.md`，同样是**目录联接**形态：
+
+```powershell
+cmd /c mklink /J "C:\Users\35234\.qoder-cn\skills\flomo-note" "D:\OpenClaw\flomo-note"
+```
+
+- 目标仍是**仓库根**，`scripts/`、`AGENTS.md`、`ENVIRONMENT.md` 一并进 resource base，
+  `SKILL.md` 只定义一次；仓库挪位后删掉联接重跑上面一行即可。
+- 技能清单现采：建好联接即在会话的技能目录里出现，不必重启。
+- 验证：`Test-Path "C:\Users\35234\.qoder-cn\skills\flomo-note\SKILL.md"` 为 True，
+  且 `cmp` 与仓库版逐字节一致；仓库 `git status` 不受影响。
+
+---
+
 ## Windows 沙箱权限（本机）
 
 工作区根目录缺少所有者写权限时，**所有 shell 通道一进工作区就失败**（`pwsh` 与
