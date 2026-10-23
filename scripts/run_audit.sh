@@ -49,18 +49,45 @@ echo "== 技能目录副本漂移检查 =="
 bash scripts/sync_skill.sh --check || rc=1
 
 if [[ "$IS_WINDOWS" == "1" ]]; then
-  export PATH="/c/Program Files/Git/bin:/c/Program Files/Git/usr/bin:$PATH"
+  # 补 Git 目录**只追加在 PATH 末尾**，不前置。
+  # 前置会让 cat / head 这些命令来自另一套工具链，两套对 /tmp 的解析并不一致——
+  # 实测：本 shell 写 /tmp/x.log 成功，前置后 cat 报 No such file（写的是
+  # C:/Users/.../Temp，读的是 Git 安装目录下的 tmp）。末尾追加则只在缺命令时兜底，
+  # 已在本 shell 里的命令仍优先，工具链不混用。
+  for d in "/c/Program Files/Git/usr/bin" "/c/Program Files/Git/bin"; do
+    if [[ -d "$d" ]]; then
+      case ":$PATH:" in
+        *":$d:"*) : ;;
+        *) PATH="$PATH:$d" ;;
+      esac
+    fi
+  done
+  export PATH
   export SOUNDING_TMP="${SOUNDING_TMP:-C:/Users/${USERNAME:-$USER}/AppData/Local/Temp/sounding_flomo}"
 else
   export SOUNDING_TMP="${SOUNDING_TMP:-${TMPDIR:-/tmp}/sounding_flomo}"
 fi
 mkdir -p "$SOUNDING_TMP" 2>/dev/null || true
 
-nohup "$PY" scripts/git_tunnel.py "$PORT" > "/tmp/git_tunnel_${PORT}.log" 2>&1 &
+# 日志落在仓库内 _tmp：/tmp 在不同工具链下指向不同目录（见上），日志必须放在
+# 双方都同意的地方，否则「启动失败」时连原因都打不出来——那正是本次修掉的现象。
+mkdir -p "$REPO_ROOT/_tmp"
+TUN_LOG="$REPO_ROOT/_tmp/audit_git_tunnel_${PORT}.log"
+nohup "$PY" scripts/git_tunnel.py "$PORT" > "$TUN_LOG" 2>&1 &
 TUN=$!
-sleep 2
-if ! (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null; then
-  echo "[audit] 隧道启动失败:"; cat "/tmp/git_tunnel_${PORT}.log" 2>/dev/null
+# 固定 sleep 2 在慢机器上会误报；改成有界轮询（最多 ~10s），连上即走。
+TUN_UP=0
+for _ in $(seq 1 50); do
+  if (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null; then TUN_UP=1; break; fi
+  sleep 0.2
+done
+if [[ "$TUN_UP" != "1" ]]; then
+  echo "[audit] 隧道启动失败（127.0.0.1:${PORT} 连不上）。日志：$TUN_LOG"
+  if [[ -s "$TUN_LOG" ]]; then
+    cat "$TUN_LOG"
+  else
+    echo "（日志为空或不存在：进程可能没起来。手工复现：$PY scripts/git_tunnel.py $PORT）"
+  fi
   kill "$TUN" 2>/dev/null || true; exit 1
 fi
 exec 3>&- 2>/dev/null || true
