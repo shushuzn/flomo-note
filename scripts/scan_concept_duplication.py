@@ -4,6 +4,16 @@
 判法：把概念名里的**切片限定抹掉**（归一化）——时间、版本、代次、轮次、地域、事件动作
 都是同一类切片（对象 + 切片），不是时间专属。若归一化后出现同名簇（≥2 张不同 id），
 即说明同一对象被按切片切成了平行卡。这是只读取证脚本，不改云端。
+
+用法：
+  python scripts/scan_concept_duplication.py                    # 默认标签簇抽样
+  python scripts/scan_concept_duplication.py --tags "AI/RAG,科技/开源"
+  python scripts/scan_concept_duplication.py --tags @tags.txt   # 标签多到超命令行长度
+  python scripts/scan_concept_duplication.py --limit 30 --json _tmp/dupes.json
+
+退出码：
+  0  扫完，所有标签簇取数成功
+  2  参数写错 / 标签文件不存在 / 有标签簇取数失败（结论只在已取到的卡里成立）
 """
 import json
 import re
@@ -12,9 +22,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flomo_client import FlomoClient, FlomoError  # noqa: E402
-from cli_util import cli_entry  # noqa: E402
+from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 from scan_qualified_concepts import concept_of, resolve_tags, collect_memos  # noqa: E402
 from memo_util import slice_qualifiers  # noqa: E402  切片识别单一来源
+
+_OPTS = [
+    Opt("--tags", "tags_raw", default="",
+        hint="；逗号分隔的标签路径；标签多到超命令行长度时用 @文件"),
+    Opt("--limit", "limit", "int", low=1, high=50, default=50,
+        hint="；每个标签簇取多少条（服务端单次上限 50）"),
+    Opt("--json", "json_out", default=""),
+]
 
 # 括号包裹形态的剥离（本脚本特有）：切片常被写在括号里，
 # 去掉括号后仍要能被共享识别命中，故括号先剥。
@@ -55,15 +73,25 @@ def normalize(name):
     return s.strip(" -—–·、,，.。:：;；/（()）")
 
 
-def main():
-    from flomo_client import load_token
-    c = FlomoClient.__new__(FlomoClient)
-    token, _ = load_token()
-    c.__init__(token)
-    c.init()
+def main(argv=None, client=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+
+    ns, _pos = parse_options(args, _OPTS)
+    tags = resolve_tags(ns["tags_raw"])
+
+    if client is None:
+        from flomo_client import load_token
+        token, _ = load_token()
+        c = FlomoClient.__new__(FlomoClient)
+        c.__init__(token)
+        c.init()
+    else:
+        c = client
     # 标签解析与取卡逻辑同源（scan_qualified_concepts），不另写第二份实现。
-    tags = resolve_tags(sys.argv[1:])
-    seen, failed = collect_memos(c, tags)
+    seen, failed = collect_memos(c, tags, ns["limit"])
     if failed:
         print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
               f"下面的同名簇只在已取到的卡里成立，不代表其余簇没有问题", file=sys.stderr)
@@ -82,11 +110,17 @@ def main():
         print(f"\n【{k}】{len(v)} 张")
         for mid, name in v:
             print(f"    id={mid}  {name[:90]}")
-    out = Path(__file__).resolve().parent.parent / "_tmp_concept_dupes.json"
-    out.write_text(json.dumps(dupes, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if ns["json_out"]:
+        out = Path(ns["json_out"])
+    else:
+        out = Path(__file__).resolve().parent.parent / "_tmp" / "concept_dupes.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"failed_tags": failed, "dupes": dupes}, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n" + "=" * 72)
     print(f"[out] {out}")
 
+    return 2 if failed else 0
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main, errors=(FlomoError,)))
+    sys.exit(cli_entry(main, errors=(FlomoError, UsageError)))

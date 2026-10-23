@@ -67,21 +67,32 @@ def run_cases():
     check("空内容返回空串而不抛", Q.concept_of("") == "", Q.concept_of(""))
 
     # 3) 标签来源
-    default = Q.resolve_tags([])
+    default = Q.resolve_tags("")
     check("无参时给默认标签簇", len(default) >= 5 and all("/" in t for t in default), default)
+    check("逗号/中文逗号/井号前缀都能解析",
+          Q.resolve_tags("AI/RAG，科技/开源, #AI/Agent") == ["AI/RAG", "科技/开源", "AI/Agent"],
+          Q.resolve_tags("AI/RAG，科技/开源, #AI/Agent"))
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "tags.txt"
         f.write_text("AI/RAG\n\n科技/开源\n  AI/Agent  \n", encoding="utf-8")
-        got = Q.resolve_tags(["@" + str(f)])
+        got = Q.resolve_tags("@" + str(f))
         check("@文件模式读行并去空白", got == ["AI/RAG", "科技/开源", "AI/Agent"], got)
 
         raised = None
         try:
-            Q.resolve_tags(["@" + str(Path(d) / "missing.txt")])
-        except SystemExit as e:
-            raised = e.code
-        check("@文件不存在时明确失败（不静默空列表）", raised == 2, raised)
+            Q.resolve_tags("@" + str(Path(d) / "missing.txt"))
+        except Q.UsageError:
+            raised = True
+        check("@文件不存在时抛 UsageError（不静默空列表）", raised is True, raised)
 
+        empty = Path(d) / "empty.txt"
+        empty.write_text("   \n", encoding="utf-8")
+        raised = None
+        try:
+            Q.resolve_tags("@" + str(empty))
+        except Q.UsageError:
+            raised = True
+        check("@文件为空也抛 UsageError（空样本不等于没问题）", raised is True, raised)
     # 4) 取卡与去重
     by_tag = {
         "AI/RAG": [{"id": "m1", "content": card}, {"id": "m2", "content": card}],
@@ -98,8 +109,31 @@ def run_cases():
     check("失败簇被计数报出（不许静默缩样本）", failed2 == ["AI/boom"], failed2)
 
 
+
+
+def test_cli_contract():
+    """命令行契约：写错的选项当场失败，且**在发出任何云端调用之前**失败。
+
+    这条钉的是一个真实坑：此前 main 直接把 sys.argv 当标签列表用，
+    `--tags "AI/RAG"` 会被当成两个标签名（"--tags" 与 "AI/RAG"）去搜，
+    前者搜回 0 张、脚本照样打印一份看起来正常的报告——**参数写错被读成"库里没问题"**。
+    """
+    c = FakeClient({})
+    code = None
+    try:
+        code = Q.main(["--bogus"], client=c)
+    except Q.UsageError:
+        code = 2
+    check("未知选项非 0 退出", code == 2, code)
+    check("未知选项不发出云端调用", c.asked == [], c.asked)
+
+    c2 = FakeClient({"AI/RAG": [{"id": "m1", "content": "#AI/RAG\nRAG 检索\n\n正文。\n"}]})
+    Q.main(["--tags", "AI/RAG", "--limit", "7", "--json", str(Path(tempfile.gettempdir()) / "q_scan_test.json")], client=c2)
+    check("--tags 被当成标签列表（不是标签名）", c2.asked == ["AI/RAG"], c2.asked)
+
 if __name__ == "__main__":
     run_cases()
+    test_cli_contract()
     print("---")
     ok = all(RESULTS)
     print(f"{'全部通过' if ok else '存在失败用例'}（{len(RESULTS)} 项）")
