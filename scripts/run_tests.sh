@@ -31,6 +31,29 @@ if [[ -z "$PY" ]]; then
   exit 1
 fi
 
+# 临时目录：用例大量用 tempfile 建临时目录，而受限环境（agent 沙箱、容器、把系统
+# temp 设成只读的机器）会让它全部 PermissionError [Errno 13]——实测 24 项里 13 项红，
+# 看起来像代码坏了，其实一行没改。所以先探一次：外部给的临时目录能写就尊重它，
+# 不能写就自动落到仓库内 _tmp（已 ignore，不进 git），并明说改了，不静默。
+tmp_probe() {
+  "$PY" -c 'import pathlib, tempfile; d = pathlib.Path(tempfile.mkdtemp()); (d / "probe").write_text("ok")' >/dev/null 2>&1
+}
+if [[ -n "${TMPDIR:-}" ]] && ! tmp_probe; then
+  echo "[tests] 外部 TMPDIR 不可写（${TMPDIR}），改用仓库内 _tmp/.tmp —— 这是环境问题，不是代码问题"
+  unset TMPDIR TEMP TMP
+fi
+if [[ -z "${TMPDIR:-}" ]]; then
+  mkdir -p "$REPO_ROOT/_tmp/.tmp"
+  export TMPDIR="$REPO_ROOT/_tmp/.tmp"
+  export TEMP="${TEMP:-$TMPDIR}"
+  export TMP="${TMP:-$TMPDIR}"
+fi
+if ! tmp_probe; then
+  echo "[tests] 临时目录仍不可写：TMPDIR=${TMPDIR:-（未设）} —— 用例里的 tempfile 会全部" >&2
+  echo "        PermissionError [Errno 13]。请把 TMPDIR/TEMP/TMP 指到可写目录后重跑。" >&2
+  exit 1
+fi
+
 rc=0
 total=0
 failed=0
