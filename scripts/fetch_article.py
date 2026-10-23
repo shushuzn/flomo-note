@@ -22,13 +22,21 @@
 **发布日期多一条兜底**：meta / `<time>` 取不到时，从正文的日期行里取（中文站常把
 发布时间单独成行、页面却不给 meta），并标明来源是「页面 meta」还是「正文兜底」。
 
+**两条出网通道，默认自动回退**：沙箱注入的代理端口**每次会话重新分配**，写死端口
+必然过期；而环境变量里的代理有时对新会话还没更新，于是「抓取失败」有一半其实是
+「拿旧端口去连」。故 `fetch()` 默认 `--via auto`：先按环境代理（含 `NO_PROXY`）取，
+失败就清空 `ProxyHandler` 直连重试，并**打印实际走通的那条**——不用再手写 `-x 端口`
+去试。两条都不通才报错，且把两条原因一起报出来。
+
 用法：
   python scripts/fetch_article.py <url> [--out PATH] [--min-chars N] [--timeout N]
+  python scripts/fetch_article.py <url> --via direct        # 强制直连（绕开环境代理）
+  python scripts/fetch_article.py <url> --via proxy         # 强制走环境代理（不回落）
   python scripts/fetch_article.py <url> --print          # 额外把正文打到 stdout（短文用）
 
 退出码：
   0  抽取成功（已写文件）
-  1  网络 / HTTP 失败，或响应不是 HTML
+  1  网络 / HTTP 失败（两条通道都失败时报两条原因），或响应不是 HTML
   2  抽取结果过短（多半是 JS 渲染页或反爬页），须换通道（webfetch / 镜像 / 预印本通道）
 """
 from __future__ import annotations
@@ -51,8 +59,11 @@ _OPTS = [
     Opt("--out", "out", default=None),
     Opt("--min-chars", "min_chars", "int", low=1, default=DEFAULT_MIN_CHARS),
     Opt("--timeout", "timeout", "float", low=1, default=30.0),
+    Opt("--via", "via", default="auto"),
     Opt("--print", "echo", "flag"),
 ]
+
+VIA_CHOICES = ("auto", "proxy", "direct")
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -443,9 +454,24 @@ def _slug(url: str) -> str:
     return (last or "page")[:48]
 
 
-def fetch(url: str, timeout: float = 30.0) -> tuple[str, str]:
-    """下载页面，返回 (html, content_type)。只发 GET，不改任何远端状态。"""
-    req = urllib.request.Request(
+class FetchError(Exception):
+    """所有通道都没取到页面。消息里带每条通道各自的原因。"""
+
+
+def env_proxy_label() -> str:
+    """环境代理的展示标签（只用于打印，不参与决策）。
+
+    决策一律交给 `ProxyHandler` 自己读环境变量——把端口抄进代码或文档，正是本轮要
+    消灭的那类缺陷：沙箱代理端口每次会话重新分配，抄下来的那个必然在某天变成
+    「连接被拒」，而现象与「网络断了」一模一样。
+    """
+    proxies = urllib.request.getproxies()
+    parts = [f"{k}={v}" for k, v in sorted(proxies.items()) if k.lower() != "no"]
+    return "，".join(parts) if parts else "无"
+
+
+def _request(url: str) -> urllib.request.Request:
+    return urllib.request.Request(
         url,
         headers={
             "User-Agent": _UA,
@@ -454,11 +480,55 @@ def fetch(url: str, timeout: float = 30.0) -> tuple[str, str]:
             "Accept-Encoding": "identity",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+
+
+def _download(url: str, timeout: float, direct: bool) -> tuple[str, str]:
+    # 空 ProxyHandler 才是真直连；仅仅 unset 环境变量不够——调用方 shell 里的
+    # `*_proxy` 还在，且 `no_proxy` 可能把目标排除在外造成「以为直连、其实走代理」。
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}) if direct else urllib.request.ProxyHandler()
+    )
+    with opener.open(_request(url), timeout=timeout) as resp:
         body = resp.read()
-        return decode_html(body, resp.headers.get("Content-Type", "")), resp.headers.get(
-            "Content-Type", ""
-        )
+        ctype = resp.headers.get("Content-Type", "")
+        return decode_html(body, ctype), ctype
+
+
+def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str, str]:
+    """下载页面，返回 (html, content_type, 通道说明)。只发 GET，不改任何远端状态。
+
+    通道（`via`）：
+      auto   先环境代理，失败再直连；两次都失败才抛 `FetchError`，两条原因一起带上
+      proxy  只走环境代理（`NO_PROXY` 仍然生效），失败即抛
+      direct 只直连（空 `ProxyHandler`，完全不读 `*_proxy`）
+
+    **「跳过」不写成「通过」**：auto 回退成功时，通道说明里附上原代理的失败原因，
+    读日志的人能看出失败出在代理侧，而不是以为代理正常。HTTP 错误码单列——403/404
+    说明请求已到达服务器、通道是通的，此时回退直连只会把真实原因埋掉。
+    """
+    if via not in VIA_CHOICES:
+        raise UsageError(f"--via 只能是 {'/'.join(VIA_CHOICES)}，收到 {via!r}")
+    plan = [False, True] if via == "auto" else [via == "direct"]
+    tried: list[str] = []
+    for direct in plan:
+        label = "直连" if direct else f"环境代理（{env_proxy_label()}）"
+        try:
+            html, ctype = _download(url, timeout, direct)
+            note = label
+            if tried:
+                note = f"{label}；{tried[-1]}"
+            return html, ctype, note
+        except urllib.error.HTTPError as exc:
+            # 服务器已响应：通道没问题，再换通道只会掩盖真实原因。
+            raise FetchError(
+                f"HTTP {exc.code}（通道：{label}）——服务器已响应，不是通道问题"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            tried.append(f"{label}不可用：{reason}")
+            if via != "auto":
+                raise FetchError(tried[-1]) from exc
+    raise FetchError("；".join(tried))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -480,14 +550,15 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(ns["out"]) if ns["out"] else None
     min_chars = ns["min_chars"]
     timeout = ns["timeout"]
+    via = ns["via"]
     echo = ns["echo"]
     if not url.lower().startswith(("http://", "https://")):
         print(f"[失败] 不是 http(s) 链接：{url}", file=sys.stderr)
         return 1
 
     try:
-        page, content_type = fetch(url, timeout)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+        page, content_type, net_channel = fetch(url, timeout, via)
+    except FetchError as exc:
         print(f"[失败] 抓取未完成：{exc}", file=sys.stderr)
         return 1
     if "html" not in (content_type or "").lower() and "<html" not in page[:2000].lower():
@@ -522,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
     out.write_text(body, encoding="utf-8")
 
     print(f"[抓取] {url}")
+    print(f"[出网] {net_channel}")
     print(f"[标题] {meta['title'] or '(未取到)'}")
     print(f"[发布] {meta['published'] or '(未取到)'}"
           + (f"（{pub_src}）" if meta["published"] else ""))
