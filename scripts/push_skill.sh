@@ -16,9 +16,15 @@
 #
 # 用法：
 #   bash scripts/push_skill.sh "commit message" [file1 file2 ...]
-#   不传文件            → git add -u（只加已跟踪的改动）
+#   不传文件且暂存区为空 → git add -A（含新增与删除）
+#   不传文件但已有暂存   → **只提交已暂存的内容，不再追加**（尊重调用方的精确控制）
 #   传文件路径          → 只 add 那些文件（便于精确控制）
 #   --no-commit 开头    → 跳过 commit，仅推送已提交内容
+#
+# 为什么「已有暂存就不再 -A」：`git add -A` 会把工作区里任何未跟踪文件一起带上。
+# 调用方先精确 `git add` 了 6 个文件、再调用本脚本时，-A 会把它刻意排除的文件
+# 重新加回来并一起提交——调用方的控制被脚本静默推翻，且提交信息只写主题，
+# 事后看不出多了什么。故暂存区非空即视为「调用方已决定提交什么」。
 #
 # 依赖：scripts/git_tunnel.py、Git Bash 工具链；可选 ~/.git-credentials（github token）。
 set -euo pipefail
@@ -87,10 +93,16 @@ export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
 if [ "$NO_COMMIT" -eq 0 ]; then
   if [ "${#FILES[@]}" -gt 0 ]; then
     git add "${FILES[@]}"
-  else
+  elif git diff --cached --quiet; then
     # 用 -A（含新增与删除），不用 -u：-u 只处理已入库文件，会漏掉新增文件，
-    # 造成「提交成功但远端缺文件」。提交后再做一次未跟踪文件自检兜底。
+    # 造成「提交成功但远端缺文件」。仅在暂存区为空时才这么做。
     git add -A
+  else
+    # 暂存区已有内容 = 调用方已精确决定提交范围，此时绝不再 -A：
+    # 那会把工作区里未跟踪的文件（本机代理脚本、临时导出、个人配置）一起带进仓库，
+    # 而提交信息只写主题，事后无从看出多了什么。
+    echo "[push] 沿用已暂存的改动（未追加未跟踪文件）："
+    git diff --cached --name-status | sed 's/^/         /'
   fi
   if git diff --cached --quiet; then
     echo "[push] 无已暂存改动，仅推送已有提交"
