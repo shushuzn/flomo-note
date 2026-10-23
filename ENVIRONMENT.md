@@ -129,7 +129,7 @@ python scripts/sni_fetch.py <url> <out_path>
 
 ---
 
-## 技能注册（DeepSeek Harness）
+## 技能注册（DeepSeek Harness / dsh）
 
 `SKILL.md` 在仓库根，**不在** dsh 技能提供者的默认扫描根内（它只认
 `<projectRoot>/.dsh/skills/<name>/SKILL.md` 与 `<projectRoot>/.agents/skills/<name>/SKILL.md`；
@@ -148,6 +148,34 @@ New-Item -ItemType Junction -Path .dsh\skills\flomo-note -Target $PWD
 - 换机器 / 重建：删掉 `.dsh` 后按上面两行重跑；提供者带目录监视，不用重启。
 - 验证：`Test-Path .dsh\skills\flomo-note\SKILL.md` 为 True，且新会话技能目录出现 `flomo-note`。
 - 实测副作用：无。`glob` / `grep` 均不穿目录联接，不会出现 `.dsh\...` 重复路径。
+
+---
+
+## 技能注册（OpenCode）
+
+与上一节的 dsh 注册**并行**：两者各扫自己的根，互不影响。OpenCode 认的根是
+`~/.config/opencode/skills`（全局，本机 `C:\Users\35234\.config\opencode\skills`）与
+`.opencode/skills`（项目），并把 `~/.claude/skills`、`~/.agents/skills` 当兼容源；
+`SKILL.md` 仍只在仓库根定义一次。
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.config\opencode\skills"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.config\opencode\skills\flomo-note" -Target $PWD
+```
+
+- 联接目标同样是**仓库根**：`scripts/`、`AGENTS.md`、`ENVIRONMENT.md` 一并进 resource base，
+  `SKILL.md` 里的相对路径按 base 解析即可命中。
+- 放全局目录是为了换项目也能用；代价是仓库挪位后联接指向旧路径，删掉重跑上面两行即可。
+- 技能清单按路径**现采**：装好即在当前会话的技能目录里出现，不必重启进程。
+- **联接形态不存在同步问题**——读的就是仓库根那份；它与仓库完全解耦，也不会让 `git status` 变脏。
+- 验证：`Test-Path "$env:USERPROFILE\.config\opencode\skills\flomo-note\SKILL.md"` 为 True，
+  且会话的技能清单出现 `flomo-note`。
+
+### 复制形态的安装位（WorkBuddy）
+
+`~/.workbuddy/skills/flomo-note/` 是**复制**形态（只有 `SKILL.md` 与 `_user_meta.json`），
+与仓库版没有任何自动关联，会静默分叉——表现是照着旧规则写卡，而一切照常、不报错。
+同步走 `scripts/sync_skill.sh`（`--check` 只比对，不一致非 0 退出）；上面那条联接则不需要它。
 
 ---
 
