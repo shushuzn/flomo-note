@@ -29,13 +29,12 @@ from __future__ import annotations
 
 import re
 import sys
-import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+import net_util  # noqa: E402  探测实现只有一份：通道判据在这里，不在本脚本
 
 _OPTS = [
     Opt("--url", "urls", default=None, hint="可重复，或用逗号分隔"),
@@ -46,14 +45,6 @@ _OPTS = [
 # 基线目标：只用来回答「出口本身通不通」，不代表任何业务站点可达。
 BASELINE_URL = "https://www.baidu.com/"
 
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
-
-# 只认「连不上」这一类，HTTP 状态码不在其中（见模块注释的判据）。
-_TRANSPORT_ERRORS = (urllib.error.URLError, TimeoutError, OSError)
-
 
 def proxy_snapshot() -> tuple[dict, str]:
     """现读环境里的代理设置，返回 (代理键值, NO_PROXY 原值)。只看，不改。"""
@@ -63,49 +54,12 @@ def proxy_snapshot() -> tuple[dict, str]:
 
 
 def probe(url: str, timeout: float, direct: bool) -> dict:
-    """对一条通道发一次 GET，返回结论字典。
+    """转调 `net_util.probe`。
 
-    `ok` 的判据是「拿到了 HTTP 响应」而非 `2xx`——403/404 证明包已到达服务器。
-    故 `HTTPError` 单独捕获并判为通；只有传输层错误才算不通。
+    本脚本只负责「把结论讲给人听」，通道判据（什么算通）留在唯一实现里——
+    判据抄两份，就会出现一个说通、一个说不通，而没人知道该信哪个。
     """
-    label = "直连" if direct else "环境代理"
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}) if direct else urllib.request.ProxyHandler()
-    )
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": _UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "identity",
-        },
-    )
-    started = time.monotonic()
-    try:
-        with opener.open(req, timeout=timeout) as resp:
-            resp.read(1024)
-            return {
-                "channel": label,
-                "ok": True,
-                "detail": f"HTTP {resp.status}",
-                "seconds": time.monotonic() - started,
-            }
-    except urllib.error.HTTPError as exc:
-        elapsed = time.monotonic() - started
-        return {
-            "channel": label,
-            "ok": True,
-            "detail": f"HTTP {exc.code}（服务器已响应，通道可用）",
-            "seconds": elapsed,
-        }
-    except _TRANSPORT_ERRORS as exc:
-        return {
-            "channel": label,
-            "ok": False,
-            "detail": str(getattr(exc, "reason", exc)),
-            "seconds": time.monotonic() - started,
-        }
+    return net_util.probe(url, timeout=timeout, direct=direct)
 
 
 def verdict(rows: list[dict]) -> tuple[str, int]:

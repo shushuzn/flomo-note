@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+import net_util  # noqa: E402  出网通道与错误分类的唯一实现（抓取 / 写云 / 体检共用）
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIN_CHARS = 300
@@ -62,13 +63,6 @@ _OPTS = [
     Opt("--via", "via", default="auto"),
     Opt("--print", "echo", "flag"),
 ]
-
-VIA_CHOICES = ("auto", "proxy", "direct")
-
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
 
 # 站内专用抽取器。
 # dev.to 的正文在 `<div id="article-body">`。旧写法以 `</div>\s*<div` 作右界，
@@ -458,42 +452,6 @@ class FetchError(Exception):
     """所有通道都没取到页面。消息里带每条通道各自的原因。"""
 
 
-def env_proxy_label() -> str:
-    """环境代理的展示标签（只用于打印，不参与决策）。
-
-    决策一律交给 `ProxyHandler` 自己读环境变量——把端口抄进代码或文档，正是本轮要
-    消灭的那类缺陷：沙箱代理端口每次会话重新分配，抄下来的那个必然在某天变成
-    「连接被拒」，而现象与「网络断了」一模一样。
-    """
-    proxies = urllib.request.getproxies()
-    parts = [f"{k}={v}" for k, v in sorted(proxies.items()) if k.lower() != "no"]
-    return "，".join(parts) if parts else "无"
-
-
-def _request(url: str) -> urllib.request.Request:
-    return urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": _UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "identity",
-        },
-    )
-
-
-def _download(url: str, timeout: float, direct: bool) -> tuple[str, str]:
-    # 空 ProxyHandler 才是真直连；仅仅 unset 环境变量不够——调用方 shell 里的
-    # `*_proxy` 还在，且 `no_proxy` 可能把目标排除在外造成「以为直连、其实走代理」。
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}) if direct else urllib.request.ProxyHandler()
-    )
-    with opener.open(_request(url), timeout=timeout) as resp:
-        body = resp.read()
-        ctype = resp.headers.get("Content-Type", "")
-        return decode_html(body, ctype), ctype
-
-
 def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str, str]:
     """下载页面，返回 (html, content_type, 通道说明)。只发 GET，不改任何远端状态。
 
@@ -502,33 +460,32 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
       proxy  只走环境代理（`NO_PROXY` 仍然生效），失败即抛
       direct 只直连（空 `ProxyHandler`，完全不读 `*_proxy`）
 
+    通道选择与错误分类都在 `net_util`（与写云、连通体检共用一份实现）：代理端口
+    每次会话重新分配，抄下来的必然过期，故一律现读、不做「猜端口」的判断。
+
     **「跳过」不写成「通过」**：auto 回退成功时，通道说明里附上原代理的失败原因，
     读日志的人能看出失败出在代理侧，而不是以为代理正常。HTTP 错误码单列——403/404
     说明请求已到达服务器、通道是通的，此时回退直连只会把真实原因埋掉。
     """
-    if via not in VIA_CHOICES:
-        raise UsageError(f"--via 只能是 {'/'.join(VIA_CHOICES)}，收到 {via!r}")
-    plan = [False, True] if via == "auto" else [via == "direct"]
-    tried: list[str] = []
-    for direct in plan:
-        label = "直连" if direct else f"环境代理（{env_proxy_label()}）"
-        try:
-            html, ctype = _download(url, timeout, direct)
-            note = label
-            if tried:
-                note = f"{label}；{tried[-1]}"
-            return html, ctype, note
-        except urllib.error.HTTPError as exc:
-            # 服务器已响应：通道没问题，再换通道只会掩盖真实原因。
-            raise FetchError(
-                f"HTTP {exc.code}（通道：{label}）——服务器已响应，不是通道问题"
-            ) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            reason = getattr(exc, "reason", exc)
-            tried.append(f"{label}不可用：{reason}")
-            if via != "auto":
-                raise FetchError(tried[-1]) from exc
-    raise FetchError("；".join(tried))
+    if via not in net_util.VIA_CHOICES:
+        raise UsageError(f"--via 只能是 {'/'.join(net_util.VIA_CHOICES)}，收到 {via!r}")
+    headers = {
+        "User-Agent": net_util.user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "identity",
+    }
+    try:
+        reply = net_util.request(url, headers=headers, timeout=timeout, via=via)
+    except urllib.error.HTTPError as exc:
+        # 服务器已响应：通道没问题，再换通道只会掩盖真实原因。
+        raise FetchError(
+            f"HTTP {exc.code}（服务器已响应，不是通道问题）"
+        ) from exc
+    except net_util.TransportError as exc:
+        raise FetchError(str(exc)) from exc
+    ctype = reply.headers.get("Content-Type", "")
+    return decode_html(reply.body, ctype), ctype, reply.channel
 
 
 def main(argv: list[str] | None = None) -> int:

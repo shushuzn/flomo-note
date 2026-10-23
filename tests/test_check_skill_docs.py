@@ -73,6 +73,14 @@ CASES = [
      {"_tmp_src.md": f"# External\n\nreleased {DASH}.\n"}, 0, 0),
     ("根下写卡草稿含日期不判错",
      {"memo_body_x.txt": f"要点：\n\n{DASH} 实测。\n"}, 0, 0),
+    # 环境值（IP / 端口）属 ENVIRONMENT.md；SKILL.md 是唯一细则源，只讲流程。
+    # 实测过：讲「代理端口每次变」时顺手把地址写进了 SKILL，两份文档开始各讲一半。
+    ("SKILL.md 出现可照抄的地址判错",
+     {SKILL: "# 规则\n\n探活用 127.0.0.1:" + "8899 连。\n"}, 1, 0),
+    ("ENVIRONMENT.md 出现地址不判错（本职）",
+     {ENV_DOC: "# 环境\n\n代理在 127.0.0.1:8899，端口每轮变。\n"}, 0, 0),
+    ("SKILL.md 的占位写法不误伤",
+     {SKILL: "# 规则\n\n不要手写 `curl -x <端口>` 试探。\n"}, 0, 0),
 ]
 
 

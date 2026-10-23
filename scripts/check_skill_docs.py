@@ -79,6 +79,16 @@ NARRATIVE_RE = re.compile(
 # 技术常量行豁免：同行含 version / protocol 键名时，其中的日期不是文档叙事日期。
 CONST_LINE_RE = re.compile(r"(?i)version|protocol")
 
+# 可照抄的环境地址：IP / 回环主机带端口 / 通配绑定。
+# 归属见 AGENTS.md 的文档分工——「随环境变化的细节」只写 ENVIRONMENT.md，SKILL.md
+# 只讲流程。判据取**正面形态**（能直接复制到命令行执行的那种串），不做
+# 「这段话算不算环境内容」的语义判断：后者没有机械判据，也就等于没有检查。
+# 实测命中率：SKILL.md 为 0，故本规则零假报；`curl -x <端口>` 这类占位写法不命中。
+ENV_VALUE_RE = re.compile(r"\b127\.0\.0\.1\b|\blocalhost:\d+|\b0\.0\.0\.0\b")
+
+# 只对唯一细则源生效：其余文档（README 讲脚本、ENVIRONMENT 讲环境）出现地址是本职。
+ENV_VALUE_TARGET = "SKILL.md"
+
 # ---- 交叉引用（技能文档之间靠编号互指，删改之后引用会静默悬空）----
 # H 编号引用：H1 / H6b / H24。前后不得紧邻字母数字，否则 HDR1、H264 之类会误命中。
 H_REF_RE = re.compile(r"(?<![A-Za-z0-9])H(\d{1,2}[a-z]?)(?![0-9a-z])")
@@ -230,9 +240,16 @@ def scan_file(path: Path, root: Path):
     scan_narrative = path.name not in NARRATIVE_SELF_EXEMPT
     if not scan_narrative:
         exempts.append(f"{relp}: 规则实现体，跳过叙事扫描（日期扫描照常）")
+    scan_env_value = path.name == ENV_VALUE_TARGET
 
     for i, ln in enumerate(text.splitlines(), start=1):
         const_line = bool(CONST_LINE_RE.search(ln))
+        if scan_env_value:
+            for m in ENV_VALUE_RE.finditer(ln):
+                errs.append(
+                    f"{relp}:{i}: 出现可照抄的环境地址「{m.group(0)}」——IP/端口属环境事实，"
+                    f"写 `ENVIRONMENT.md`（文档分工见 `AGENTS.md`）；本文件只讲流程"
+                )
         for m in DATE_RE.finditer(ln):
             hit = m.group(0).strip()
             if const_line:
