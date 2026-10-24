@@ -30,6 +30,20 @@
   python scripts/publish.py --draft ... --verify ... --skip-web     # 透传闸门的 --skip-web
   python scripts/publish.py --draft ... --verify ... --no-verify-card
   python scripts/publish.py --draft ... --update-id ... --allow-content-loss   # 有意重写时放行
+  python scripts/publish.py --batch _tmp/batch.txt                  # 多张卡：预检全过才写
+  python scripts/publish.py --batch _tmp/batch.txt --dry-run        # 只预检，不写云
+
+批次清单每行 `草稿 | 留痕 | 覆盖 id`，后两段可省或用 `-` 占位，`#` 开头为注释：
+
+  # 本轮三张
+  _tmp/draft_zt_1.txt | _tmp/verify_zt_1.json | -
+  _tmp/draft_zt_2.txt | _tmp/verify_zt_2.json | -
+  _tmp/draft_af_fix.txt | - | MjUzMzgyODYz
+
+批量的不变量只有一条：**先把 N 张全过预检（闸门 + 质检），任何一张不过则一张都不写**，
+全过之后才逐张写入并立刻复核。它替代的是「每张各跑一遍 `--dry-run`、再各写一遍」——
+那套流程里每张卡要跑两次闸门，而闸门内含查重两路云端检索，六张卡就是十二次。
+单卡不需要先 `--dry-run`：闸门不过本来就不写云，dry-run 只是把同一步白跑一遍。
 
 退出码：
   0  写入成功且机器项复核全过
@@ -42,10 +56,15 @@
      后两种（读不到概念名、确属改名）可显式加 --allow-rename 放行
   7  草稿比原卡少了读数、或删出了词中间的断口（未写云）；确属有意重写加
      --allow-content-loss 放行
+
+批量的退出码含义同上，但 2/3 发生在预检阶段——此时**一张都没写**；4/5/6/7 若发生在
+第 k 张，则前 k−1 张已写入，输出里的 `[批次汇总]` 与 `[批次] 已写 id：` 就是重跑时的
+依据（把已成功的行注释掉再跑余下的，不要整批重来）。
 """
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -75,6 +94,7 @@ _SUCCESS_RE = re.compile(r"\[成功\] 已写入 memo id=(\S+)")
 
 _OPTS = [
     CLI.Opt("--draft", "draft", default=""),
+    CLI.Opt("--batch", "batch", default=""),
     CLI.Opt("--verify", "verify", default=""),
     CLI.Opt("--update-id", "update_id", default=""),
     CLI.Opt("--allow-rename", "allow_rename", "flag"),
@@ -577,45 +597,29 @@ def _update_card(run, memo_id: str, body: str) -> tuple[int, str, bool]:
 
 
 
-def main(argv: list[str] | None = None, exec_fn=None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    run = exec_fn or _exec
+# ── 两张卡以上的执行形态 ──────────────────────────────────────────────────────
+# 拆成「预检」与「写入」两段，是因为多张卡时旧做法只能一张一张跑完整链：每张各跑一次
+# 闸门（闸门内含查重两路云端检索），而为了先看到闸门过不过，通常还要再补一次 `--dry-run`。
+# 于是 6 张卡 = 12 次闸门、12 次进程启动，中间还要手抄 6 次 id 去回读。批量把这段收成
+# 一次调用：先把 N 张全过预检（任何一张不过则一张都不写），再逐张写入、id 程序解析、立刻
+# 复核。**「预检全过才写」是批量的核心不变量**——它替代的正是那 6 次手工 dry-run。
 
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help", "help"):
-        print(__doc__)
-        return 0
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    ns, _pos = CLI.parse_options(args, _OPTS)
-    draft = ns["draft"]
-    verify = ns["verify"]
-    # id 是人工抄来的，首尾空白一律不算内容：`--update-id " ABC"` 否则会带空格去查
-    update_id = ns["update_id"].strip()
-    allow_rename = ns["allow_rename"]
-    allow_content_loss = ns["allow_content_loss"]
-    dry_run = ns["dry_run"]
-    skip_web = ns["skip_web"]
-    verify_card = not ns["no_verify_card"]
 
-    if allow_rename and not update_id:
-        print("[失败] --allow-rename 只对 --update-id 有意义（建卡没有既有概念名可比）",
-              file=sys.stderr)
-        return 1
+def _concept(draft: str) -> str:
+    """取草稿的概念名（第二个非空行），只用于汇总表展示。"""
+    try:
+        heads = _head_lines(Path(draft).read_text(encoding="utf-8"))
+    except OSError:
+        return "?"
+    return heads[1] if len(heads) > 1 else "?"
 
-    draft_path = Path(draft)
-    if not draft or not draft_path.exists():
-        print(f"[失败] 草稿不存在：{draft or '(未指定 --draft)'}", file=sys.stderr)
-        return 1
-    if verify and not Path(verify).exists():
-        print(f"[失败] 验证留痕不存在：{verify}", file=sys.stderr)
-        return 1
 
-    body = draft_path.read_text(encoding="utf-8")
-
-    # ① 流程闸门：不过即停，一个字节不发云端
-    _step("① 流程闸门 sop_gate")
+def precheck(run, draft: str, verify: str, skip_web: bool, prefix: str = "") -> int:
+    """① 闸门 → ② 质检。返回 0 通过 / 2 闸门未过 / 3 质检 ERR。**不写云。**"""
+    _step(prefix + "① 流程闸门 sop_gate")
     gate_cmd = [PY, str(SCRIPT_DIR / "sop_gate.py"), "--memo", draft]
     if verify:
         gate_cmd += ["--verify", verify]
@@ -631,8 +635,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         return 2
     print("[通过] 闸门")
 
-    # ② 文本质检：0 ERR 才继续
-    _step("② 文本质检 validate_memo")
+    _step(prefix + "② 文本质检 validate_memo")
     code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft])
     if out.strip():
         print(_tail(out))
@@ -643,18 +646,42 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
               file=sys.stderr)
         return 3
     print("[通过] 质检 0 ERR")
+    return 0
 
-    if dry_run:
-        print("\n[RESULT] dry_run=1")
-        print("[完成] 只跑到质检（--dry-run），未写云")
-        return 0
 
+def write_one(run, draft: str, verify: str, *, update_id: str = "",
+              allow_rename: bool = False, allow_content_loss: bool = False,
+              do_verify: bool = True, expect_digest: str = "",
+              prefix: str = "") -> dict:
+    """③ 写入（建卡或覆盖）→ ④ 复核。返回结果字典；`[RESULT]` 与 `[下一步]` 由调用方打印。
+
+    `expect_digest` 是预检通过时草稿的指纹。批量场景下预检与写入之间隔着别的卡，若这
+    期间草稿被改动，闸门凭证里的正文指纹已经对不上——此处重跑一次质检让它自己报出来，
+    而不是拿旧凭证去写一份没被核过的正文。单卡路径不传该参数（预检紧接写入，无窗口）。
+    """
+    res = {"code": 0, "id": "", "reused": False, "diff": None,
+           "word_count": None, "tags": [], "checks": 0, "human": []}
+    if expect_digest and _digest(Path(draft)) != expect_digest:
+        print("[告警] 草稿在预检之后被改动过，重跑质检确认凭证仍覆盖这份正文")
+        code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft])
+        if out.strip():
+            print(_tail(out))
+        if code != 0:
+            if err.strip():
+                print(_tail(err), file=sys.stderr)
+            print("[失败] 改动后的正文未过质检（凭证指纹多半也已不符），未写云——重跑整条链",
+                  file=sys.stderr)
+            res["code"] = 3
+            return res
+
+    body = Path(draft).read_text(encoding="utf-8")
     before = ""
     if update_id:
         # 覆盖路：先确认目标卡（写前唯一一次读，兼作改前快照），再覆盖；两条都过了才写
         code, before = _confirm_target(run, update_id, body, allow_rename)
         if code != 0:
-            return code
+            res["code"] = code
+            return res
         # 写前最后一道：草稿比原卡少了读数 / 删出了断口就停在这里。差评报告要能当场
         # 证伪（「少了哪个读数」），否则人只会学到「又红了，加个开关」。
         if before:
@@ -662,23 +689,27 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
             if loss["lost_readings"] or loss["fragments"]:
                 _print_content_loss(loss)
                 if not allow_content_loss:
-                    return 7
+                    res["code"] = 7
+                    return res
                 print("[放行] 按 --allow-content-loss 带走上面这些丢失（回读时逐条认领）")
         code, memo_id, reused = _update_card(run, update_id, body)
         if code != 0:
-            return code
+            res["code"] = code
+            return res
     else:
         # 建卡路：只发一次
         code, memo_id, reused = _create_card(run, body)
         if code != 0:
-            return code
+            res["code"] = code
+            return res
 
     # 覆盖差异先算好、后打印：复核失败也照样要打，而那时已经在 return 的路上
-    diff = diff_report(before, body) if (update_id and before) else None
+    res.update({"id": memo_id, "reused": bool(reused),
+                "diff": diff_report(before, body) if (update_id and before) else None})
 
     # 写后机器项复核：卡已写入，失败只报告，不改写不重发
-    if verify_card:
-        _step(("⑤" if update_id else "④") + " 写后机器项复核 verify_card")
+    if do_verify:
+        _step(prefix + ("⑤" if update_id else "④") + " 写后机器项复核 verify_card")
         code, out, err = run([PY, str(SCRIPT_DIR / "verify_card.py"), "--id", memo_id,
                               "--draft", draft, "--json"], timeout=120)
         if code != 0:
@@ -688,39 +719,210 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
                 print(_tail(out), file=sys.stderr)
             print("[失败] 机器项未全过——卡已写入，**不改写不重发**，须按上面失败项人工处置",
                   file=sys.stderr)
-            _print_diff(diff)
-            print(f"[RESULT] id={memo_id}")
-            return 5
-        try:
-            info = json.loads(out[out.find("{"):])
-        except (ValueError, json.JSONDecodeError):
-            info = {}
+            res["code"] = 5
+            return res
+        info = _cloud_json(out)
         detail = info.get("info") or {}
         checks = info.get("checks") or []
+        res["word_count"] = detail.get("word_count")
+        res["tags"] = detail.get("tags") or []
+        res["checks"] = len(checks)
         # 这里不再判「有没有失败项」：verify_card 有任何 FAIL 就退出码非 0，上面已经
         # return 5 了。能走到这里的必然全过——再写一次 `if failed:` 是条不可达分支，
         # 只会让人以为「失败也能走到这里」。
         if checks:
-            print(
-                f"[通过] 机器项 {len(checks)} 项全过 | 字数 {detail.get('word_count')} | "
-                f"标签 {' '.join(detail.get('tags') or []) or '-'}"
-            )
+            print(f"[通过] 机器项 {len(checks)} 项全过 | 字数 {res['word_count']} | "
+                  f"标签 {' '.join(res['tags']) or '-'}")
         else:
             print("[告警] 复核回包解析不出机器项明细——退出码 0 只代表它自己判过，"
                   "本轮没有逐项清单可核；请自己跑一遍 verify_card --show-body 读全文",
                   file=sys.stderr)
-        human = [h.get("item") for h in (info.get("human_judgment") or [])]
-        if human:
-            print(f"[须人读] 脚本判不了、别当成已查过：{'；'.join(human)}")
+        res["human"] = [h.get("item") for h in (info.get("human_judgment") or [])]
+        if res["human"]:
+            print(f"[须人读] 脚本判不了、别当成已查过：{'；'.join(res['human'])}")
+    return res
 
-    _print_diff(diff)
 
-    print("\n[RESULT] id=" + memo_id)
-    if reused:
-        print("[RESULT] reused=1")
-    print(f"[下一步] 人读全文自查：python scripts/verify_card.py --id {memo_id} --show-body")
-    print(f"[下一步] 复盘定向复查：python scripts/dedup.py --id {memo_id}")
+def parse_manifest(path: Path) -> list[dict]:
+    """读批次清单：每行 `草稿 | 留痕 | 覆盖 id`，后两段可省或用 `-` 占位；`#` 开头为注释。
+
+    这里只拦**确定是错**的三种：草稿或留痕不存在、同一份草稿出现两次、同一张卡被覆盖
+    两次。前者是路径写错，后两者都会直接造成重复卡（同一份草稿跑两遍）或「第二份草稿
+    盖掉第一份的结果」。**「概念名重复」不在这判**——它是语义，脚本分不清「同一件事」
+    与「同一主题的两层」；改为把概念名并排列出来让人一眼过，比造一条会误伤的判据有效。
+    """
+    if not path.exists():
+        raise CLI.UsageError(f"批次清单不存在：{path}")
+    items: list[dict] = []
+    seen_draft: dict[str, int] = {}
+    seen_id: dict[str, int] = {}
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) > 3:
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行字段过多（{len(parts)} 段）：每行至多 `草稿 | 留痕 | 覆盖 id`")
+        while len(parts) < 3:
+            parts.append("-")
+        draft = "" if parts[0] in ("-", "") else parts[0]
+        verify = "" if parts[1] in ("-", "") else parts[1]
+        update_id = "" if parts[2] in ("-", "") else parts[2]
+        if not draft:
+            raise CLI.UsageError(f"清单第 {lineno} 行缺少草稿路径")
+        if not Path(draft).exists():
+            raise CLI.UsageError(f"清单第 {lineno} 行的草稿不存在：{draft}")
+        if verify and not Path(verify).exists():
+            raise CLI.UsageError(f"清单第 {lineno} 行的验证留痕不存在：{verify}")
+        if draft in seen_draft:
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行与第 {seen_draft[draft]} 行是同一份草稿：{draft}"
+                "——同一份草稿跑两遍就是两张重复卡，先确认这一批要建几张")
+        seen_draft[draft] = lineno
+        if update_id:
+            if update_id in seen_id:
+                raise CLI.UsageError(
+                    f"清单第 {lineno} 行与第 {seen_id[update_id]} 行覆盖同一张卡：{update_id}"
+                    "——第二遍会拿另一份草稿盖掉第一遍的结果")
+            seen_id[update_id] = lineno
+        items.append({"draft": draft, "verify": verify, "update_id": update_id,
+                      "lineno": lineno})
+    if not items:
+        raise CLI.UsageError(f"批次清单里没有任何条目：{path}")
+    return items
+
+
+def _print_batch_summary(rows: list[tuple], *, total: int, failed: int) -> None:
+    """汇总表：收尾报告的第 2、4 项（实测字数、id、标签）直接照抄，不必再从散落输出里拣。"""
+    ok = [r for r in rows if r[2]["code"] == 0]
+    print(f"\n[批次汇总] 计划 {total} 张 / 本次写入 {len(ok)} 张"
+          + (f" / 第 {failed} 张起未继续" if failed else ""))
+    for i, it, res in rows:
+        mark = "✓" if res["code"] == 0 else "✗"
+        if res.get("id"):
+            print(f"  {i} {mark} id={res['id']} {res.get('word_count')} 字 "
+                  f"{' '.join(res.get('tags') or []) or '-'} {_concept(it['draft'])}")
+        else:
+            print(f"  {i} {mark} 未写入（退出码 {res['code']}） {_concept(it['draft'])}")
+    if ok:
+        print("[批次] 已写 id：" + " ".join(r[2]["id"] for r in ok))
+
+
+def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
+              allow_content_loss: bool, do_verify: bool) -> int:
+    n = len(items)
+    print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检），任何一张不过则一张都不写")
+    digests: dict[str, str] = {}
+    for i, it in enumerate(items, 1):
+        code = precheck(run, it["draft"], it["verify"], skip_web, prefix=f"[{i}/{n}] ")
+        if code:
+            print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
+                  f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
+            return code
+        digests[it["draft"]] = _digest(Path(it["draft"]))
+
+    if dry_run:
+        print("\n[RESULT] dry_run=1")
+        print(f"[完成] {n} 张全部通过预检（--dry-run），未写云")
+        return 0
+
+    rows: list[tuple] = []
+    for i, it in enumerate(items, 1):
+        res = write_one(run, it["draft"], it["verify"], update_id=it["update_id"],
+                        allow_content_loss=allow_content_loss, do_verify=do_verify,
+                        expect_digest=digests.get(it["draft"], ""), prefix=f"[{i}/{n}] ")
+        _print_diff(res.get("diff"))
+        rows.append((i, it, res))
+        if res["code"] != 0:
+            _print_batch_summary(rows, total=n, failed=i)
+            print(f"[失败] 第 {i}/{n} 张写入或复核未过（退出码 {res['code']}）——"
+                  "上面已写的卡**不改写不重发**；把清单里已成功的行注释掉，再跑余下的",
+                  file=sys.stderr)
+            return res["code"]
+
+    _print_batch_summary(rows, total=n, failed=0)
     return 0
+
+
+def main(argv: list[str] | None = None, exec_fn=None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    run = exec_fn or _exec
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+
+    ns, _pos = CLI.parse_options(args, _OPTS)
+    batch = ns["batch"]
+    draft = ns["draft"]
+    verify = ns["verify"]
+    # id 是人工抄来的，首尾空白一律不算内容：`--update-id " ABC"` 否则会带空格去查
+    update_id = ns["update_id"].strip()
+    allow_rename = ns["allow_rename"]
+    allow_content_loss = ns["allow_content_loss"]
+    dry_run = ns["dry_run"]
+    skip_web = ns["skip_web"]
+    verify_card = not ns["no_verify_card"]
+
+    if batch:
+        # 清单逐条指定草稿/留痕/覆盖对象；命令行上再给一份，读起来像「全批的默认值」，
+        # 实际只会作用于第一条或被忽略——两种解释都错，故直接拒而不是挑一种。
+        for flag, given in (("--draft", draft), ("--verify", verify),
+                            ("--update-id", update_id), ("--allow-rename", allow_rename)):
+            if given:
+                raise CLI.UsageError(
+                    f"--batch 与 {flag} 不能同时给：批量的草稿、留痕与覆盖对象一律逐条写在清单里")
+        return run_batch(run, parse_manifest(Path(batch)), skip_web=skip_web,
+                         dry_run=dry_run, allow_content_loss=allow_content_loss,
+                         do_verify=verify_card)
+
+    if allow_rename and not update_id:
+        print("[失败] --allow-rename 只对 --update-id 有意义（建卡没有既有概念名可比）",
+              file=sys.stderr)
+        return 1
+
+    draft_path = Path(draft)
+    if not draft or not draft_path.exists():
+        print(f"[失败] 草稿不存在：{draft or '(未指定 --draft)'}", file=sys.stderr)
+        return 1
+    if verify and not Path(verify).exists():
+        print(f"[失败] 验证留痕不存在：{verify}", file=sys.stderr)
+        return 1
+
+    # 先确认草稿读得出来：放到写入路里才炸就变成 OSError traceback（那既不是用法错、
+    # 也不是云端失败，cli_entry 接不住）。
+    try:
+        draft_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"[失败] 草稿读不出来：{exc}", file=sys.stderr)
+        return 1
+
+    code = precheck(run, draft, verify, skip_web)
+    if code:
+        return code
+
+    if dry_run:
+        print("\n[RESULT] dry_run=1")
+        print("[完成] 只跑到质检（--dry-run），未写云")
+        return 0
+
+    res = write_one(run, draft, verify, update_id=update_id, allow_rename=allow_rename,
+                    allow_content_loss=allow_content_loss, do_verify=verify_card)
+
+    _print_diff(res.get("diff"))
+
+    if res["id"]:
+        print("\n[RESULT] id=" + res["id"])
+        if res["reused"]:
+            print("[RESULT] reused=1")
+    if res["code"] == 0:
+        print(f"[下一步] 人读全文自查：python scripts/verify_card.py --id {res['id']} --show-body")
+        print(f"[下一步] 复盘定向复查：python scripts/dedup.py --id {res['id']}")
+    return res["code"]
 
 
 if __name__ == "__main__":

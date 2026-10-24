@@ -53,10 +53,15 @@ BATCH_JSON = json.dumps({
 }, ensure_ascii=False)
 
 
-def make_exec(overrides=None):
+def make_exec(overrides=None, create_ids=None):
     """返回 (exec_fn, calls)。overrides 按脚本名（覆盖其全部子命令）或
-    (脚本名, 子命令) 精确指定 (code, stdout, stderr)。"""
+    (脚本名, 子命令) 精确指定 (code, stdout, stderr)。
+
+    `create_ids` 给一串 id 时，第 n 次 `memo_create` 返回第 n 个——批量必须能验出
+    「id 与草稿配对」错位，而固定 id 会让所有卡看起来都指对了。
+    """
     calls = []
+    counter = {"create": 0}
     table = {
         ("sop_gate.py", ""): (0, "[gate] 通过", ""),
         ("validate_memo.py", ""): (0, "[validate] 0 ERR", ""),
@@ -82,6 +87,13 @@ def make_exec(overrides=None):
         calls.append(list(cmd))
         name = Path(cmd[1]).name if len(cmd) > 1 else cmd[0]
         tool = cmd[2] if len(cmd) > 2 and not cmd[2].startswith("--") else ""
+        if create_ids and name == "flomo_client.py" and tool == "memo_create":
+            idx = min(counter["create"], len(create_ids) - 1)
+            counter["create"] += 1
+            mid = create_ids[idx]
+            return (0, json.dumps({"structuredContent": {"id": mid, "word_count": 600}},
+                                  ensure_ascii=False),
+                    f"[成功] 已写入 memo id={mid}\n")
         return table.get((name, tool)) or table.get((name, "")) or (0, "", "")
 
     return _exec, calls
@@ -733,6 +745,238 @@ def test_update_content_loss_allowed():
         check("放行：照常发 memo_update", "memo_update" in tools(calls), tools(calls))
 
 
+# ── 批次（--batch）：预检全过才写 ────────────────────────────────────────────
+# 批量替代的是「N 张卡各跑一遍 dry-run、再各写一遍」那套手工流程，价值全押在一条
+# 不变量上：**预检阶段不写云，任何一张不过就一张都不写**。用例逐条钉住它，外加两个
+# 只在批量里才会出现的错：id 与草稿串位、预检后草稿被改动却仍拿旧凭证去写。
+
+def _drafts(tmp, n=3):
+    """造 n 份草稿 + 留痕（概念名与正文各不相同）。"""
+    rows = []
+    for i in range(1, n + 1):
+        draft = Path(tmp) / f"draft_b{i}.txt"
+        draft.write_text(f"#AI/测试\n概念{i}\n\n正文{i}", encoding="utf-8")
+        verify = Path(tmp) / f"verify_b{i}.json"
+        verify.write_text('{"searched": true, "terms": []}', encoding="utf-8")
+        rows.append((draft, verify))
+    return rows
+
+
+def _manifest(tmp, lines, name="batch.txt"):
+    path = Path(tmp) / name
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _manifest_rows(tmp, rows, extra=None):
+    return _manifest(tmp, [f"{d} | {v} | -" for d, v in rows] + (extra or []))
+
+
+def writes(calls):
+    return [c for c in calls if len(c) > 1 and Path(c[1]).name == "flomo_client.py"]
+
+
+def test_batch_precheck_blocks_all():
+    """第 2 张预检不过：一张都不写，第 3 张也不用再跑。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp)
+        man = _manifest_rows(tmp, rows)
+
+        calls = []
+
+        def exec_fn(cmd, timeout=600):
+            calls.append(list(cmd))
+            name = Path(cmd[1]).name
+            if name == "sop_gate.py":
+                if sum(1 for c in calls if Path(c[1]).name == "sop_gate.py") == 2:
+                    return 2, "", "[gate] 第 2 张概念名不合规"
+                return 0, "[gate] 通过", ""
+            if name == "validate_memo.py":
+                return 0, "[validate] 0 ERR", ""
+            return 0, '{"structuredContent": {"id": "X"}}', "[成功] 已写入 memo id=X\n"
+
+        code, _out, err = run(["--batch", str(man)], exec_fn)
+        check("批次预检：退出码 2", code == 2, code)
+        check("批次预检：一张都不写", writes(calls) == [], writes(calls))
+        check("批次预检：拦下后不再跑第 3 张",
+              sum(1 for c in calls if Path(c[1]).name == "sop_gate.py") == 2, names(calls))
+        check("批次预检：明说本批一张都没写", "本批一张都没写" in err, err)
+
+
+def test_batch_all_write():
+    """三张全过：逐张写、id 各自解析、复核与草稿逐张配对、汇总表可直接引用。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp)
+        man = _manifest_rows(tmp, rows)
+        exec_fn, calls = make_exec(create_ids=["M1", "M2", "M3"])
+        code, out, _err = run(["--batch", str(man)], exec_fn)
+
+        check("批次写入：退出码 0", code == 0, code)
+        check("批次写入：三张各写一次",
+              sum(1 for c in writes(calls) if c[2] == "memo_create") == 3, tools(calls))
+        verifies = [c for c in calls if Path(c[1]).name == "verify_card.py"]
+        pairs = [(v[v.index("--id") + 1], Path(v[v.index("--draft") + 1]).name)
+                 for v in verifies]
+        check("批次写入：复核的 id 与草稿逐张配对（防串位）",
+              pairs == [("M1", "draft_b1.txt"), ("M2", "draft_b2.txt"),
+                        ("M3", "draft_b3.txt")], pairs)
+        # 写入阶段重跑闸门 = 每张多一次云端检索。这条断言防的是「顺手加一道更保险」——
+        # 它会让批量的耗时退回手工逐张跑的规模，而批量存在的理由正是省掉这一遍。
+        check("批次写入：闸门只跑预检那一遍",
+              sum(1 for c in calls if Path(c[1]).name == "sop_gate.py") == 3, names(calls))
+        check("批次写入：汇总表给 id 与实测字数",
+              "[批次汇总] 计划 3 张 / 本次写入 3 张" in out
+              and "id=M1 600 字" in out, out[-500:])
+        check("批次写入：给出可直接引用的已写清单",
+              "[批次] 已写 id：M1 M2 M3" in out, out[-300:])
+
+
+def test_batch_dry_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp)
+        man = _manifest_rows(tmp, rows)
+        exec_fn, calls = make_exec()
+        code, out, _err = run(["--batch", str(man), "--dry-run"], exec_fn)
+        check("批次 dry-run：只预检不写", writes(calls) == [], writes(calls))
+        check("批次 dry-run：退出码 0 且报全部通过",
+              code == 0 and "3 张全部通过预检" in out, out[-200:])
+
+
+def test_batch_manifest_errors():
+    """清单写错一律在跑子脚本之前拦下：错在这里的代价是「跑到一半才发现」。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _drafts(tmp, 2)
+        cases = [
+            ("草稿不存在", [f"{tmp}/nope.txt | - | -"], "草稿不存在"),
+            ("留痕不存在",
+             [f"{rows[0][0]} | {tmp}/nope.json | -"], "验证留痕不存在"),
+            ("同一草稿两次",
+             [f"{rows[0][0]} | - | -", f"{rows[0][0]} | - | -"], "同一份草稿"),
+            ("同一 id 覆盖两次",
+             [f"{rows[0][0]} | - | M9", f"{rows[1][0]} | - | M9"], "覆盖同一张卡"),
+            ("字段过多", [f"{rows[0][0]} | - | - | 多余"], "字段过多"),
+        ]
+        for idx, (label, lines, want) in enumerate(cases):
+            man = _manifest(tmp, lines, name=f"m{idx}.txt")
+            exec_fn, calls = make_exec()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(err):
+                code = PB.CLI.cli_entry(
+                    lambda m=man, e=exec_fn: PB.main(["--batch", str(m)], exec_fn=e),
+                    errors=(PB.FC.FlomoError,), usage_code=1)
+            check(f"清单错（{label}）：退出码 1", code == 1, code)
+            check(f"清单错（{label}）：提示含「{want}」", want in err.getvalue(),
+                  err.getvalue())
+            check(f"清单错（{label}）：一个子脚本都没跑", calls == [], calls)
+
+
+def test_batch_rejects_single_draft_flags():
+    """`--batch` 与单卡选项同给：直接拒，不猜「作用于第一条」还是「当默认值」。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _drafts(tmp, 1)
+        man = _manifest_rows(tmp, rows)
+        exec_fn, calls = make_exec()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = PB.CLI.cli_entry(
+                lambda: PB.main(["--batch", str(man), "--draft", str(rows[0][0])],
+                                exec_fn=exec_fn),
+                errors=(PB.FC.FlomoError,), usage_code=1)
+        check("--batch + --draft：退出码 1", code == 1, code)
+        check("--batch + --draft：说清为何不能同给",
+              "--batch 与 --draft" in err.getvalue(), err.getvalue())
+        check("--batch + --draft：一个子脚本都没跑", calls == [], calls)
+
+
+def test_batch_partial_failure():
+    """第 2 张写入失败：已写的照实报告、不重发、不继续——重跑时只跑余下的。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp)
+        man = _manifest_rows(tmp, rows)
+
+        calls = []
+
+        def exec_fn(cmd, timeout=600):
+            calls.append(list(cmd))
+            name = Path(cmd[1]).name
+            tool = cmd[2] if len(cmd) > 2 and not cmd[2].startswith("--") else ""
+            if name in ("sop_gate.py", "validate_memo.py"):
+                return 0, "[ok]", ""
+            if name == "flomo_client.py" and tool == "memo_create":
+                n = sum(1 for c in calls if len(c) > 2 and c[2] == "memo_create")
+                if n == 2:
+                    return 1, "", "[失败] 超时"
+                return 0, '{"structuredContent": {"id": "M1"}}', "[成功] 已写入 memo id=M1\n"
+            return 0, VERIFY_JSON, ""
+
+        code, out, err = run(["--batch", str(man)], exec_fn)
+        check("批次中途失败：退出码 4", code == 4, code)
+        check("批次中途失败：create 只发了 2 次（失败那张不重发）",
+              sum(1 for c in calls if len(c) > 2 and c[2] == "memo_create") == 2,
+              tools(calls))
+        check("批次中途失败：不写第 3 张",
+              sum(1 for c in calls if Path(c[1]).name == "sop_gate.py") == 3, names(calls))
+        check("批次中途失败：汇总只报已写成的那张",
+              "[批次] 已写 id：M1" in out and "计划 3 张 / 本次写入 1 张" in out, out[-400:])
+        check("批次中途失败：给出续跑办法", "注释掉" in err, err)
+
+
+def test_batch_rechecks_changed_draft():
+    """预检之后草稿被改动：写入前必须重跑质检，不能拿旧凭证写没被核过的正文。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 2)
+        man = _manifest_rows(tmp, rows)
+
+        calls = []
+
+        def exec_fn(cmd, timeout=600):
+            calls.append(list(cmd))
+            name = Path(cmd[1]).name
+            tool = cmd[2] if len(cmd) > 2 and not cmd[2].startswith("--") else ""
+            if name in ("sop_gate.py", "validate_memo.py"):
+                return 0, "[ok]", ""
+            if name == "flomo_client.py" and tool == "memo_create":
+                n = sum(1 for c in calls if len(c) > 2 and c[2] == "memo_create")
+                if n == 1:  # 写第一张时改掉第二张的草稿
+                    rows[1][0].write_text("#AI/测试\n概念2\n\n正文2（预检后改过）",
+                                          encoding="utf-8")
+                return 0, '{"structuredContent": {"id": "M1"}}', "[成功] 已写入 memo id=M1\n"
+            return 0, VERIFY_JSON, ""
+
+        code, out, _err = run(["--batch", str(man)], exec_fn)
+        check("草稿改动：被拦下并重跑质检",
+              "草稿在预检之后被改动过" in out, out[-600:])
+        check("草稿改动：质检一共跑 3 次（2 次预检 + 1 次重跑）",
+              sum(1 for c in calls if Path(c[1]).name == "validate_memo.py") == 3,
+              names(calls))
+        check("草稿改动：重跑通过后仍写入", code == 0, code)
+
+
+def test_batch_update_route():
+    """清单第三段给 id 时走覆盖路：先回读确认目标卡，绝不误用 memo_create。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 1)
+        man = _manifest(tmp, [f"{rows[0][0]} | {rows[0][1]} | ABC"])
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card("概念1"), "")})
+        code, _out, _err = run(["--batch", str(man)], exec_fn)
+        check("批次覆盖：退出码 0", code == 0, code)
+        check("批次覆盖：先 batch_get 再 memo_update",
+              tools(calls)[2:4] == ["memo_batch_get", "memo_update"], tools(calls))
+        check("批次覆盖：不误用 memo_create",
+              "memo_create" not in tools(calls), tools(calls))
+        last = calls[-1]
+        check("批次覆盖：复核指向被覆盖的 id",
+              last[last.index("--id") + 1] == "ABC", last)
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -755,7 +999,11 @@ if __name__ == "__main__":
                test_update_content_loss_blocks,
                test_update_fragment_blocks,
                test_update_content_loss_allowed,
-               test_verify_json_unparsable, test_tail_marks_truncation):
+               test_verify_json_unparsable, test_tail_marks_truncation,
+               test_batch_precheck_blocks_all, test_batch_all_write,
+               test_batch_dry_run, test_batch_manifest_errors,
+               test_batch_rejects_single_draft_flags, test_batch_partial_failure,
+               test_batch_rechecks_changed_draft, test_batch_update_route):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
