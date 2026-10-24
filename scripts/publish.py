@@ -33,17 +33,19 @@
   python scripts/publish.py --batch _tmp/batch.txt                  # 多张卡：预检全过才写
   python scripts/publish.py --batch _tmp/batch.txt --dry-run        # 只预检，不写云
 
-批次清单每行 `草稿 | 留痕 | 覆盖 id`，后两段可省或用 `-` 占位，`#` 开头为注释：
+批次清单每行 `草稿 | 留痕 | 覆盖 id | rename`，后三段可省或用 `-` 占位，`#` 开头为注释；
+第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于单卡的 `--allow-rename`）：
 
   # 本轮三张
   _tmp/draft_zt_1.txt | _tmp/verify_zt_1.json | -
   _tmp/draft_zt_2.txt | _tmp/verify_zt_2.json | -
-  _tmp/draft_af_fix.txt | - | MjUzMzgyODYz
+  _tmp/draft_af_fix.txt | - | MjUzMzgyODYz | rename      # 改名并覆盖，两张卡同一批做
 
-批量的不变量只有一条：**先把 N 张全过预检（闸门 + 质检），任何一张不过则一张都不写**，
-全过之后才逐张写入并立刻复核。它替代的是「每张各跑一遍 `--dry-run`、再各写一遍」——
-那套流程里每张卡要跑两次闸门，而闸门内含查重两路云端检索，六张卡就是十二次。
+批量的不变量只有一条：**先把 N 张全过预检（闸门 + 质检 + 覆盖对象身份），任何一张不过则
+一张都不写**，全过之后才逐张写入并立刻复核。它替代的是「每张各跑一遍 `--dry-run`、再各
+写一遍」——那套流程里每张卡要跑两次闸门，而闸门内含查重两路云端检索，六张卡就是十二次。
 单卡不需要先 `--dry-run`：闸门不过本来就不写云，dry-run 只是把同一步白跑一遍。
+覆盖对象的 id 也在这里核：留到写入阶段才发现抄错，前面几张已经进云端了。
 
 退出码：
   0  写入成功且机器项复核全过
@@ -53,13 +55,14 @@
   4  写入失败（**未重发**，须先人工核实再决定）
   5  已写入但机器项复核失败（卡已写入，不改写、不重发，只报告）
   6  目标卡确认不通过（读不到该卡 / 读不到概念名 / 概念名与草稿不符），未写云；
-     后两种（读不到概念名、确属改名）可显式加 --allow-rename 放行
+     后两种（读不到概念名、确属改名）可显式加 --allow-rename 放行（批次里写清单第 4 段）
   7  草稿比原卡少了读数、或删出了词中间的断口（未写云）；确属有意重写加
      --allow-content-loss 放行
 
-批量的退出码含义同上，但 2/3 发生在预检阶段——此时**一张都没写**；4/5/6/7 若发生在
-第 k 张，则前 k−1 张已写入，输出里的 `[批次汇总]` 与 `[批次] 已写 id：` 就是重跑时的
-依据（把已成功的行注释掉再跑余下的，不要整批重来）。
+批量的退出码含义同上，但 2/3/6 若发生在预检阶段则**一张都没写**（6 也可能是预检时发现
+覆盖 id 抄错）；4/5/6/7 若发生在第 k 张写入时，则前 k−1 张已写入，输出里的 `[批次汇总]`
+（含未执行的行）与 `[批次] 已写 id：` 就是重跑时的依据——把已成功的行注释掉再跑余下的，
+不要整批重来。
 """
 from __future__ import annotations
 
@@ -467,17 +470,14 @@ def _write_snapshot(memo_id: str, before: str) -> Path | None:
         return None
 
 
-def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[int, str]:
-    """覆盖更新前确认目标卡就是草稿这一张——比对概念名，它是卡的身份。
+def _read_target(run, memo_id: str, step_title: str, prefix: str = "") -> tuple[int, str, bool]:
+    """读目标卡正文，返回 `(退出码, 正文, 是否被截断)`。
 
-    为什么必须读一次：建卡的错法是「多出一张卡」，还有机会合并或清空；覆盖的错法是
-    「把 A 的正文盖到 B 上」，B 的原文即刻消失、只能凭记忆或历史重建。而 id 是人工
-    抄进 `--update-id` 的，抄错一位指向的正是别张卡——写后逐字对账能发现不一致，但那时
-    损失已经造成。所以闸门放在写之前。
-
-    返回 `(退出码, 目标卡改前全文)`：同一个回包顺手当改前快照，不为 diff 再读一次。
+    读不到必须分三种说：请求失败、回包解析不出、确实没有这张卡。合成一句「取不到」会让
+    「id 抄错」与「网络抖了一下」看起来一样，而这两者的下一步完全相反——前者要改 id，
+    后者重跑即可，把前者当成后者就会反复重试一张根本不存在的卡。
     """
-    _step(f"③ 目标卡确认 memo_batch_get（{memo_id}）")
+    _step(prefix + step_title + f"（{memo_id}）")
     req = PAYLOAD.with_name("publish_target.json")
     req.parent.mkdir(parents=True, exist_ok=True)
     req.write_text(json.dumps({"ids": [memo_id]}, ensure_ascii=False), encoding="utf-8")
@@ -489,45 +489,70 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[i
                 print(_tail(stream), file=sys.stderr)
         print("[失败] 读不到目标卡，未写云——确认 --update-id 指向的卡存在、网络正常",
               file=sys.stderr)
-        return 6, ""
+        return 6, "", False
     # 回包解析走唯一实现（`FC.tool_data_or_none`）；解析不出与「没有这张卡」必须分开说：
     # 前者是协议形态问题（重试无用、更不能据此重建卡），后者才是 --update-id 抄错。
     sc = FC.tool_data_or_none(_cloud_json(out))
     if sc is None:
         print("[失败] 回读回包无法解析（既无 structuredContent，也无可解析的内层 JSON），"
               "未写云——先核对协议形态，别把它读成「卡不存在」", file=sys.stderr)
-        return 6, ""
+        return 6, "", False
     memos = sc.get("memos") or []
     if not memos:
         print("[失败] 回包里没有这张卡，未写云——确认 --update-id 是否正确", file=sys.stderr)
-        return 6, ""
-    before = memos[0].get("content", "") or ""
-    cloud = _head_lines(before, 2)
-    local = _head_lines(body, 2)
-    # 判身份的前提是**两侧都读得到概念名**。读不到就跳过比对，等于「回包形态一变、
-    # 唯一的止损点就静默失效」——而它失效时恰恰是最危险的时候（id 抄错即覆盖别人）。
-    # 故读不到一律阻塞，放行只留 --allow-rename 这一个显式口子。
-    if len(cloud) < 2 or len(local) < 2:
-        why = (f"目标卡只读到 {len(cloud)} 行非空内容，取不到概念名"
-               if len(cloud) < 2 else "草稿前两行没有概念名")
+        return 6, "", False
+    return 0, (memos[0].get("content", "") or ""), bool(memos[0].get("content_truncated"))
+
+
+def _check_identity(cloud_head: list[str], local_head: list[str], allow_rename: bool) -> int:
+    """比对目标卡与草稿的概念名，返回 0 放行 / 6 阻塞。**判据只写这一处。**
+
+    覆盖的错法是「把 A 的正文盖到 B 上」，B 的原文即刻消失、只能凭记忆重建；而 id 是人工
+    抄来的，抄错一位指向的正是别张卡。所以身份必须在写之前判。两个入口共用这段判据：
+    单卡写入前（`_confirm_target`）与批量预检期（`_precheck_target`）——两处各写一份必然
+    有一天分叉成「预检放行、写入阻塞」，人只会觉得工具在抖。
+
+    判身份的前提是**两侧都读得到概念名**。读不到就跳过比对，等于「回包形态一变、唯一的
+    止损点就静默失效」，而它失效时恰恰是最危险的时候。故读不到一律阻塞，放行只留改名授权。
+    """
+    if len(cloud_head) < 2 or len(local_head) < 2:
+        why = (f"目标卡只读到 {len(cloud_head)} 行非空内容，取不到概念名"
+               if len(cloud_head) < 2 else "草稿前两行没有概念名")
         if not allow_rename:
             print(f"[阻塞] {why}，无法确认目标卡就是草稿这一张——未写云。"
                   f"草稿缺概念名先按 H14 补；若该卡本身没有概念名、确属待改的卡，"
-                  f"显式加 --allow-rename 放行", file=sys.stderr)
-            return 6, ""
-        print(f"[放行] {why}——按 --allow-rename 跳过概念名比对")
-    else:
-        if cloud[1] != local[1]:
-            if not allow_rename:
-                print(f"[阻塞] 目标卡概念名「{cloud[1]}」与草稿「{local[1]}」不同——"
-                      f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
-                      f"确属改名请显式加 --allow-rename", file=sys.stderr)
-                return 6, ""
-            print(f"[放行] 概念名改名：「{cloud[1]}」→「{local[1]}」（--allow-rename）")
-        print(f"[通过] 目标卡概念名「{cloud[1]}」")
+                  f"显式授权改名放行（单卡 --allow-rename，批次清单第 4 段写 rename）",
+                  file=sys.stderr)
+            return 6
+        print(f"[放行] {why}——按改名授权跳过概念名比对")
+        return 0
+    if cloud_head[1] != local_head[1]:
+        if not allow_rename:
+            print(f"[阻塞] 目标卡概念名「{cloud_head[1]}」与草稿「{local_head[1]}」不同——"
+                  f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
+                  f"确属改名请显式授权（单卡 --allow-rename，批次清单第 4 段写 rename）",
+                  file=sys.stderr)
+            return 6
+        print(f"[放行] 概念名改名：「{cloud_head[1]}」→「{local_head[1]}」（改名授权）")
+        return 0
+    print(f"[通过] 目标卡概念名「{cloud_head[1]}」")
+    return 0
+
+
+def _confirm_target(run, memo_id: str, body: str, allow_rename: bool,
+                    prefix: str = "") -> tuple[int, str]:
+    """覆盖更新前确认目标卡就是草稿这一张，并把改前全文留作快照。
+
+    返回 `(退出码, 目标卡改前全文)`：同一个回包顺手当改前快照，不为 diff 再读一次。
+    """
+    code, before, truncated = _read_target(run, memo_id, "③ 目标卡确认 memo_batch_get", prefix)
+    if code:
+        return code, ""
+    if _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename):
+        return 6, ""
     # 回读被截断时，快照只是原文的前半截：拿它做 diff 会把「没取到的后半段」
     # 整片报成删除，比不报更坏（人会以为真的误删了）。故宁可显式放弃这一项。
-    if memos[0].get("content_truncated"):
+    if truncated:
         print("[告警] 目标卡回读被截断（content_truncated）——改前快照与差异比对"
               "均不可信，本轮跳过差异；改后须人工比对原卡，不要据「无删除行」"
               "判定没丢内容", file=sys.stderr)
@@ -538,9 +563,24 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool) -> tuple[i
     return 0, before
 
 
-def _create_card(run, body: str) -> tuple[int, str, bool]:
+def _precheck_target(run, memo_id: str, body: str, allow_rename: bool,
+                     prefix: str = "") -> int:
+    """批量预检期确认覆盖对象：取得到、且概念名对得上。
+
+    批量把「任何一张不过就一张都不写」当成不变量，这一步就得连 id 一起管——否则 id 抄错
+    要到写到那一张才暴露，而它前面几张已经进了云端，「一张都没写」的承诺就破了。这里只读
+    不落快照：写入前 `_confirm_target` 还会再确认一次，那次才是止损点（中间可能有变动）。
+    """
+    code, before, _truncated = _read_target(
+        run, memo_id, "③ 覆盖对象预检 memo_batch_get", prefix)
+    if code:
+        return code
+    return _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename)
+
+
+def _create_card(run, body: str, prefix: str = "") -> tuple[int, str, bool]:
     """建卡：只发一次。返回 (退出码, id, 是否幂等复用)。"""
-    _step("③ 建卡 memo_create（只发一次，失败不重发）")
+    _step(prefix + "③ 建卡 memo_create（只发一次，失败不重发）")
     PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
     PAYLOAD.write_text(json.dumps({"content": body}, ensure_ascii=False), encoding="utf-8")
     started = time.time()
@@ -574,9 +614,9 @@ def _create_card(run, body: str) -> tuple[int, str, bool]:
     return 4, "", False
 
 
-def _update_card(run, memo_id: str, body: str) -> tuple[int, str, bool]:
+def _update_card(run, memo_id: str, body: str, prefix: str = "") -> tuple[int, str, bool]:
     """覆盖更新：同样只发一次。返回 (退出码, id, 是否幂等复用) 以对齐建卡那路的签名。"""
-    _step(f"④ 覆盖更新 memo_update（{memo_id}，只发一次）")
+    _step(prefix + f"④ 覆盖更新 memo_update（{memo_id}，只发一次）")
     PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
     PAYLOAD.write_text(json.dumps({"id": memo_id, "content": body}, ensure_ascii=False),
                        encoding="utf-8")
@@ -678,7 +718,7 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
     before = ""
     if update_id:
         # 覆盖路：先确认目标卡（写前唯一一次读，兼作改前快照），再覆盖；两条都过了才写
-        code, before = _confirm_target(run, update_id, body, allow_rename)
+        code, before = _confirm_target(run, update_id, body, allow_rename, prefix)
         if code != 0:
             res["code"] = code
             return res
@@ -692,13 +732,13 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
                     res["code"] = 7
                     return res
                 print("[放行] 按 --allow-content-loss 带走上面这些丢失（回读时逐条认领）")
-        code, memo_id, reused = _update_card(run, update_id, body)
+        code, memo_id, reused = _update_card(run, update_id, body, prefix)
         if code != 0:
             res["code"] = code
             return res
     else:
         # 建卡路：只发一次
-        code, memo_id, reused = _create_card(run, body)
+        code, memo_id, reused = _create_card(run, body, prefix)
         if code != 0:
             res["code"] = code
             return res
@@ -744,31 +784,45 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
 
 
 def parse_manifest(path: Path) -> list[dict]:
-    """读批次清单：每行 `草稿 | 留痕 | 覆盖 id`，后两段可省或用 `-` 占位；`#` 开头为注释。
+    """读批次清单：每行 `草稿 | 留痕 | 覆盖 id | rename`，后三段可省或用 `-` 占位；
+    `#` 开头为注释。第 4 段只认 `rename`（覆盖既有卡时允许改概念名）。
 
-    这里只拦**确定是错**的三种：草稿或留痕不存在、同一份草稿出现两次、同一张卡被覆盖
-    两次。前者是路径写错，后两者都会直接造成重复卡（同一份草稿跑两遍）或「第二份草稿
-    盖掉第一份的结果」。**「概念名重复」不在这判**——它是语义，脚本分不清「同一件事」
-    与「同一主题的两层」；改为把概念名并排列出来让人一眼过，比造一条会误伤的判据有效。
+    这里只拦**确定是错**的几种：草稿或留痕不存在、同一份内容出现两次、同一张卡被覆盖
+    两次、rename 挂在没有覆盖 id 的行上。前两者都会直接造成重复卡。判重按**正文指纹**而
+    不是路径：复制一份草稿改个文件名再跑一遍，是这套流程里最像「新的一张卡」的错法，按
+    路径判会安静放过它。**「概念名重复」仍不判**——它是语义，脚本分不清「同一件事」与
+    「同一主题的两层」，改为把概念名并排列出来让人一眼过，比造一条会误伤的判据有效。
     """
     if not path.exists():
         raise CLI.UsageError(f"批次清单不存在：{path}")
     items: list[dict] = []
     seen_draft: dict[str, int] = {}
+    seen_content: dict[str, tuple[int, str]] = {}
     seen_id: dict[str, int] = {}
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) > 3:
+        if len(parts) > 4:
             raise CLI.UsageError(
-                f"清单第 {lineno} 行字段过多（{len(parts)} 段）：每行至多 `草稿 | 留痕 | 覆盖 id`")
-        while len(parts) < 3:
+                f"清单第 {lineno} 行字段过多（{len(parts)} 段）："
+                "每行至多 `草稿 | 留痕 | 覆盖 id | rename`")
+        while len(parts) < 4:
             parts.append("-")
         draft = "" if parts[0] in ("-", "") else parts[0]
         verify = "" if parts[1] in ("-", "") else parts[1]
         update_id = "" if parts[2] in ("-", "") else parts[2]
+        flag = parts[3]
+        if flag not in ("-", "", "rename"):
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行第 4 段只接受 `rename`（覆盖时允许改概念名），"
+                f"看到的是「{flag}」——不需要改名就留空或写 `-`")
+        allow_rename = flag == "rename"
+        if allow_rename and not update_id:
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行标了 rename 却没有覆盖 id：改名要拿既有概念名来比，"
+                "建卡没有可比的对象（建卡的概念名直接写在草稿第二行）")
         if not draft:
             raise CLI.UsageError(f"清单第 {lineno} 行缺少草稿路径")
         if not Path(draft).exists():
@@ -780,6 +834,17 @@ def parse_manifest(path: Path) -> list[dict]:
                 f"清单第 {lineno} 行与第 {seen_draft[draft]} 行是同一份草稿：{draft}"
                 "——同一份草稿跑两遍就是两张重复卡，先确认这一批要建几张")
         seen_draft[draft] = lineno
+        try:
+            digest = hashlib.sha256(Path(draft).read_bytes()).hexdigest()
+        except OSError as exc:
+            raise CLI.UsageError(f"清单第 {lineno} 行的草稿读不出来：{exc}")
+        if digest in seen_content:
+            other_line, other_draft = seen_content[digest]
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行与第 {other_line} 行正文完全相同（指纹 {digest[:12]}）："
+                f"{draft} 与 {other_draft}"
+                "——路径不同但内容一样（复制过？），跑两遍就是两张重复卡")
+        seen_content[digest] = (lineno, draft)
         if update_id:
             if update_id in seen_id:
                 raise CLI.UsageError(
@@ -787,39 +852,78 @@ def parse_manifest(path: Path) -> list[dict]:
                     "——第二遍会拿另一份草稿盖掉第一遍的结果")
             seen_id[update_id] = lineno
         items.append({"draft": draft, "verify": verify, "update_id": update_id,
-                      "lineno": lineno})
+                      "allow_rename": allow_rename, "lineno": lineno})
     if not items:
         raise CLI.UsageError(f"批次清单里没有任何条目：{path}")
     return items
 
 
-def _print_batch_summary(rows: list[tuple], *, total: int, failed: int) -> None:
-    """汇总表：收尾报告的第 2、4 项（实测字数、id、标签）直接照抄，不必再从散落输出里拣。"""
+def _print_batch_summary(rows: list[tuple], *, items: list[dict], failed: int) -> None:
+    """汇总表：收尾报告的第 2、4 项（实测字数、id、标签）直接照抄，不必再从散落输出里拣。
+
+    失败时**把没执行到的行也列出来**：只列已尝试的几张，人会以为这批就这么多，续跑时又
+    去数清单——而「哪些还没写」正是失败后唯一要知道的事。
+    """
     ok = [r for r in rows if r[2]["code"] == 0]
-    print(f"\n[批次汇总] 计划 {total} 张 / 本次写入 {len(ok)} 张"
+    print(f"\n[批次汇总] 计划 {len(items)} 张 / 本次写入 {len(ok)} 张"
           + (f" / 第 {failed} 张起未继续" if failed else ""))
     for i, it, res in rows:
         mark = "✓" if res["code"] == 0 else "✗"
+        wc = res.get("word_count")
+        wc_txt = f"{wc} 字 " if isinstance(wc, int) else ""
         if res.get("id"):
-            print(f"  {i} {mark} id={res['id']} {res.get('word_count')} 字 "
+            print(f"  {i} {mark} id={res['id']} {wc_txt}"
                   f"{' '.join(res.get('tags') or []) or '-'} {_concept(it['draft'])}")
         else:
             print(f"  {i} {mark} 未写入（退出码 {res['code']}） {_concept(it['draft'])}")
+    tried = {r[0] for r in rows}
+    for i, it in enumerate(items, 1):
+        if i not in tried:
+            print(f"  {i} - 未执行 {_concept(it['draft'])}")
     if ok:
         print("[批次] 已写 id：" + " ".join(r[2]["id"] for r in ok))
+
+
+def _print_batch_next(ids: list[str], do_verify: bool) -> None:
+    """收尾的下一步：批量最容易漏的正是「人读全文」——id 有 N 个，没人愿意手抄 N 次。"""
+    if not ids:
+        return
+    if do_verify:
+        print("[下一步] 人读全文自查（逐张；本行可直接粘进 bash）：")
+        print("         for id in " + " ".join(ids)
+              + "; do python scripts/verify_card.py --id $id --show-body; done")
+    print("[下一步] 复盘定向复查（连续建/改同一主题时用）：")
+    print("         for id in " + " ".join(ids)
+          + "; do python scripts/dedup.py --id $id; done")
 
 
 def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
               allow_content_loss: bool, do_verify: bool) -> int:
     n = len(items)
-    print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检），任何一张不过则一张都不写")
+    print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检"
+          f"{' + 覆盖对象' if any(it['update_id'] for it in items) else ''}），"
+          "任何一张不过则一张都不写")
     digests: dict[str, str] = {}
     for i, it in enumerate(items, 1):
-        code = precheck(run, it["draft"], it["verify"], skip_web, prefix=f"[{i}/{n}] ")
+        prefix = f"[{i}/{n}] "
+        code = precheck(run, it["draft"], it["verify"], skip_web, prefix=prefix)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
             return code
+        if it["update_id"]:
+            # 覆盖对象的 id 也是预检的一部分：留到写入阶段才发现抄错，前面几张已经进云端
+            try:
+                body = Path(it["draft"]).read_text(encoding="utf-8")
+            except OSError as exc:
+                print(f"[失败] 第 {i}/{n} 张草稿读不出来：{exc}——本批一张都没写",
+                      file=sys.stderr)
+                return 1
+            code = _precheck_target(run, it["update_id"], body, it["allow_rename"], prefix)
+            if code:
+                print(f"[失败] 第 {i}/{n} 张的覆盖对象未过预检（{it['update_id']}）"
+                      "——本批一张都没写", file=sys.stderr)
+                return code
         digests[it["draft"]] = _digest(Path(it["draft"]))
 
     if dry_run:
@@ -830,18 +934,20 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     rows: list[tuple] = []
     for i, it in enumerate(items, 1):
         res = write_one(run, it["draft"], it["verify"], update_id=it["update_id"],
+                        allow_rename=it["allow_rename"],
                         allow_content_loss=allow_content_loss, do_verify=do_verify,
                         expect_digest=digests.get(it["draft"], ""), prefix=f"[{i}/{n}] ")
         _print_diff(res.get("diff"))
         rows.append((i, it, res))
         if res["code"] != 0:
-            _print_batch_summary(rows, total=n, failed=i)
+            _print_batch_summary(rows, items=items, failed=i)
             print(f"[失败] 第 {i}/{n} 张写入或复核未过（退出码 {res['code']}）——"
                   "上面已写的卡**不改写不重发**；把清单里已成功的行注释掉，再跑余下的",
                   file=sys.stderr)
             return res["code"]
 
-    _print_batch_summary(rows, total=n, failed=0)
+    _print_batch_summary(rows, items=items, failed=0)
+    _print_batch_next([r[2]["id"] for r in rows], do_verify)
     return 0
 
 

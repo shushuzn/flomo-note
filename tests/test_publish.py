@@ -849,15 +849,24 @@ def test_batch_manifest_errors():
     """清单写错一律在跑子脚本之前拦下：错在这里的代价是「跑到一半才发现」。"""
     with tempfile.TemporaryDirectory() as tmp:
         rows = _drafts(tmp, 2)
+        # 复制一份草稿改个文件名：路径不同、正文相同。按路径判重会安静放过它，
+        # 而这正是「以为在写新的一张卡、其实把同一份内容又发了一遍」的错法。
+        dup = Path(tmp) / "draft_copy.txt"
+        dup.write_bytes(rows[0][0].read_bytes())
         cases = [
             ("草稿不存在", [f"{tmp}/nope.txt | - | -"], "草稿不存在"),
             ("留痕不存在",
              [f"{rows[0][0]} | {tmp}/nope.json | -"], "验证留痕不存在"),
             ("同一草稿两次",
              [f"{rows[0][0]} | - | -", f"{rows[0][0]} | - | -"], "同一份草稿"),
+            ("同内容不同路径",
+             [f"{rows[0][0]} | - | -", f"{dup} | - | -"], "正文完全相同"),
             ("同一 id 覆盖两次",
              [f"{rows[0][0]} | - | M9", f"{rows[1][0]} | - | M9"], "覆盖同一张卡"),
-            ("字段过多", [f"{rows[0][0]} | - | - | 多余"], "字段过多"),
+            ("字段过多", [f"{rows[0][0]} | - | - | rename | 多余"], "字段过多"),
+            ("第 4 段不是 rename", [f"{rows[0][0]} | - | - | yes"], "只接受 `rename`"),
+            ("rename 没有覆盖 id",
+             [f"{rows[0][0]} | - | - | rename"], "却没有覆盖 id"),
             # 续跑时把已成功的行全注释掉、剩下的也没了——真实会发生，提示要指回清单本身
             ("全是注释", ["# 都写完了", "# 没有条目"], "没有任何条目"),
         ]
@@ -925,6 +934,8 @@ def test_batch_partial_failure():
               sum(1 for c in calls if Path(c[1]).name == "sop_gate.py") == 3, names(calls))
         check("批次中途失败：汇总只报已写成的那张",
               "[批次] 已写 id：M1" in out and "计划 3 张 / 本次写入 1 张" in out, out[-400:])
+        # 只列已尝试的几张，人会以为这批就这么多；「还剩哪几张没写」正是失败后唯一要知道的
+        check("批次中途失败：汇总列出未执行的第 3 张", "3 - 未执行 概念3" in out, out[-400:])
         check("批次中途失败：给出续跑办法", "注释掉" in err, err)
 
 
@@ -961,7 +972,7 @@ def test_batch_rechecks_changed_draft():
 
 
 def test_batch_update_route():
-    """清单第三段给 id 时走覆盖路：先回读确认目标卡，绝不误用 memo_create。"""
+    """清单第三段给 id 时走覆盖路：预检期核一次身份、写入前再核一次，绝不误用 memo_create。"""
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
         rows = _drafts(tmp, 1)
@@ -970,13 +981,76 @@ def test_batch_update_route():
             {("flomo_client.py", "memo_batch_get"): (0, _other_card("概念1"), "")})
         code, _out, _err = run(["--batch", str(man)], exec_fn)
         check("批次覆盖：退出码 0", code == 0, code)
-        check("批次覆盖：先 batch_get 再 memo_update",
-              tools(calls)[2:4] == ["memo_batch_get", "memo_update"], tools(calls))
+        # 两次读同一张卡，职责不同：预检那次保证「整批不写」成立，写前那次是单张止损点
+        check("批次覆盖：batch_get 两次（预检 + 写前确认）",
+              tools(calls).count("memo_batch_get") == 2, tools(calls))
+        seq = tools(calls)
+        check("批次覆盖：update 之前紧邻一次 batch_get",
+              seq.index("memo_update") == len(seq) - 2
+              and seq[seq.index("memo_update") - 1] == "memo_batch_get", seq)
         check("批次覆盖：不误用 memo_create",
-              "memo_create" not in tools(calls), tools(calls))
+              "memo_create" not in seq, seq)
         last = calls[-1]
         check("批次覆盖：复核指向被覆盖的 id",
               last[last.index("--id") + 1] == "ABC", last)
+
+
+def test_batch_update_id_mismatch_blocks_all():
+    """覆盖 id 抄错：预检期就拦下，且一张都不写——「一张都不写」也包括过了预检的前几张。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 2)
+        man = _manifest(tmp, [f"{rows[0][0]} | {rows[0][1]} | -",
+                              f"{rows[1][0]} | {rows[1][1]} | ABC"])
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card("别的概念"), "")})
+        code, _out, err = run(["--batch", str(man)], exec_fn)
+        check("批次 id 抄错：退出码 6", code == 6, code)
+        check("批次 id 抄错：预检期拦下，没有 memo_update",
+              "memo_update" not in tools(calls), tools(calls))
+        check("批次 id 抄错：一张都没写（也没有 memo_create）",
+              "memo_create" not in tools(calls), tools(calls))
+        check("批次 id 抄错：说清疑似抄错", "疑似 id 抄错" in err, err)
+        check("批次 id 抄错：明说本批一张都没写", "本批一张都没写" in err, err)
+
+
+def test_batch_rename_column():
+    """清单第 4 段 rename：概念名不同也照写——这是批量改造存量卡的路，替代逐张 --allow-rename。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 1)
+        man = _manifest(tmp, [f"{rows[0][0]} | {rows[0][1]} | ABC | rename"])
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card("旧概念"), "")})
+        code, out, _err = run(["--batch", str(man)], exec_fn)
+        check("批次改名：退出码 0", code == 0, code)
+        check("批次改名：打印改名放行", "概念名改名" in out, out[-600:])
+        check("批次改名：确实覆盖了目标卡", "memo_update" in tools(calls), tools(calls))
+
+
+def test_batch_next_steps():
+    """收尾给逐张人读命令：批量最容易漏的就是这一项，而 N 个 id 没人愿意手抄 N 次。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp)
+        man = _manifest_rows(tmp, rows)
+        exec_fn, _calls = make_exec(create_ids=["M1", "M2", "M3"])
+        _code, out, _err = run(["--batch", str(man)], exec_fn)
+        check("批量收尾：给出逐张 --show-body 的循环",
+              "for id in M1 M2 M3; do python scripts/verify_card.py --id $id --show-body; "
+              "done" in out, out[-600:])
+        check("批量收尾：给出 dedup 定向复查",
+              "python scripts/dedup.py --id $id" in out, out[-400:])
+
+        # 复核被关掉时不提示跑 verify_card，也不该冒出「None 字」
+        man1 = _manifest(tmp, [f"{rows[0][0]} | {rows[0][1]} | -"], name="one.txt")
+        exec_fn, _calls = make_exec(create_ids=["N1"])
+        _c, out2, _e = run(["--batch", str(man1), "--no-verify-card"], exec_fn)
+        check("批量收尾：关了复核就不提示 verify_card",
+              "verify_card.py --id $id" not in out2 and "dedup.py --id $id" in out2,
+              out2[-500:])
+        check("批量收尾：没复核就不报字数（不打印 None）",
+              "None" not in out2, out2[-500:])
 
 
 if __name__ == "__main__":
@@ -1005,7 +1079,9 @@ if __name__ == "__main__":
                test_batch_precheck_blocks_all, test_batch_all_write,
                test_batch_dry_run, test_batch_manifest_errors,
                test_batch_rejects_single_draft_flags, test_batch_partial_failure,
-               test_batch_rechecks_changed_draft, test_batch_update_route):
+               test_batch_rechecks_changed_draft, test_batch_update_route,
+               test_batch_update_id_mismatch_blocks_all, test_batch_rename_column,
+               test_batch_next_steps):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
