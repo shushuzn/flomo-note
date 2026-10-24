@@ -478,6 +478,58 @@ def run_parse_options_cases():
         check(f"Opt 声明校验（{label}）", got == "ok", got)
 
 
+def run_usage_cases():
+    """参数解析的出口契约：写错参数要落成「用法码 2 + 一行提示」，不能是 traceback。
+
+    事故形状：`flomo_client.py memo_search 史载`（把关键词当 JSON 传）与
+    `{"keyword": …}`（参数名记错）都曾抛出 `JSONDecodeError` / MCP 参数错，
+    退出码 1——与「云端调用失败」同形，人会去查网络和 token。
+    判据取行为：`cli_entry` 返回 2，且提示指回参数而非云端。
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        good = Path(d) / "args.json"
+        good.write_text(json.dumps({"keywords": "史载"}), encoding="utf-8")
+        bad = Path(d) / "bad.json"
+        bad.write_text("{不是 JSON", encoding="utf-8")
+        arr = Path(d) / "arr.json"
+        arr.write_text("[1, 2]", encoding="utf-8")
+
+        for label, argv, want in [
+            ("无参数给空对象", ["memo_search"], {}),
+            ("行内 JSON", ["memo_search", '{"keywords": "史载"}'], {"keywords": "史载"}),
+            ("--file 读参数", ["memo_search", "--file", str(good)], {"keywords": "史载"}),
+        ]:
+            try:
+                got = FC._load_arguments(argv)
+            except Exception as exc:  # noqa: BLE001 — 抛错本身就是本项要抓的失败
+                got = f"抛了 {type(exc).__name__}"
+            check(f"参数解析（{label}）", got == want, got)
+
+        for label, argv in [
+            ("选项当 JSON 传", ["memo_search", "史载"]),
+            ("JSON 语法错", ["memo_search", '{"keywords":}']),
+            ("顶层不是对象", ["memo_search", "--file", str(arr)]),
+            ("--file 缺路径", ["memo_search", "--file"]),
+            ("--file 文件不存在", ["memo_search", "--file", str(Path(d) / "nope.json")]),
+            ("--file 内容非法", ["memo_search", "--file", str(bad)]),
+        ]:
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                # 用 FC 自己那份 cli_entry：本套用例按文件路径各载一份 cli_util，
+                # CU 与 FC 眼里的 UsageError 是两个类，拿 CU 的入口接不住 FC 的异常。
+                code = FC.cli_entry(lambda: FC._load_arguments(argv), errors=(FC.FlomoError,))
+            msg = buf.getvalue()
+            check(f"参数写错（{label}）落成用法码 2", code == 2, code)
+            # 提示必须指回参数：只要出现「云端/token/网络」就是又一次把人带偏
+            check(f"参数写错（{label}）提示指回参数",
+                  ("JSON" in msg or "用法" in msg or "文件" in msg)
+                  and "token" not in msg.lower(), msg.strip()[:90])
+
+
 if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
@@ -486,6 +538,7 @@ if __name__ == "__main__":
     run_tool_data_cases()
     run_parse_options_cases()
     run_error_contract_cases()
+    run_usage_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

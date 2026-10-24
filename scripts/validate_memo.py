@@ -647,6 +647,15 @@ def check(content):
     )
     source_bare = re.compile(r"(?<![依数根证占票单])(?:据|根据)\s*(?:报道|消息|通报|披露|介绍|外媒|港媒|台媒)\s*[，,：:，]?")
 
+    # 五、无主体的匿名出处引导语：「史载」「据载」「史书载」。
+    #    H15 写的是「匿名转述同样是来源」，但上面各支都要一个**来源主体**（机构/媒体名）
+    #    才认得出，这类引导语没有主体可匹配，于是整套穿过校验——本轮实测：
+    #    卡片正文写「史载大宴时殿前与廊下可坐三千人」，质检 0 错 0 警，回读全文才发现。
+    #    判据取**词本身**而不是后面的内容：这几个词在正文里只有「交代出处」一种用法，
+    #    不存在「概念自身的结构要点」这种豁免形态（对比「数据来源：」那种歧义词）。
+    #    守卫 `(?![入体荷])`：`历史载入`、`典籍载体`、`史载荷载` 是构词连读，不是引导语。
+    source_anon = re.compile(r"(?<![历文])(?:史载|史书载|史籍载|据载)(?![入体荷])")
+
     # 豁免：法条 / 党内法规 / 制度名称——「依据《中国共产党纪律处分条例》…」是处分决定的
     # 法定依据（事件自身程序要素），不是交代来源。命中即整行跳过来源检测。
     law_exempt = re.compile(
@@ -716,7 +725,7 @@ def check(content):
             continue
         hit = None
         for probe in (source_lead, source_bare, source_subj, source_act,
-                      source_media, source_lead_short):
+                      source_media, source_lead_short, source_anon):
             m = probe.search(s)
             if not m:
                 continue

@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from memo_util import concept_keywords, find_truncation, memo_signature  # noqa: E402
-from cli_util import cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
+from cli_util import UsageError, cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
 import net_util  # noqa: E402  出网通道与「请求是否已发出」的唯一实现
 
 ENDPOINT = "https://flomoapp.com/mcp"
@@ -455,6 +455,42 @@ def readback_check(client, memo_id, written):
     return True, f"回读一致（{len(b)} 字）"
 
 
+def _load_arguments(argv: list[str]) -> dict:
+    """读工具参数：**参数写错是用法错，不是云端失败**。
+
+    为什么单列这一层：每个工具的入参名各不相同（`memo_search` 要 `keywords`，
+    既不是 `keyword` 也不是 `query`），靠记忆敲必然写错。旧实现直接
+    `json.loads(argv[1])`，于是「把选项当 JSON 传」这种最常见的写错会抛
+    `JSONDecodeError`，走的是 traceback、退出码 1——与「云端调用失败」同形，
+    人会去查网络和 token，实际只是参数名写错。用法错要指回参数本身、按用法码结束。
+    """
+    if len(argv) < 2:
+        return {}
+    if argv[1] == "--file":
+        if len(argv) < 3:
+            raise UsageError("--file 缺少文件路径——写成 `--file <参数 JSON 文件的路径>`")
+        path = Path(argv[2])
+        if not path.exists():
+            raise UsageError(f"--file 指向的文件不存在：{path}")
+        raw = path.read_text(encoding="utf-8")
+    else:
+        raw = argv[1]
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise UsageError(
+            f"参数不是合法 JSON（第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}）。"
+            f"用法是 `{argv[0]} '{{\"参数名\": 值}}'`，参数名由各工具自定"
+            f"（memo_search 用 keywords、memo_create 用 content、memo_batch_get 用 ids），"
+            f"长正文改用 `--file <路径>`；不确定就直接 `{argv[0]}` 看用法"
+        ) from None
+    if not isinstance(parsed, dict):
+        raise UsageError(
+            f"参数必须是 JSON 对象，读到的是 {type(parsed).__name__}——"
+            f"写成 `'{{\"参数名\": 值}}'` 的形式")
+    return parsed
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -464,15 +500,12 @@ def main():
     argv = [a for a in raw_argv if a != "--brief"]
     if not argv or argv[0] in ("-h", "--help", "help"):
         return usage()
+    name = argv[0]
+    # 先判用法、再连云端：参数写错时不发握手请求，错误也更早落地
+    arguments = _load_arguments(argv)
     token, src = load_token()
     client = FlomoClient(token)
     client.init()
-    name = argv[0]
-    if len(argv) > 1 and argv[1] == "--file":
-        # 参数从 JSON 文件读（规避 PowerShell 中文环境把中文引号问题的双引号转成全角）
-        arguments = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
-    else:
-        arguments = json.loads(argv[1]) if len(argv) > 1 else {}
     if name in WRITE_TOOLS:
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
     # 写前最后一道闸：正文里若含截断占位符（`...[此处省略N字]...`），发出去就是把
