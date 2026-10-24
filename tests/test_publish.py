@@ -858,6 +858,8 @@ def test_batch_manifest_errors():
             ("同一 id 覆盖两次",
              [f"{rows[0][0]} | - | M9", f"{rows[1][0]} | - | M9"], "覆盖同一张卡"),
             ("字段过多", [f"{rows[0][0]} | - | - | 多余"], "字段过多"),
+            # 续跑时把已成功的行全注释掉、剩下的也没了——真实会发生，提示要指回清单本身
+            ("全是注释", ["# 都写完了", "# 没有条目"], "没有任何条目"),
         ]
         for idx, (label, lines, want) in enumerate(cases):
             man = _manifest(tmp, lines, name=f"m{idx}.txt")
