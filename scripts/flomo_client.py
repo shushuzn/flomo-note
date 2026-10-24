@@ -377,6 +377,12 @@ def _exact_content_dup(client, content):
 # 因此本地若本来就写了反斜杠，两侧都会被剥掉，不产生「本地多一个反斜杠」的假差异。
 _MD_ESCAPES = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|~<>])")
 
+# 平台把裸邮箱地址自动渲染成 Markdown 链接：`a@b.c` 存成 `[a@b.c](mailto:a@b.c)`。
+# 只还原「显示文本与 mailto 目标完全相同」这一形态——人写的 `[联系我](mailto:a@b.c)`
+# 显示文本不同，不会被吃掉；非 mailto 链接（手写 `[文](http://…)`）同样不碰。
+# 这类链接化不由写入方决定，逐字比对必然不等，会把「卡存对了」报成写失败。
+_AUTO_MAILTO = re.compile(r"\[([^\[\]\n]+)\]\(mailto:\1\)")
+
 
 def _norm_body(text):
     """回读比对用归一化：**平台自有的渲染差异一律不参与比对**。
@@ -397,6 +403,15 @@ def _norm_body(text):
     回读验收100% 误报失败**，把「卡存对了」报成「写失败」——检查形同虚设，
     还会诱使人忽略它。故比对前统一还原：只吃「反斜杠 + 元字符」这一形态。
 
+    三、**裸邮箱地址被自动链接化**。正文里写 `UUID@server.domain.local` 这类
+    Message-ID 格式示例，云端存回的是 `[UUID@server.domain.local](mailto:…)`——
+    实测那一行凭空多出 35 个字符（该地址 24 字符，链接语法本身 11 字符）。
+    这也是平台行为、写入方无从决定，故还原「显示文本 = mailto 目标」的自链接；
+    人写的 `[联系我](mailto:a@b.c)` 显示文本不同，照旧参与比对（口径见
+    `_AUTO_MAILTO`）。**写法上仍建议避开裸邮箱**：宽容只让这一处对账说得过去，
+    任何按原文比对的检查都得跟着加同样的特例；保持「写进去什么、存回来什么」
+    才是能一直成立的判据（写前提示见 `validate_memo.py` 的同名 WARN）。
+
     比对单位取「逐行还原转义、删去行内水平空白、再丢弃空行后的行序列」：
     **行界与所有非转义字符一律不宽容**——任何一行文字的增删改动、行序变化、
     错别字、公式内容改动都会判失败（卡片的分段结构由写前质检 `validate_memo.py`
@@ -405,7 +420,8 @@ def _norm_body(text):
     lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     kept = [ln for ln in lines if ln.strip()]
     return "\n".join(
-        re.sub(r"[ \t\u3000]+", "", _MD_ESCAPES.sub(r"\1", ln)) for ln in kept
+        re.sub(r"[ \t\u3000]+", "", _AUTO_MAILTO.sub(r"\1", _MD_ESCAPES.sub(r"\1", ln)))
+        for ln in kept
     )
 
 

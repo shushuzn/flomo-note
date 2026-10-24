@@ -102,6 +102,22 @@ def run_norm_cases():
           repr(FC._norm_body("(1 + |k|)^(-6)")))
     check("_norm_body 转义宽容不得掩盖非元字符被改",
           FC._norm_body("λ₀(P_k) ≥ c") != FC._norm_body("λ₀(P_k) ≥ d"))
+    # 平台把裸邮箱自动链接化（Message-ID 格式示例最常踩）：多出的是平台行为，
+    # 不过它就会把「卡存对了」报成写失败，人再重发一遍即覆盖。
+    check("_norm_body 自动 mailto 链接化不影响判定",
+          FC._norm_body("Exchange 为 UUID@server.domain.local")
+          == FC._norm_body("Exchange 为 [UUID@server.domain.local]"
+                           "(mailto:UUID@server.domain.local)"),
+          repr(FC._norm_body("Exchange 为 [UUID@server.domain.local]"
+                             "(mailto:UUID@server.domain.local)")))
+    # 宽容只给「显示文本 = 目标」这一形态：人写的链接照旧参与比对
+    check("_norm_body 显示文本不同的 mailto 链接不还原",
+          FC._norm_body("联系我") != FC._norm_body("[联系我](mailto:a@b.c)"))
+    check("_norm_body 非 mailto 链接不还原",
+          FC._norm_body("看这里") != FC._norm_body("[看这里](http://x.example)"))
+    check("_norm_body 链接化宽容不得掩盖链接之外的改动",
+          FC._norm_body("Connect 为 a@b.c")
+          != FC._norm_body("[Connect 为 c@b.c](mailto:c@b.c)"))
 
 
 def run_readback_cases():
