@@ -195,16 +195,24 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.config\opencode\skills\flom
 
 ## 技能注册（Qoder Desktop）
 
-Qoder 扫描 `C:\Users\35234\.qoder-cn\skills\<name>\SKILL.md`，同样是**目录联接**形态：
+Qoder 扫描 `<用户数据目录>\skills\<name>\SKILL.md`，同样是**目录联接**形态。本机有两个数据目录，
+各扫各的：
+
+| 数据目录 | 状态 |
+|---|---|
+| `C:\Users\35234\.qoder\` | **当前在用**（本会话的插件与技能清单即出自这里）；`skills\flomo-note` 联接已建好 |
+| `C:\Users\35234\.qoder-cn\` | 旧版数据，当前进程不读；联接仍在，指向同一仓库根，无需维护 |
 
 ```powershell
-cmd /c mklink /J "C:\Users\35234\.qoder-cn\skills\flomo-note" "D:\OpenClaw\flomo-note"
+New-Item -ItemType Junction -Path "C:\Users\35234\.qoder\skills\flomo-note" -Target "D:\OpenClaw\flomo-note"
 ```
 
+- 用 PowerShell 的 `New-Item`，**不用 `cmd /c mklink /J`**：在 Git Bash 里转调 `cmd` 时引号会被吞，
+  报「无效参数」；`New-Item` 在 PowerShell 与 Git Bash 下都可用。
 - 目标仍是**仓库根**，`scripts/`、`AGENTS.md`、`ENVIRONMENT.md` 一并进 resource base，
   `SKILL.md` 只定义一次；仓库挪位后删掉联接重跑上面一行即可。
 - 技能清单现采：建好联接即在会话的技能目录里出现，不必重启。
-- 验证：`Test-Path "C:\Users\35234\.qoder-cn\skills\flomo-note\SKILL.md"` 为 True，
+- 验证：`Test-Path "C:\Users\35234\.qoder\skills\flomo-note\SKILL.md"` 为 True，
   且 `cmp` 与仓库版逐字节一致；仓库 `git status` 不受影响。
 
 ---
