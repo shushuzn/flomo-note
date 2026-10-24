@@ -115,6 +115,19 @@ _VOID_TAGS = ("br", "hr", "img")
 # 不能按「含 http 就整行跳过」处理——那会让「来源: https://…」这类行彻底逃过来源检测。
 URL_IN_LINE = re.compile(r"https?://\S+")
 
+# 工具回包混入：改存量卡时若把 `dedup.py --ids` 或 `publish.py --batch` 的输出当成
+# 草稿中转，尾部的汇总行会一起写进正文。它不影响首行标签、概念名与各项形态，所有
+# 后续机械项照过——只有逐字 diff 或人读全文才发现。这几类串只可能来自工具回包，
+# 卡片正文里不会合法出现，故按正面模式直接判死（不写「除…之外」式的反面定义）。
+# 云端回读会把方括号转义成 `\[`，故括号两侧都允许可选反斜杠。
+_TOOL_ECHO_RES = (
+    (re.compile(r"\\?\[汇总\\?\]"), "dedup 汇总行"),
+    (re.compile(r"\\?\[批次汇总\\?\]"), "publish 批次汇总"),
+    (re.compile(r"\\?\[批次\\?\]\s*已写"), "publish 写后回显"),
+    (re.compile(r"=====\s*Mj[A-Za-z0-9]{8,}"), "dedup 卡片分隔行"),
+    (re.compile(r"全文（\s*\d+\s*/\s*\d+\s*张"), "dedup 全文表头"),
+)
+
 # 裸邮箱地址：云端会把裸地址自动链接化，存回 `[a@b.c](mailto:a@b.c)`。
 # `(?<!mailto:)` 排除已写在 mailto 链接里的地址——那种本来就要被「Markdown 链接」
 # 那条管，两条都报只会让人以为是两个问题。
@@ -234,6 +247,15 @@ def check(content):
     for mark in find_truncation(content):
         err(f"正文含截断占位符 {mark}：内容已缺失，须用 memo_batch_get 现取全文重写成稿"
             "（检索回包 memo_search / memo_recommended 都会把长正文中段挖掉）")
+
+    # 0b) 工具回包混入：与上一条同属「内容已被污染」，且同样对后续形态检查隐形
+    # （汇总行落在正文末尾，不改首行、不改概念名、行数也正常）。放在同一位置，
+    # 是让「内容坏了」先于「格式对不对」被报出来。
+    for pat, what in _TOOL_ECHO_RES:
+        m = pat.search(content)
+        if m:
+            err(f"正文混入工具回包（{what}）：{m.group(0)[:40]!r} —— "
+                "取全文请用 memo_batch_get 现取，不要把 dedup / publish 的输出当草稿中转")
 
     # 1) 首行标签段
     first = lines[0].strip()
