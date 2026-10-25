@@ -98,16 +98,23 @@ def collect_memos(c, tags, limit=50):
     看起来是「库里只有三成卡带切片」，实际可能是「有三簇根本没取到」。样本量
     偏小但输出正常，正是取证脚本最不该犯的错。
     """
-    seen, failed = {}, []
+    seen, failed, truncated = {}, [], []
     for t in tags:
         try:
+            got = 0
             for m in _result_memos(c.tool("memo_search", {"tag": t, "limit": limit})):
+                got += 1
                 if m.get("id") and m["id"] not in seen:
                     seen[m["id"]] = m
+            # 命中数正好等于 limit = 服务端按上限截断，这一簇还有卡没取到。
+            # 不报出来，占比的分母就是一个悄悄缩水的样本：看起来「只有 7% 带切片」，
+            # 实际可能是「大簇只看了前 50 张」。与取数失败同属样本完整性问题。
+            if got >= limit:
+                truncated.append(t)
         except Exception as e:
             print(f"[warn] 标签 {t!r} 失败：{e}", file=sys.stderr)
             failed.append(t)
-    return seen, failed
+    return seen, failed, truncated
 
 
 def main(argv=None, client=None):
@@ -130,13 +137,17 @@ def main(argv=None, client=None):
 
     # 按标签簇抽样：裸关键词检索召回低（实测单轮仅 43 张），改按 tag 逐簇取，
     # 覆盖足够大样本才能取证。
-    seen, failed = collect_memos(c, tags, ns["limit"])
+    seen, failed, truncated = collect_memos(c, tags, ns["limit"])
     ok_tags = len(tags) - len(failed)
     print(f"[scan] 取回卡片 {len(seen)} 张（{ok_tags}/{len(tags)} 个标签簇取数成功）",
           file=sys.stderr)
     if failed:
         print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
               f"本次样本量偏小，下面的占比只能当这批卡的占比，不是全库事实", file=sys.stderr)
+    if truncated:
+        print(f"[warn] {len(truncated)} 个标签簇命中数达到 --limit={ns['limit']}，"
+              f"被服务端截断：{', '.join(truncated)}——这些簇只看了前 {ns['limit']} 张，"
+              f"要全量请调大 --limit 或分批扫", file=sys.stderr)
 
     flagged = []
     for mid, m in seen.items():
@@ -157,7 +168,8 @@ def main(argv=None, client=None):
         out = Path(__file__).resolve().parent.parent / "_tmp" / "concept_scan.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(
-        {"total": len(seen), "failed_tags": failed, "flagged": [
+        {"total": len(seen), "failed_tags": failed, "truncated_tags": truncated,
+         "flagged": [
             {"id": m, "concept": n, "kinds": h} for m, n, h in flagged]},
         ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[out] {out}")

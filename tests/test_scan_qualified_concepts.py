@@ -99,14 +99,21 @@ def run_cases():
         "AI/Agent": [{"id": "m2", "content": card}],
     }
     c = FakeClient(by_tag)
-    seen, failed = Q.collect_memos(c, ["AI/RAG", "AI/Agent"])
+    seen, failed, truncated = Q.collect_memos(c, ["AI/RAG", "AI/Agent"])
     check("跨簇按 id 去重", sorted(seen) == ["m1", "m2"], sorted(seen))
     check("全部成功时失败簇为 0", failed == [], failed)
+    check("未达上限时不算截断", truncated == [], truncated)
 
     c2 = FakeClient(by_tag)
-    seen2, failed2 = Q.collect_memos(c2, ["AI/RAG", "AI/boom", "AI/Agent"])
+    seen2, failed2, _tr2 = Q.collect_memos(c2, ["AI/RAG", "AI/boom", "AI/Agent"])
     check("一簇失败不影响其余取回", sorted(seen2) == ["m1", "m2"], sorted(seen2))
     check("失败簇被计数报出（不许静默缩样本）", failed2 == ["AI/boom"], failed2)
+
+    # 命中数等于 limit = 服务端截断，分母缩水必须报出（与取数失败同属完整性问题）
+    big = {"AI/RAG": [{"id": f"b{i}", "content": card} for i in range(3)]}
+    c3 = FakeClient(big)
+    _s3, _f3, tr3 = Q.collect_memos(c3, ["AI/RAG"], limit=3)
+    check("命中数达到 limit 的簇被标为截断", tr3 == ["AI/RAG"], tr3)
 
 
 

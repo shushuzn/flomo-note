@@ -1053,6 +1053,20 @@ def test_batch_next_steps():
               "None" not in out2, out2[-500:])
 
 
+def test_precheck_echoes_concept():
+    """预检通过后必须回显第二行：质检只认词表内动词，写卡人得亲眼判一遍（H6b/H6d）。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d, _v = with_draft(Path(td), "#AI/测试\n某机首拆\n\n正文")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            PB._echo_concept(str(d))
+        out = buf.getvalue()
+    check("回显概念名", "某机首拆" in out, out[:120])
+    check("回显标签行", "#AI/测试" in out, out[:120])
+    check("提示删动词测试", "删动词测试" in out, out[:120])
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -1081,7 +1095,7 @@ if __name__ == "__main__":
                test_batch_rejects_single_draft_flags, test_batch_partial_failure,
                test_batch_rechecks_changed_draft, test_batch_update_route,
                test_batch_update_id_mismatch_blocks_all, test_batch_rename_column,
-               test_batch_next_steps):
+               test_batch_next_steps, test_precheck_echoes_concept):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
