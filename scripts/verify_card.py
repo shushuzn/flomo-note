@@ -22,7 +22,7 @@
     # 丢空行 / 还原转义 / 去行内水平空白）逐字比。不传草稿时只报数字，
     # 不假装对过账——「数字相等」曾靠两层平台差异相互抵消蒙对过（卡 37）。
   python scripts/verify_card.py --id MjYxMzk1MDg0 --show-body
-    # 打印云端全文（还原渲染层补的空行）。存在理由是那两条「须人读」项：
+    # 打印云端全文（还原渲染层补的空行）。存在理由是那几条「须人读」项：
     # 早先为了看一眼全文，要临时写一个 memo_batch_get 请求文件、再把 id 手抄进去、
     # 再用内联 python 抠 content——H5 明令 id 不手抄，而这一步每轮都做一次。
     # --show-body 把「回读 → 判定 → 摆出原文」收成一次调用，人读项就在手上这段里查。
@@ -54,6 +54,7 @@ PLACEHOLDER = re.compile(r"[〈〖＜]\s*M\d+\s*[〉〗＞]")
 HUMAN_JUDGMENT = [
     ("首尾是否同一事件", "跨事件拼装只有读懂内容才看得出，正则判不出"),
     ("是否串入他卡内容", "同名主题的近邻卡内容是否混入，需要与近邻卡比对"),
+    ("第二行是否为名词短语", "谓语的动词是开放词类，动作词表之外的动词质检判不出（见 H6b/H6d）"),
 ]
 
 STRUCT_LABELS = ("要点", "结构", "标签")
@@ -224,7 +225,7 @@ def main(argv=None) -> int:
     ap.add_argument("--draft", help="本地草稿路径；给了就追加与草稿的逐字比对（同写路径口径）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（供自动化消费）")
     ap.add_argument("--show-body", action="store_true",
-                    help="打印云端全文（还原渲染层补的空行），供两条「须人读」项当场核对；"
+                    help="打印云端全文（还原渲染层补的空行），供「须人读」项当场核对；"
                          "与 --json 不同时生效")
     args = ap.parse_args(argv)
 
@@ -283,7 +284,7 @@ def main(argv=None) -> int:
     for name, why in HUMAN_JUDGMENT:
         print(f"  ? {name}（{why}）")
     if args.show_body and body_text:
-        print("[云端全文——上面两条人读项就在这段里查]")
+        print("[云端全文——上面人读项就在这段里查]")
         for line in body_text.split("\n"):
             print(f"  {line}" if line.strip() else "")
     print("---")
