@@ -686,7 +686,27 @@ def precheck(run, draft: str, verify: str, skip_web: bool, prefix: str = "") -> 
               file=sys.stderr)
         return 3
     print("[通过] 质检 0 ERR")
+    # 把**即将写入的第二行**回显出来。存在理由：质检只拦得住动作词表内的谓语，
+    # 表外动词（首拆 / 中止 / 胜诉 / 发射 / 解雇…）一律绿灯，写卡人若没亲眼看过
+    # 这一行，就会以为「0 ERR」等于名字合规——真卡曾整批这样写出去。
+    _echo_concept(draft)
     return 0
+
+
+def _echo_concept(draft: str) -> None:
+    """回显草稿的标签行与概念名，并提示人判：第二行是名词短语吗（H6b/H6d）。"""
+    try:
+        lines = Path(draft).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    tag = next((l.strip() for l in lines if l.strip().startswith("#")), "")
+    body = [l.strip() for l in lines if l.strip()]
+    name = body[1] if len(body) > 1 else ""
+    print(f"[人判] 概念名：{name}")
+    if tag:
+        print(f"[人判] 标签行：{tag}")
+    print("[人判] 删动词测试：去掉动作词后是否仍是一个能独立站住的名词短语？"
+          "质检只认词表内动词，表外的一律判不出（H6b/H6d）")
 
 
 def write_one(run, draft: str, verify: str, *, update_id: str = "",
