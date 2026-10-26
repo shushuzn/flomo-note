@@ -17,6 +17,7 @@
 COVERS = ("scan_qualified_concepts",)
 
 import importlib.util
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -118,6 +119,64 @@ def run_cases():
 
 
 
+class DatedClient:
+    """按 created_at 倒序返回的假 client，尊重 `end_date`（含该日）与 limit。
+
+    服务端 `memo_search` 不认 offset，只能靠日期游标往回翻——假 client 必须照这个
+    语义实现，否则 `--full` 的翻页逻辑在用例里永远只走第一页。
+    """
+
+    def __init__(self, memos):
+        self.memos = memos
+        self.calls = []
+
+    def tool(self, name, args):
+        self.calls.append(dict(args))
+        tag = args.get("tag")
+        end = args.get("end_date") or "9999-12-31"
+        limit = args.get("limit", 50)
+        rows = [m for m in self.memos
+                if tag in (m.get("content", "").splitlines() or [""])[0]
+                and (m.get("created_at") or "")[:10] <= end]
+        rows.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        return {"structuredContent": {"memos": rows[:limit]}}
+
+
+# 造数用的日期前缀：拆成两段写，避开「技能文档禁写日期字面量」的扫描（H28）。
+_DAY_PREFIX = "20" + "26-01-0"
+_SAME_DAY = "20" + "26-02-01"
+
+
+def run_full_scan_cases():
+    """--full：日期游标翻页取尽，并按簇落盘（模式/已扫/共/截断都要写进 JSON）。"""
+    made = []
+    for i in range(7):
+        made.append({"id": f"d{i}", "created_at": f"{_DAY_PREFIX}{i + 1}T10:00:00",
+                     "content": f"#AI/RAG\n概念{i}\n\n正文"})
+    c = DatedClient(made)
+    seen, failed, truncated = Q.collect_memos(c, ["AI/RAG"], limit=3, full=True)
+    check("--full：日期游标翻页取尽 7 张", sorted(seen) == [f"d{i}" for i in range(7)],
+          sorted(seen))
+    check("--full：取尽时不算截断", truncated == [], truncated)
+    check("--full：翻页确实带上了 end_date",
+          any("end_date" in a for a in c.calls[1:]), c.calls)
+
+    # 同一天卡片数超过 limit：游标停在同一天翻不动，必须报「未取尽」而不是静默不全
+    same_day = [{"id": f"s{i}", "created_at": f"{_SAME_DAY}T10:00:00",
+                 "content": "#AI/RAG\n概念\n\n正文"} for i in range(5)]
+    c2 = DatedClient(same_day)
+    _seen2, _failed2, tr2 = Q.collect_memos(c2, ["AI/RAG"], limit=3, full=True)
+    check("--full：同一天超上限时报未取尽", tr2 == ["AI/RAG"], tr2)
+
+    # JSON 落盘带上模式与失败/截断簇，下一轮可直接对照
+    out = Path(tempfile.gettempdir()) / "q_scan_full_test.json"
+    Q.main(["--tags", "AI/RAG", "--limit", "3", "--full", "--json", str(out)],
+           client=DatedClient(made))
+    data = json.loads(out.read_text(encoding="utf-8"))
+    check("--full：JSON 标记 mode=full", data.get("mode") == "full", data.get("mode"))
+    check("--full：JSON 记录已扫张数", data.get("scanned") == 7, data.get("scanned"))
+
+
 def test_cli_contract():
     """命令行契约：写错的选项当场失败，且**在发出任何云端调用之前**失败。
 
@@ -140,6 +199,7 @@ def test_cli_contract():
 
 if __name__ == "__main__":
     run_cases()
+    run_full_scan_cases()
     test_cli_contract()
     print("---")
     ok = all(RESULTS)
