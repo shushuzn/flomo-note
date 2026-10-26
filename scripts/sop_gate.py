@@ -338,7 +338,7 @@ def _tag_tree_total_and_count(client):
     return total, tags or []
 
 
-def _check_dedup(client, sig, blockers, notes, tree=None):
+def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
     """⑤ 查重两路并查：memo_search 关键词扫 + tag_tree 同主标签细分比对。
 
     本函数只负责"两路都真的跑了、且结果被读到"；是否撞卡由调用方在
@@ -397,11 +397,13 @@ def _check_dedup(client, sig, blockers, notes, tree=None):
                 print(f"\n── {m.get('id')} | {concept_line}")
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
-        blockers.append(
-            f"查重命中 {len(all_hit_ids)} 张卡，闸门阻塞。"
-            f"必须先回读上述命中卡全文，判断是更新还是真的不同。"
-            f"如果是更新：改用 memo_update；如果确认是新概念：人工决策后再继续。"
-        )
+        # 更新已有卡时不阻塞（anchor_id就是要更新的卡）
+        if not anchor_id:
+            blockers.append(
+                f"查重命中 {len(all_hit_ids)} 张卡，闸门阻塞。"
+                f"必须先回读上述命中卡全文，判断是更新还是真的不同。"
+                f"如果是更新：改用 --update-id；如果确认是新概念：人工决策后再继续。"
+            )
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
@@ -587,7 +589,7 @@ def main():
                 "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
             )
     tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
-    dedup = _check_dedup(client, sig, blockers, notes, tree=tree)  # ⑤
+    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
     notes.append(

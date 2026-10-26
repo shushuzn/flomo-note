@@ -723,7 +723,7 @@ def _concept(draft: str) -> str:
     return heads[1] if len(heads) > 1 else "?"
 
 
-def precheck(run, draft: str, verify: str, skip_web: bool, prefix: str = "") -> int:
+def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "", prefix: str = "") -> int:
     """① 闸门 → ② 质检。返回 0 通过 / 2 闸门未过 / 3 质检 ERR。**不写云。**"""
     _step(prefix + "① 流程闸门 sop_gate")
     gate_cmd = [PY, str(SCRIPT_DIR / "sop_gate.py"), "--memo", draft]
@@ -731,6 +731,8 @@ def precheck(run, draft: str, verify: str, skip_web: bool, prefix: str = "") -> 
         gate_cmd += ["--verify", verify]
     if skip_web:
         gate_cmd.append("--skip-web")
+    if update_id:
+        gate_cmd += ["--anchor-id", update_id]
     code, out, err = run(gate_cmd)
     if out.strip():
         print(_tail(out))
@@ -1119,7 +1121,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         print(f"[失败] 草稿读不出来：{exc}", file=sys.stderr)
         return 1
 
-    code = precheck(run, draft, verify, skip_web)
+    code = precheck(run, draft, verify, skip_web, update_id=update_id)
     if code:
         return code
 
