@@ -60,9 +60,13 @@ def keywords_of_concept(concept, limit=2):
     """从**概念名本身**派生检索用短关键词（不经卡片结构解析）。
 
     背景：整行概念名含全角标点时 flomo 全文检索常返回 0，必须退到短核心词。
+    但太短会导致宽泛误命中（"小米SU7Ult"里的"小米"命中所有小米卡），
+    故优先取最长的连续中文段，其次取完整的英文/数字组合段，最后才是前8字兜底。
+
     产出（去重保序，截断到 limit 个）：
       1. 概念名内最长的连续中文段（≥4 字）
-      2. 概念名去除标点后的前 8 个字符
+      2. 概念名内最长的连续英文+数字段（≥3 字符，如 SU7 Ultra）
+      3. 概念名去除标点后的前 8 个字符（兜底）
 
     调用方常只握有概念名（如闸门拿到的是 `sig["concept"]`），故本函数直接
     接受概念名；`concept_keywords` 只负责从完整卡片里取概念名再转发。
@@ -70,9 +74,15 @@ def keywords_of_concept(concept, limit=2):
     if not isinstance(concept, str) or not concept.strip():
         return []
     kws = []
+    # 1. 最长连续中文段（≥4字）
     zh = re.findall(r"[\u4e00-\u9fff]{4,}", concept)
     if zh:
         kws.append(max(zh, key=len))
+    # 2. 最长连续英文+数字段（≥3字符，如 SU7、Ultra、GPT-6）
+    en = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-\. ]{2,}", concept)
+    if en:
+        kws.append(max(en, key=len).strip())
+    # 3. 去标点后前8字（兜底）
     clean = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", concept)
     if clean:
         kws.append(clean[:8])
