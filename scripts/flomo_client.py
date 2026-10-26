@@ -520,6 +520,17 @@ def main():
                 "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
             )
             return 4
+        # 自动还原 batch_get 读回时 flomo 存储层插入的 <br>：
+        # 读回的 content 里换行已被转成 <br>，若直接拼接写回会再叠一层，
+        # 变成 <br><br>（多余空行）。写前统一还原成换行，调用方无需手动清洗。
+        raw = arguments.get("content") or ""
+        if "<br" in raw:
+            cleaned = raw.replace("<br><br>", "\n\n").replace("<br>", "\n")
+            arguments["content"] = cleaned
+            sys.stderr.write(
+                f"[清洗] 正文含 {raw.count('<br')} 处 <br> 标签，已自动还原为换行"
+                f"（{len(raw)}→{len(cleaned)} 字符）。\n"
+            )
 
     # 幂等保护：memo_create 写前先查重，若云端已存在
     # 正文逐字相同的卡片则直接复用其 id、不再新建。无论 create 被触发几次，
