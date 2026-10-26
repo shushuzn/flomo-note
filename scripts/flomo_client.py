@@ -533,12 +533,12 @@ def main():
         # 检查最新凭证的签名是否匹配
         import json as _json
         latest_gate = _json.loads(gate_files[0].read_text(encoding="utf-8"))
-        gate_sig = latest_gate.get("signature", "")
-        if gate_sig != sig.get("sig", ""):
+        gate_sig = latest_gate.get("signature", {})
+        if gate_sig != sig:
             sys.stderr.write(
                 f"[失败] 最新闸门凭证签名与本次卡片不匹配，拒绝写云。\n"
                 f"  凭证签名：{gate_sig}\n"
-                f"  卡片签名：{sig.get('sig')}\n"
+                f"  卡片签名：{sig}\n"
                 f"  禁止用旧凭证写新卡。\n"
             )
             return 5
