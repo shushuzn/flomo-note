@@ -196,7 +196,7 @@ def run_cases():
     payload = json.loads(buf.getvalue())
     check("--json 可解析且退出码 0", rc == 0 and isinstance(payload, dict), buf.getvalue()[:120])
     check("--json 带出 check 结论", payload.get("ok") is True and len(payload.get("checks") or []) >= 5)
-    # 人工判断项随实现演进增加（如 2026-10-25 补入「第二行是否为名词短语」），
+    # 人工判断项随实现演进增加（如补入「第二行是否标识对象本身」），
     # 断言只钉住契约：非空、每项都带 why、且明确不含机械项。
     hj = payload.get("human_judgment") or []
     check("--json 标注人工判断项（不虚报覆盖）",
