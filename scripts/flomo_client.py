@@ -512,6 +512,16 @@ def main():
     # 「内容缺失」永久固化，而且写后回读逐字对账**发现不了**——它比的是同一段坏文本。
     # 故拦在发请求之前，退出码 4（内容受损，与网络失败、参数错、闸门不过都区分开）。
     if name in ("memo_create", "memo_update"):
+        # 强制闸门凭证：没有过sop_gate的卡片一律拒绝写云
+        # 防止绕过publish.py直接写云导致跳过查重/搜索/质检
+        gate_dir = Path(__file__).parent.parent / ".sop_gate"
+        if not gate_dir.exists() or not any(gate_dir.glob("*.json")):
+            sys.stderr.write(
+                "[失败] 未检测到SOP闸门凭证（.sop_gate/*.json），拒绝直接写云。\n"
+                "  必须先跑 scripts/sop_gate.py 或 scripts/publish.py 过闸门，再写云。\n"
+                "  禁止绕过闸门直接调用 flomo_client.py memo_create/memo_update。\n"
+            )
+            return 5
         marks = find_truncation(arguments.get("content") or "")
         if marks:
             sys.stderr.write(
