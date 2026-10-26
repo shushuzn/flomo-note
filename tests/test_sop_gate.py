@@ -252,8 +252,8 @@ def run_check_web_cases():
     # 6) 合法记录：一条按关键参数命中、一条按术语名命中 → 通过且计数正确
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓"},
-        {"term": "续航参数", "query": "qb", "conclusion": "WLTP 续航 430 公里"},
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓", "search_url": "https://example.com"},
+        {"term": "续航参数", "query": "qb", "conclusion": "WLTP 续航 430 公里", "search_url": "https://example.com"},
     ]}), WEB_BODY, b, n)
     check("_check_web 合法记录通过",
           b == [] and got["searched"] is True and got["term_count"] == 2, str(b))
@@ -269,7 +269,7 @@ def run_check_web_cases():
     for bad_val in ("no", "false", 1, 0, "true"):
         b, n = [], []
         GATE._check_web(_verify_file({"searched": bad_val, "terms": [
-            {"term": "某测试概念名", "query": "q", "conclusion": "确认为该概念的标准称谓"}]}),
+            {"term": "某测试概念名", "query": "q", "conclusion": "确认为该概念的标准称谓", "search_url": "https://example.com"}]}),
             WEB_BODY, b, n)
         check(f"_check_web searched={bad_val!r} 判阻塞",
               any("必须为布尔 true" in x for x in b))
@@ -279,7 +279,7 @@ def run_check_web_cases():
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
         {"term": "某参数", "query": "q",
-         "conclusion": "该车 WLTP 续航 500 公里，起售价 9,999 欧元"}]}), WEB_BODY, b, n)
+         "conclusion": "该车 WLTP 续航 500 公里，起售价 9,999 欧元", "search_url": "https://example.com"}]}), WEB_BODY, b, n)
     check("_check_web 结论关键参数未落正文判阻塞",
           any("一个都没落" in x for x in b), str(b))
     check("_check_web 未落条目在凭证里如实记为未命中",
@@ -288,7 +288,7 @@ def run_check_web_cases():
     # 10) 结论关键参数已落正文 → 通过，且凭证记下命中项
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 430 公里"}]}),
+        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 430 公里", "search_url": "https://example.com"}]}),
         WEB_BODY, b, n)
     check("_check_web 结论关键参数已落正文通过",
           b == [] and bool(got["landed"][0]["matched"]), str(b))
@@ -296,14 +296,14 @@ def run_check_web_cases():
     # 11) 无数字的评级结论（五星）同属关键参数，未落正文照样阻塞
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某评级", "query": "q", "conclusion": "获 Euro NCAP 五星安全评级"}]}),
+        {"term": "某评级", "query": "q", "conclusion": "获 Euro NCAP 五星安全评级", "search_url": "https://example.com"}]}),
         WEB_BODY, b, n)
     check("_check_web 星级结论未落正文判阻塞", any("一个都没落" in x for x in b), str(b))
 
     # 12) 纯命名结论：按术语名比对，不在正文即阻塞
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某无关术语", "query": "q", "conclusion": "确认为标准称谓"}]}),
+        {"term": "某无关术语", "query": "q", "conclusion": "确认为标准称谓", "search_url": "https://example.com"}]}),
         WEB_BODY, b, n)
     check("_check_web 纯命名结论术语名未落正文判阻塞",
           any("找不到落点" in x for x in b), str(b))
@@ -311,7 +311,7 @@ def run_check_web_cases():
     # 13) in_body 显式落点：不存在 / 等于术语本身都要阻塞，真实落点才放行
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["正文里没有的句子"]}]}),
+        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["正文里没有的句子"], "search_url": "https://example.com"}]}),
         WEB_BODY, b, n)
     check("_check_web in_body 落点不在正文判阻塞",
           any("在卡正文中不存在" in x for x in b), str(b))
@@ -319,21 +319,21 @@ def run_check_web_cases():
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [
         {"term": "某测试概念名", "query": "q", "conclusion": "c",
-         "in_body": ["某测试概念名"]}]}), WEB_BODY, b, n)
+         "in_body": ["某测试概念名"], "search_url": "https://example.com"}]}), WEB_BODY, b, n)
     check("_check_web in_body 落点等于术语本身判阻塞",
           any("无信息量" in x for x in b), str(b))
 
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [
         {"term": "某参数", "query": "q", "conclusion": "c",
-         "in_body": ["WLTP 续航 430 公里"]}]}), WEB_BODY, b, n)
+         "in_body": ["WLTP 续航 430 公里"], "search_url": "https://example.com"}]}), WEB_BODY, b, n)
     check("_check_web in_body 落点真实存在则放行", b == [], str(b))
 
     # 14) not_in_body 显式豁免：放行，但豁免理由必须随凭证留痕（可审计）
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
         {"term": "某无关参数", "query": "q", "conclusion": "WLTP 续航 500 公里",
-         "not_in_body": "该参数与卡片主题无关，按 H13 不并入"}]}), WEB_BODY, b, n)
+         "not_in_body": "该参数与卡片主题无关，按 H13 不并入", "search_url": "https://example.com"}]}), WEB_BODY, b, n)
     check("_check_web not_in_body 显式豁免放行且留痕",
           b == [] and got["landed"][0]["exempt"], str(b) + str(got["landed"]))
 
@@ -353,9 +353,9 @@ def run_check_web_cases():
     #     与凭证内容相反——不阻塞写入，却让审计文案说谎。
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["WLTP 续航 430 公里"]},
-        {"term": "某价格", "query": "q", "conclusion": "c", "in_body": ["起售价 30,000 欧元"]},
-        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "与主题无关"},
+        {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["WLTP 续航 430 公里"], "search_url": "https://example.com"},
+        {"term": "某价格", "query": "q", "conclusion": "c", "in_body": ["起售价 30,000 欧元"], "search_url": "https://example.com"},
+        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "与主题无关", "search_url": "https://example.com"},
     ]}), SUMMARY_BODY, b, n)
     summary = next((x for x in n if x.startswith("验证·")), "")
     landed_true = sum(1 for r in got["landed"] if r.get("landed"))
@@ -371,9 +371,9 @@ def run_check_web_cases():
     # 17) 每一条落点审计记录都必须显式带 landed 布尔（计数唯一依据）
     b, n = [], []
     got = GATE._check_web(_verify_file({"searched": True, "terms": [
-        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 500 公里"},          # 未落
-        {"term": "某参数2", "query": "q", "conclusion": "WLTP 续航 430 公里"},          # 已落
-        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "无关"}, # 豁免
+        {"term": "某参数", "query": "q", "conclusion": "WLTP 续航 500 公里", "search_url": "https://example.com"},          # 未落
+        {"term": "某参数2", "query": "q", "conclusion": "WLTP 续航 430 公里", "search_url": "https://example.com"},          # 已落
+        {"term": "某无关参数", "query": "q", "conclusion": "c", "not_in_body": "无关", "search_url": "https://example.com"}, # 豁免
     ]}), WEB_BODY, b, n)
     check("每条审计记录都显式带 landed 布尔",
           all(isinstance(r.get("landed"), bool) for r in got["landed"]),

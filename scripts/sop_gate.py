@@ -470,6 +470,9 @@ def _check_web(verify_path, body, blockers, notes):
         if not (t.get("term") and t.get("conclusion")):
             blockers.append(f"验证记录条目缺 term/conclusion：{t}")
             continue
+        if not t.get("search_url"):
+            blockers.append(f"术语「{t.get('term')}」缺 search_url——必须提供真实搜索来源URL，禁止凭空写conclusion")
+            continue
         landed.append(_check_term_landed(t, body, blockers))
     # 计数只看分支自己申报的 landed（见 _landed_record），不按键名猜——
     # 否则新增分支一改键名就静默漏计，汇总行会与凭证内容相反。
