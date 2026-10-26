@@ -397,6 +397,11 @@ def _check_dedup(client, sig, blockers, notes, tree=None):
                 print(f"\n── {m.get('id')} | {concept_line}")
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
+        blockers.append(
+            f"查重命中 {len(all_hit_ids)} 张卡，闸门阻塞。"
+            f"必须先回读上述命中卡全文，判断是更新还是真的不同。"
+            f"如果是更新：改用 memo_update；如果确认是新概念：人工决策后再继续。"
+        )
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
