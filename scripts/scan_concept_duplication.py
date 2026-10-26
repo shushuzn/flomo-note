@@ -91,7 +91,11 @@ def main(argv=None, client=None):
     else:
         c = client
     # 标签解析与取卡逻辑同源（scan_qualified_concepts），不另写第二份实现。
-    seen, failed = collect_memos(c, tags, ns["limit"])
+    seen, failed, truncated = collect_memos(c, tags, ns["limit"])
+    if truncated:
+        print(f"[warn] {len(truncated)} 个标签簇只取到最新 {ns['limit']} 张"
+              f"（{', '.join(truncated)}）——同名簇的结论只覆盖这批卡，要全量请改用"
+              "scan_qualified_concepts.py --full", file=sys.stderr)
     if failed:
         print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
               f"下面的同名簇只在已取到的卡里成立，不代表其余簇没有问题", file=sys.stderr)
