@@ -16,7 +16,7 @@
 
 用法（参数与 argparse 实现保持一致，改动其一必须同步另一处）：
   python sop_gate.py --memo <正文路径> --verify <验证记录JSON>
-  python sop_gate.py --memo <正文路径> --skip-web        # 非术语卡，显式声明无需第 2 步验证
+  python sop_gate.py --memo <正文路径> --skip-web --skip-reason "理由"  # 非术语卡，显式声明无需网络验证
   python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
   python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
   python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
