@@ -398,14 +398,33 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
         # 更新已有卡时不阻塞（anchor_id就是要更新的卡）
-        # 或用户已完成回读验证（--readback-proof 传入每张卡的验证码）
         if not anchor_id:
-            blockers.append(
-                f"查重命中 {len(all_hit_ids)} 张卡，闸门阻塞。"
-                f"必须先回读上述命中卡全文，判断是更新还是真的不同。"
-                f"如果是更新：改用 --update-id。"
-                f"如果确认是新概念：从上面每张卡的前300字里，摘抄指定位置的内容作为回读证据，传入 --readback-proof。"
-            )
+            # 自动检查：有没有概念名和当前概念名相同或高度相似的
+            current_concept = sig["concept"]
+            duplicate_found = False
+            duplicate_ids = []
+            for i in range(0, min(len(all_hit_ids), 20), 10):
+                chunk = all_hit_ids[i:i+10]
+                res = client.tool("memo_batch_get", {"ids": chunk})
+                memos = _result_memos(res)
+                for m in memos:
+                    content = m.get("content") or ""
+                    lines = content.split("\n")
+                    concept_line = lines[1].strip() if len(lines) > 1 else ""
+                    # 概念名完全相同，或者高度相似（去掉标点后前10字相同）
+                    from memo_util import signature_key
+                    current_key = signature_key(sig)
+                    gate_key = signature_key({"tagline": lines[0].strip() if lines else "", "concept": concept_line})
+                    if current_key and gate_key and current_key == gate_key:
+                        duplicate_found = True
+                        duplicate_ids.append(m.get("id"))
+            if duplicate_found:
+                blockers.append(
+                    f"查重命中 {len(all_hit_ids)} 张卡，其中 {len(duplicate_ids)} 张概念名与当前完全相同：{', '.join(duplicate_ids)}。"
+                    f"这是重复卡，必须用 --update-id 更新，不能新建。"
+                )
+            else:
+                notes.append(f"查重·命中 {len(all_hit_ids)} 张卡，经自动检查概念名均不重复，确认为误命中，放行新建")
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 

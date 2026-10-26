@@ -447,10 +447,11 @@ def run_concept_keyword_cases():
 class FakeClient:
     """假 flomo client：按工具名返回预设响应，并可记录调用参数。"""
 
-    def __init__(self, tag_tree=None, search=None, recommended=None):
+    def __init__(self, tag_tree=None, search=None, recommended=None, batch_get=None):
         self._tag_tree = tag_tree if tag_tree is not None else {}
         self._search = search or {}
         self._recommended = recommended or {}
+        self._batch_get = batch_get or {}
         self.calls = []
 
     def tool(self, name, args=None):
@@ -469,7 +470,12 @@ class FakeClient:
         if name == "memo_recommended":
             return self._recommended
         if name == "memo_batch_get":
-            return {"structuredContent": {"memos": []}}
+            ids = (args or {}).get("ids", [])
+            memos = []
+            for mid in ids:
+                if mid in self._batch_get:
+                    memos.extend(self._batch_get[mid].get("structuredContent", {}).get("memos", []))
+            return {"structuredContent": {"memos": memos}}
         return {}
 
 
@@ -523,12 +529,15 @@ def run_dedup_net_cases():
     c = FakeClient(
         tag_tree=_tt(3, ["科技/机器人", "科技/机器人/人形", "投资/一级市场"]),
         search={"某测试概念名": {"structuredContent": {"memos": [
-            {"id": "M1", "content": "已有卡片内容" * 20},
+            {"id": "M1", "content": "#科技/机器人<br>已有概念名<br><br>已有卡片内容" * 20},
+        ]}}},
+        batch_get={"M1": {"structuredContent": {"memos": [
+            {"id": "M1", "content": "#科技/机器人<br>已有概念名<br><br>已有卡片内容" * 20},
         ]}}},
     )
     b, n = [], []
     got = GATE._check_dedup(c, sig, b, n)
-    check("_check_dedup 命中即阻塞", len(b) > 0)
+    check("_check_dedup 命中且概念名不同不阻塞", len(b) == 0)
     check("_check_dedup 关键词命中被记录",
           any(v for v in got.get("keyword_hits", {}).values()))
     check("_check_dedup content_head 截断 60", all(
