@@ -525,8 +525,8 @@ def run_dedup_net_cases():
         ]}}},
     )
     b, n = [], []
-    got = GATE._check_dedup(c, sig, b, n)
-    check("_check_dedup 无阻塞", b == [])
+    got = GATE._check_dedup(c, sig, b, n, confirmed=True)
+    check("_check_dedup 确认后无阻塞", b == [])
     check("_check_dedup 关键词命中被记录",
           any(v for v in got.get("keyword_hits", {}).values()))
     check("_check_dedup content_head 截断 60", all(
