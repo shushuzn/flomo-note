@@ -599,6 +599,10 @@ def main():
             sys.stderr.write(f"[失败] 回读验收未过：{detail}\n")
             return 1
         sys.stderr.write(f"[验收] {detail}\n")
+        # 自动清理旧凭证：只留最新5个，防止堆积导致被旧凭证绕过
+        all_gates = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old_gate in all_gates[5:]:
+            old_gate.unlink(missing_ok=True)
     return 0
 
 
