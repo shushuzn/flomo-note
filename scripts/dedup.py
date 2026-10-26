@@ -117,11 +117,15 @@ def fetch_full(client: FlomoClient, ids: list[str], max_full: int) -> None:
                 print(f"   [告警] 本批未取到 id={mid}（不重发，须人工核对）")
         for m in memos:
             tags = m.get("tags") or []
+            content = m.get("content") or ""
+            # 第二行是概念名，打印在 ===== 行里，即使只 grep ===== 也能看到概念名
+            lines = content.split("\n")
+            concept = lines[1] if len(lines) > 1 else "(无概念名行)"
             print(
                 f"\n===== {m.get('id')} | {m.get('word_count')} 字 | "
-                f"{','.join(tags) if isinstance(tags, list) else tags}"
+                f"{','.join(tags) if isinstance(tags, list) else tags} | {concept}"
             )
-            print(m.get("content") or "")
+            print(content)
 
 
 def main(argv: list[str] | None = None, client=None) -> int:
