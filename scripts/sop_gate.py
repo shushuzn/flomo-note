@@ -511,7 +511,8 @@ def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--memo", required=True, help="卡片正文文件路径")
     ap.add_argument("--verify", help="第 2 步网络搜索验证记录 JSON 路径")
-    ap.add_argument("--skip-web", action="store_true", help="显式声明非术语卡，无需网络验证")
+    ap.add_argument("--skip-web", action="store_true", help="显式声明非术语卡，无需网络验证（必须配合 --skip-reason）")
+    ap.add_argument("--skip-reason", default="", help="跳过网络验证的理由（--skip-web 必填）")
     ap.add_argument("--out", help="凭证输出路径（默认 .sop_gate/<signature>.json）")
     ap.add_argument("--anchor-id", help="可选：本卡 id（更新场景下可作 memo_recommended 锚点）")
     ap.add_argument(
@@ -533,8 +534,11 @@ def main():
 
     # ② 验证
     if args.skip_web:
-        web = {"web_skipped": True}
-        notes.append("验证·调用方显式声明无需网络验证（--skip-web）")
+        if not args.skip_reason.strip():
+            blockers.append("--skip-web 必须配合 --skip-reason 写明跳过理由；产品名/技术名/机构名/政策名一律不得跳过搜索")
+        else:
+            web = {"web_skipped": True, "skip_reason": args.skip_reason}
+            notes.append(f"验证·调用方显式声明无需网络验证（--skip-web，理由：{args.skip_reason}）")
     else:
         web = _check_web(args.verify, content, blockers, notes)
 
