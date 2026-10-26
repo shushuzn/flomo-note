@@ -18,7 +18,6 @@
   python sop_gate.py --memo <正文路径> --verify <验证记录JSON>
   python sop_gate.py --memo <正文路径> --skip-web --skip-reason "理由"  # 非术语卡，显式声明无需网络验证
   python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
-  python sop_gate.py --memo <正文路径> --verify <JSON> --confirmed-new "理由"  # 已回读所有命中卡确认是误命中，本卡是真新概念
   python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
   python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
 
@@ -339,7 +338,7 @@ def _tag_tree_total_and_count(client):
     return total, tags or []
 
 
-def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None, confirmed_new=""):
+def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
     """⑤ 查重两路并查：memo_search 关键词扫 + tag_tree 同主标签细分比对。
 
     本函数只负责"两路都真的跑了、且结果被读到"；是否撞卡由调用方在
@@ -399,15 +398,14 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None, confir
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
         # 更新已有卡时不阻塞（anchor_id就是要更新的卡）
-        # 或用户已声明--confirmed-new（回读所有命中卡确认都是误命中）
-        if not anchor_id and not confirmed_new:
+        # 或用户已完成回读验证（--readback-proof 传入每张卡的验证码）
+        if not anchor_id:
             blockers.append(
                 f"查重命中 {len(all_hit_ids)} 张卡，闸门阻塞。"
                 f"必须先回读上述命中卡全文，判断是更新还是真的不同。"
-                f"如果是更新：改用 --update-id；如果确认是新概念：加 --confirmed-new \"理由\"。"
+                f"如果是更新：改用 --update-id。"
+                f"如果确认是新概念：从上面每张卡的前300字里，摘抄指定位置的内容作为回读证据，传入 --readback-proof。"
             )
-        elif confirmed_new:
-            notes.append(f"查重·已人工确认新概念（理由：{confirmed_new}）")
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
@@ -549,12 +547,6 @@ def main():
     ap.add_argument("--out", help="凭证输出路径（默认 .sop_gate/<signature>.json）")
     ap.add_argument("--anchor-id", help="可选：本卡 id（更新场景下可作 memo_recommended 锚点）")
     ap.add_argument(
-        "--confirmed-new",
-        default="",
-        metavar="REASON",
-        help="声明已回读所有命中卡全文，确认均为误命中（全文搜索宽泛词导致），本卡是真的新概念。理由会写进凭证。",
-    )
-    ap.add_argument(
         "--allow-no-gate",
         metavar="REASON",
         help="显式授权本卡在 validate_memo.py 侧可降级闸门（仅限批量处理历史卡）；"
@@ -599,7 +591,7 @@ def main():
                 "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
             )
     tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
-    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id, confirmed_new=args.confirmed_new)  # ⑤
+    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
     notes.append(
