@@ -17,7 +17,6 @@
 用法（参数与 argparse 实现保持一致，改动其一必须同步另一处）：
   python sop_gate.py --memo <正文路径> --verify <验证记录JSON>
   python sop_gate.py --memo <正文路径> --skip-web --skip-reason "理由"  # 非术语卡，显式声明无需网络验证
-  python sop_gate.py --memo <正文路径> --confirmed-dup-check           # 查重命中后已回读全文确认无重复
   python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
   python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
   python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
@@ -339,7 +338,7 @@ def _tag_tree_total_and_count(client):
     return total, tags or []
 
 
-def _check_dedup(client, sig, blockers, notes, tree=None, confirmed=False):
+def _check_dedup(client, sig, blockers, notes, tree=None):
     """⑤ 查重两路并查：memo_search 关键词扫 + tag_tree 同主标签细分比对。
 
     本函数只负责"两路都真的跑了、且结果被读到"；是否撞卡由调用方在
@@ -379,13 +378,6 @@ def _check_dedup(client, sig, blockers, notes, tree=None, confirmed=False):
         # 不在树里（后者意味着本卡会新建簇，这一路实际没扫到任何同类卡）。
         absent = "" if f"{top}/{leaf}" in names else "（该标签不在树中，本卡将新建簇）"
         notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
-    # 命中>0 阻塞：必须显式确认已回读全文，才能继续
-    total_hits = sum(len(v) for v in hits.values())
-    if total_hits > 0 and not confirmed:
-        blockers.append(
-            f"查重命中 {total_hits} 条候选卡，必须先回读每张全文确认不是重复，"
-            f"再显式传 --confirmed-dup-check 继续。禁止不回读直接跳过。"
-        )
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 
@@ -532,11 +524,6 @@ def main():
         help="显式授权本卡在 validate_memo.py 侧可降级闸门（仅限批量处理历史卡）；"
              "理由会写进凭证供事后审计。不加此项时 --no-gate 一律无效。",
     )
-    ap.add_argument(
-        "--confirmed-dup-check",
-        action="store_true",
-        help="显式确认已回读查重命中的每张卡全文，确认不是重复后使用",
-    )
     args = ap.parse_args()
 
     content = Path(args.memo).read_text(encoding="utf-8-sig")
@@ -576,7 +563,7 @@ def main():
                 "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
             )
     tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
-    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, confirmed=args.confirmed_dup_check)  # ⑤
+    dedup = _check_dedup(client, sig, blockers, notes, tree=tree)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
     notes.append(
