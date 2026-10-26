@@ -378,6 +378,25 @@ def _check_dedup(client, sig, blockers, notes, tree=None):
         # 不在树里（后者意味着本卡会新建簇，这一路实际没扫到任何同类卡）。
         absent = "" if f"{top}/{leaf}" in names else "（该标签不在树中，本卡将新建簇）"
         notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
+    # 命中>0 自动取全文打印：不看全文就过不了闸门
+    all_hit_ids = []
+    for kw, memos in hits.items():
+        all_hit_ids.extend(m["id"] for m in memos)
+    all_hit_ids = list(dict.fromkeys(all_hit_ids))  # 去重保序
+    if all_hit_ids:
+        print(f"\n═══ 查重命中 {len(all_hit_ids)} 张卡，全文如下（必须逐张确认不是重复）═══")
+        # 分批取，每批≤10
+        for i in range(0, min(len(all_hit_ids), 20), 10):
+            chunk = all_hit_ids[i:i+10]
+            res = client.tool("memo_batch_get", {"ids": chunk})
+            memos = _result_memos(res)
+            for m in memos:
+                content = m.get("content") or ""
+                lines = content.split("\n")
+                concept_line = lines[1] if len(lines) > 1 else "(无概念名行)"
+                print(f"\n── {m.get('id')} | {concept_line}")
+                print(content[:300])
+        print("═══ 命中卡全文结束 ═══\n")
     return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
 
 

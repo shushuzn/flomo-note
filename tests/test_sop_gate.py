@@ -468,6 +468,8 @@ class FakeClient:
             return self._search.get(kw, {"structuredContent": {"memos": []}})
         if name == "memo_recommended":
             return self._recommended
+        if name == "memo_batch_get":
+            return {"structuredContent": {"memos": []}}
         return {}
 
 
