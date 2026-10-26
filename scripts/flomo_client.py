@@ -515,11 +515,31 @@ def main():
         # 强制闸门凭证：没有过sop_gate的卡片一律拒绝写云
         # 防止绕过publish.py直接写云导致跳过查重/搜索/质检
         gate_dir = Path(__file__).parent.parent / ".sop_gate"
-        if not gate_dir.exists() or not any(gate_dir.glob("*.json")):
+        content = arguments.get("content") or ""
+        # 计算本次卡片签名
+        from memo_util import memo_signature
+        sig = memo_signature(content)
+        if not sig:
+            sys.stderr.write("[失败] 卡片正文不足两行，无法生成签名，拒绝写云。\n")
+            return 5
+        # 找最新的凭证文件
+        gate_files = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not gate_files:
             sys.stderr.write(
                 "[失败] 未检测到SOP闸门凭证（.sop_gate/*.json），拒绝直接写云。\n"
                 "  必须先跑 scripts/sop_gate.py 或 scripts/publish.py 过闸门，再写云。\n"
-                "  禁止绕过闸门直接调用 flomo_client.py memo_create/memo_update。\n"
+            )
+            return 5
+        # 检查最新凭证的签名是否匹配
+        import json as _json
+        latest_gate = _json.loads(gate_files[0].read_text(encoding="utf-8"))
+        gate_sig = latest_gate.get("signature", "")
+        if gate_sig != sig.get("sig", ""):
+            sys.stderr.write(
+                f"[失败] 最新闸门凭证签名与本次卡片不匹配，拒绝写云。\n"
+                f"  凭证签名：{gate_sig}\n"
+                f"  卡片签名：{sig.get('sig')}\n"
+                f"  禁止用旧凭证写新卡。\n"
             )
             return 5
         marks = find_truncation(arguments.get("content") or "")
