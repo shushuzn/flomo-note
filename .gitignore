@@ -1,43 +1,15 @@
-# 凭据类：绝不入库
+# 临时文件与本地配置
 .mcp.json
-.flomo_token
-.env
-
-# 现采缓存 / 中间态：每次现采刷新，不入库
+.tmp/
 .sop_gate/
 .workbuddy/
-
-# 写卡中间态与验证产物：待校验正文、历轮草稿副本、当轮抓取件与冒烟脚本
-# （`tmp_*` / `_tmp_*` / `_tmp/` 三种同义形态均由 cleanup.py 按近轮窗口清理，一律不入库）
-memo_body*.txt
-tmp_*
-_tmp_*
-_tmp/
-
-# 依赖与日志
-node_modules/
-*.log
-
-# Python 缓存
 __pycache__/
 *.pyc
-
-# 系统文件
-.DS_Store
-Thumbs.db
-
-# 编辑器项目目录：非技能内容，且会在其下投一份技能文档副本造成"两个 skill"。
-# 技能文档的唯一位置是仓库根目录。
-.kilo/
-.idea/
-.vscode/
-
-# 本机私有的阅读器导出（订阅源清单）：与技能本体无关，只是挑素材时的个人书签。
-# 不追进入库，也不参与任何流程——放这里是为了让 `git status` 保持干净。
-feeds.opml
-
-# 本机技能注册产物：`.dsh/skills/flomo-note` 是指向仓库根的目录联接，供
-# dsh-skill-filesystem 发现本技能。它是**指针不是副本**（SKILL.md 仍只在仓库根），
-# 但联接结构无法跨机器可靠重建——git 检出会把联接写成纯文本文件，反而造出上面
-# 那种"两个 skill"。故仅本机生效、绝不上库；换机器按 ENVIRONMENT.md 记的方式重建。
-.dsh/
+*.bak
+*.tmp
+*.log
+# 工作产物（非技能文档）
+PREFLIGHT.md
+clear_src.json
+mm333.txt
+.txt
