@@ -10,6 +10,7 @@
   python scripts/scan_qualified_concepts.py                    # 默认标签簇抽样
   python scripts/scan_qualified_concepts.py --tags "AI/RAG,科技/开源"
   python scripts/scan_qualified_concepts.py --tags @tags.txt    # 标签多到超命令行长度
+  python scripts/scan_qualified_concepts.py --tags "产业/汽车" --full   # 翻页取尽，结论才算整簇
   python scripts/scan_qualified_concepts.py --limit 30 --json _tmp/scan.json
 
 退出码：
@@ -56,6 +57,8 @@ _OPTS = [
         hint="；逗号分隔的标签路径；标签多到超命令行长度时用 @文件"),
     Opt("--limit", "limit", "int", low=1, high=50, default=50,
         hint="；每个标签簇取多少条（服务端单次上限 50）"),
+    Opt("--full", "full", "flag",
+        hint="；按日期游标翻页把簇取尽（默认只取最新一页，大簇的结论只覆盖前 limit 张）"),
     Opt("--json", "json_out", default=""),
 ]
 
@@ -90,27 +93,68 @@ def resolve_tags(raw):
     return tags or list(DEFAULT_TAGS)
 
 
-def collect_memos(c, tags, limit=50):
+def _page(c, tag, limit, end_date=""):
+    """取一页。`end_date` 是日期游标（服务端不接受 offset，只能按时间往回翻）。"""
+    params = {"tag": tag, "limit": limit}
+    if end_date:
+        params["end_date"] = end_date
+    return list(_result_memos(c.tool("memo_search", params)))
+
+
+def _day(m):
+    s = (m.get("created_at") or "")[:10]
+    return s if re.match(r"^\d{4}-\d{2}-\d{2}$", s) else ""
+
+
+def collect_memos(c, tags, limit=50, full=False):
     """按标签簇取卡并按 id 去重。tag 须给完整路径（裸二级名查不到）。
 
-    返回 `(seen, failed)`，`failed` 是取数失败的标签簇。**必须由调用方打印出来**：
+    返回 `(seen, failed, truncated)`，`failed` 是取数失败的标签簇。**必须由调用方打印出来**：
     某一簇失败时只留一行 stderr，「占比」类结论就建立在一个悄悄缩水的分母上——
     看起来是「库里只有三成卡带切片」，实际可能是「有三簇根本没取到」。样本量
     偏小但输出正常，正是取证脚本最不该犯的错。
+
+    `full=True` 时按日期游标往回翻页，直到取尽：服务端 `memo_search` 只认 `limit`
+    （上限 50）**不认 offset**，不翻页的话大簇的「0 张不合格」只覆盖最新 50 张，而
+    结论往往被读成「这一簇已经干净了」。同一天卡片数超过 limit 时日期游标无法前进，
+    此时记进 `truncated`（取不尽 ≠ 取尽后没问题）。
     """
     seen, failed, truncated = {}, [], []
     for t in tags:
         try:
-            got = 0
-            for m in _result_memos(c.tool("memo_search", {"tag": t, "limit": limit})):
-                got += 1
-                if m.get("id") and m["id"] not in seen:
-                    seen[m["id"]] = m
-            # 命中数正好等于 limit = 服务端按上限截断，这一簇还有卡没取到。
-            # 不报出来，占比的分母就是一个悄悄缩水的样本：看起来「只有 7% 带切片」，
-            # 实际可能是「大簇只看了前 50 张」。与取数失败同属样本完整性问题。
-            if got >= limit:
-                truncated.append(t)
+            mine: dict[str, dict] = {}
+            end_date = ""
+            page = _page(c, t, limit)
+            while True:
+                for m in page:
+                    mid = m.get("id")
+                    if mid and mid not in mine:
+                        mine[mid] = m
+                        seen.setdefault(mid, m)
+                if not full:
+                    if len(page) >= limit:
+                        truncated.append(t)
+                    break
+                if len(page) < limit:
+                    break
+                oldest = min((_day(m) for m in page if _day(m)), default="")
+                if not oldest or oldest == end_date:
+                    truncated.append(t)
+                    break
+                nxt = _page(c, t, limit, oldest)
+                fresh = [m for m in nxt if m.get("id") and m["id"] not in mine]
+                for m in fresh:
+                    mine[m["id"]] = m
+                    seen.setdefault(m["id"], m)
+                # 末页不足 limit 就是取到头了：日期游标是含该日的，最后一页必然重复
+                # 上一页边界日的卡片，此时「没有新 id」是正常收尾，不是取不尽。
+                if len(nxt) < limit:
+                    break
+                if not fresh:
+                    truncated.append(t)
+                    break
+                end_date = oldest
+                page = nxt
         except Exception as e:
             print(f"[warn] 标签 {t!r} 失败：{e}", file=sys.stderr)
             failed.append(t)
@@ -137,17 +181,24 @@ def main(argv=None, client=None):
 
     # 按标签簇抽样：裸关键词检索召回低（实测单轮仅 43 张），改按 tag 逐簇取，
     # 覆盖足够大样本才能取证。
-    seen, failed, truncated = collect_memos(c, tags, ns["limit"])
+    seen, failed, truncated = collect_memos(c, tags, ns["limit"], full=ns["full"])
     ok_tags = len(tags) - len(failed)
-    print(f"[scan] 取回卡片 {len(seen)} 张（{ok_tags}/{len(tags)} 个标签簇取数成功）",
-          file=sys.stderr)
+    if ns["full"]:
+        print(f"[scan] 已扫 {len(seen)} 张 / 共 {len(seen)} 张"
+              f"（{ok_tags}/{len(tags)} 个标签簇取数成功；--full 已按日期翻页取尽）",
+              file=sys.stderr)
+    else:
+        print(f"[scan] 取回卡片 {len(seen)} 张（{ok_tags}/{len(tags)} 个标签簇取数成功）",
+              file=sys.stderr)
     if failed:
         print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
               f"本次样本量偏小，下面的占比只能当这批卡的占比，不是全库事实", file=sys.stderr)
     if truncated:
-        print(f"[warn] {len(truncated)} 个标签簇命中数达到 --limit={ns['limit']}，"
-              f"被服务端截断：{', '.join(truncated)}——这些簇只看了前 {ns['limit']} 张，"
-              f"要全量请调大 --limit 或分批扫", file=sys.stderr)
+        print(f"[warn] {len(truncated)} 个标签簇未取尽：{', '.join(truncated)}——"
+              + ("同一天卡片数超过 --limit，日期游标翻不动；请调大 --limit 或按日期手工分段"
+                 if ns["full"] else
+                 f"这些簇只看了最新 {ns['limit']} 张，「0 张不合格」不等于整簇干净；"
+                 "要全量请加 --full"), file=sys.stderr)
 
     flagged = []
     for mid, m in seen.items():
@@ -165,10 +216,15 @@ def main(argv=None, client=None):
     if ns["json_out"]:
         out = Path(ns["json_out"])
     else:
-        out = Path(__file__).resolve().parent.parent / "_tmp" / "concept_scan.json"
+        # 单簇按簇名落盘：多簇同名文件会互相覆盖，上一轮「还剩哪些」的记录就没了。
+        # 名字里带簇名，下一轮可直接对照上一轮结果，不必重扫才知道进度。
+        slug = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", tags[0]).strip("_") if len(tags) == 1 else "all"
+        out = Path(__file__).resolve().parent.parent / "_tmp" / f"concept_scan_{slug}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(
-        {"total": len(seen), "failed_tags": failed, "truncated_tags": truncated,
+        {"tags": tags, "mode": "full" if ns["full"] else "sample",
+         "scanned": len(seen), "total": len(seen),
+         "failed_tags": failed, "truncated_tags": truncated,
          "flagged": [
             {"id": m, "concept": n, "kinds": h} for m, n, h in flagged]},
         ensure_ascii=False, indent=2), encoding="utf-8")

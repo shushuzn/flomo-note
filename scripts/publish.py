@@ -33,13 +33,16 @@
   python scripts/publish.py --batch _tmp/batch.txt                  # 多张卡：预检全过才写
   python scripts/publish.py --batch _tmp/batch.txt --dry-run        # 只预检，不写云
 
-批次清单每行 `草稿 | 留痕 | 覆盖 id | rename`，后三段可省或用 `-` 占位，`#` 开头为注释；
-第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于单卡的 `--allow-rename`）：
+批次清单每行 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss`，后四段可省或用 `-` 占位，
+`#` 开头为注释；第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于单卡的
+`--allow-rename`），第 5 段是本行开关——`skipweb`（本行确认非术语卡，不做网络验证）、
+`loss`（本行确属有意重写，放行内容丢失检查），可同时给，于是「非术语卡」与「带留痕的
+事件卡」能在一批里混跑：
 
   # 本轮三张
   _tmp/draft_zt_1.txt | _tmp/verify_zt_1.json | -
-  _tmp/draft_zt_2.txt | _tmp/verify_zt_2.json | -
-  _tmp/draft_af_fix.txt | - | MjUzMzgyODYz | rename      # 改名并覆盖，两张卡同一批做
+  _tmp/draft_zt_2.txt | - | - | - | skipweb
+  _tmp/draft_af_fix.txt | - | MjUzMzgyODYz | rename | skipweb,loss   # 改名并覆盖
 
 批量的不变量只有一条：**先把 N 张全过预检（闸门 + 质检 + 覆盖对象身份），任何一张不过则
 一张都不写**，全过之后才逐张写入并立刻复核。它替代的是「每张各跑一遍 `--dry-run`、再各
@@ -165,6 +168,14 @@ def _norm_lines(text: str) -> list[str]:
     return [ln for ln in FC._norm_body(text).splitlines() if ln.strip()]
 
 
+def _tag_tokens(text: str) -> list[str]:
+    """首行标签段的 token 列表（顺序无关的比对用）。"""
+    heads = _head_lines(text, 1)
+    if not heads:
+        return []
+    return [t for t in heads[0].split() if t.startswith("#")]
+
+
 def diff_report(before: str, after: str) -> dict:
     """改前快照 vs 改后正文的行级差异（纯函数，不联网不落盘，便于用例断言）。
 
@@ -187,14 +198,22 @@ def diff_report(before: str, after: str) -> dict:
         "removed": removed,
         "added": added,
         "unchanged": len(old) - len(removed),
+        # 标签不计入行差异的判断（首行整行都会被算成「改了一行」），单列出来给人看：
+        # 覆盖路的身份确认只比概念名，标签被悄悄换掉不会触发任何检查。
+        "tags_before": _tag_tokens(before),
+        "tags_after": _tag_tokens(after),
     }
 
 
 # 读数：数字 + 单位。只收「量」不收「日期」——「年 / 月 / 日」这类时点随来源引导
 # 一起删是常规操作，把它算成读数会让这道闸门天天误报，最后被无视。
+# 数量级词后可能还跟着真正的单位（「3 万台」「120 亿美元」），必须一起收进来：
+# 只匹配到「万」时，归一键会丢掉「台」，与「30,000 台」归一成两个不同读数而误报。
+_SCALE = r"千万|亿|万|百"
+_UNIT = (r"%|％|‰|倍|吨|美元|港元|元|人|名|次|家|台|架|款|项|个|小时|分钟|天|"
+         r"公里|千米|纳米|毫米|GB|TB|MB|nm|mm|℃")
 _READING_RE = re.compile(
-    r"\d+(?:[.,]\d+)*\s*(?:%|％|‰|万|亿|千万|百|倍|吨|元|美元|港元|人|名|次|家|台|架|款|"
-    r"项|个|小时|分钟|天|公里|千米|纳米|毫米|GB|TB|MB|nm|mm|℃)"
+    rf"\d+(?:[.,]\d+)*\s*(?:(?:{_SCALE})\s*(?:{_UNIT})?|{_UNIT})"
 )
 # 删除片段允许的起点：行首、标点后、空白后、列表符号后；括号整体删除另判（见 `_span_is_closed`）。
 # 「-」「—」「–」是列表符号/连接号，删掉紧跟其后的「作者」不构成断口——
@@ -207,21 +226,55 @@ _PUNCT_ONLY = "，；。：、,;:．.!！?？（）()《》“”\"'—-–·…
 _SENT_END = "。！？；.!?;"
 
 
+def _canonical_reading(tok: str) -> str:
+    """把「数字 + 单位」归一成同一个键：数量级词（万 / 亿 / 千万 / 百）换算成倍数，
+    千分位逗号去掉，小数尾零抹掉。
+
+    为什么必须换算：同一个读数在两张稿里常写成「30,000 台」与「3 万台」、「109,000 美元」
+    与「10.9 万美元」。按字面比对，改写一张卡就会被判「读数丢失」，人只能加
+    `--allow-content-loss` 放行——放行用多了，这道闸门本身就没了。归一化后比的是
+    **数值 + 真实单位**，写法差异不再触发阻塞，真丢的读数照旧拦。
+    """
+    tok = re.sub(r"\s+", "", tok or "")
+    m = re.match(r"^(\d+(?:[.,]\d+)*)(.*)$", tok)
+    if not m:
+        return tok
+    num_s, rest = m.group(1).replace(",", ""), m.group(2)
+    mult, unit = 1, rest
+    for prefix, k in (("千万", 10 ** 7), ("亿", 10 ** 8), ("万", 10 ** 4), ("百", 100)):
+        if rest.startswith(prefix):
+            mult, unit = k, rest[len(prefix):]
+            break
+    try:
+        val = float(num_s) * mult
+    except ValueError:
+        return tok
+    return f"{int(val)}{unit}" if val == int(val) else f"{val:g}{unit}"
+
+
 def readings(text: str) -> dict:
     """正文里的「数字 + 单位」计数表（空白不参与比较，平台会插空格）。
 
-    数字部分去掉小数尾零再计：同一个读数在一张卡里常有两种写法——正文写
-    「同比 -12.70%」，末尾来源行写「净利降 12.7%」。按字面比对会把后者判成
-    「读数丢失」（实测 6 张公司卡全部如此），而丢的只是被删的来源行里那个重复
-    读数。尾零不承载信息，「12.70」与「12.7」是同一个数。
+    数字部分去掉小数尾零、数量级词换算成倍数再计：同一个读数在一张卡里常有两种写法——
+    正文写「同比 -12.70%」，末尾来源行写「净利降 12.7%」；或正文「30,000 台」、草稿
+    「3 万台」。按字面比对会把它们判成「读数丢失」（实测 6 张公司卡全部如此），而丢的
+    只是写法差异。尾零与单位前缀都不承载信息，归一后才是同一个读数。
     """
     counts: dict[str, int] = {}
     for m in _READING_RE.finditer(text or ""):
-        tok = re.sub(r"\s+", "", m.group(0))
-        tok = re.sub(r"(?<=\d)\.(\d+?)(0+)(?=\D|$)", lambda x: "." + x.group(1) if x.group(1) else "", tok)
-        tok = re.sub(r"(?<=\d)\.(0+)(?=\D|$)", "", tok)
-        counts[tok] = counts.get(tok, 0) + 1
+        key = _canonical_reading(m.group(0))
+        counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _reading_display(text: str) -> dict:
+    """归一键 → 改前正文里的原始写法，用于把「少了哪个读数」按人眼熟悉的形状报出来。"""
+    disp: dict[str, str] = {}
+    for m in _READING_RE.finditer(text or ""):
+        orig = re.sub(r"\s+", "", m.group(0))
+        disp.setdefault(_canonical_reading(orig), orig)
+    return disp
+
 
 
 _SRC_LINE_RE = re.compile(r"^(?:-\s*)?(?:来源|出处|发布|作者|参考资料|原文链接)\s*[:：]")
@@ -263,7 +316,9 @@ def lost_readings(before: str, after: str) -> list[str]:
                               if k not in src_idx and k not in status_idx))
     for t, n in readings("\n".join(old_lines[k] for k in sorted(status_idx))).items():
         allow[t] = allow.get(t, 0) + min(n, kept.get(t, 0))
-    return sorted(t for t, n in old.items() if new.get(t, 0) + allow.get(t, 0) < n)
+    disp = _reading_display(before)
+    return sorted(disp.get(t, t) for t, n in old.items()
+                  if new.get(t, 0) + allow.get(t, 0) < n)
 
 
 def _span_is_closed(span: str) -> bool:
@@ -428,6 +483,17 @@ def _print_diff(rep: dict | None, limit: int = DIFF_SHOW) -> None:
         return
     _step("⑥ 覆盖差异（写前云端 → 写后云端）")
     rm, ad = rep["removed"], rep["added"]
+    tb, ta = rep.get("tags_before") or [], rep.get("tags_after") or []
+    if set(tb) != set(ta):
+        removed_tags = [t for t in tb if t not in ta]
+        added_tags = [t for t in ta if t not in tb]
+        parts = []
+        if removed_tags:
+            parts.append("去掉 " + " ".join(removed_tags))
+        if added_tags:
+            parts.append("加上 " + " ".join(added_tags))
+        print(f"[标签] 本轮改了标签：{' '.join(tb) or '-'} → {' '.join(ta) or '-'}"
+              f"（{'；'.join(parts)}）")
     if not rm and not ad:
         print(f"[差异] 无实质变化（改前改后同为 {rep['old_lines']} 行，"
               "按归一化口径逐行一致）")
@@ -804,8 +870,15 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
 
 
 def parse_manifest(path: Path) -> list[dict]:
-    """读批次清单：每行 `草稿 | 留痕 | 覆盖 id | rename`，后三段可省或用 `-` 占位；
-    `#` 开头为注释。第 4 段只认 `rename`（覆盖既有卡时允许改概念名）。
+    """读批次清单：每行 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss`，后四段可省或用
+    `-` 占位；`#` 开头为注释。第 4 段只认 `rename`（覆盖既有卡时允许改概念名）；第 5 段
+    是本行的开关，认 `skipweb`（本行确认非术语卡，跳过网络验证）与 `loss`（本行确属有意
+    重写，放行内容丢失检查），可同时给。
+
+    为什么开关要能逐行给：存量整改一批里常混着「车型卡（非术语，skip-web）」与「事件卡
+    改成概念卡（带检索留痕）」两类，而批次级 `--skip-web` 一开就整批生效。没有逐行开关
+    时只能拆成两个清单跑两遍，闸门（内含两路云端查重）跟着跑两遍，且两份清单分开记，
+    收尾对账容易漏行。
 
     这里只拦**确定是错**的几种：草稿或留痕不存在、同一份内容出现两次、同一张卡被覆盖
     两次、rename 挂在没有覆盖 id 的行上。前两者都会直接造成重复卡。判重按**正文指纹**而
@@ -824,11 +897,11 @@ def parse_manifest(path: Path) -> list[dict]:
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) > 4:
+        if len(parts) > 5:
             raise CLI.UsageError(
                 f"清单第 {lineno} 行字段过多（{len(parts)} 段）："
-                "每行至多 `草稿 | 留痕 | 覆盖 id | rename`")
-        while len(parts) < 4:
+                "每行至多 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss`")
+        while len(parts) < 5:
             parts.append("-")
         draft = "" if parts[0] in ("-", "") else parts[0]
         verify = "" if parts[1] in ("-", "") else parts[1]
@@ -839,6 +912,16 @@ def parse_manifest(path: Path) -> list[dict]:
                 f"清单第 {lineno} 行第 4 段只接受 `rename`（覆盖时允许改概念名），"
                 f"看到的是「{flag}」——不需要改名就留空或写 `-`")
         allow_rename = flag == "rename"
+        extras = {t for t in re.split(r"[,，\s]+", parts[4]) if t and t != "-"}
+        unknown = extras - {"skipweb", "loss"}
+        if unknown:
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行第 5 段只接受 `skipweb` 与 `loss`，"
+                f"看到的是「{' '.join(sorted(unknown))}」——不需要就留空或写 `-`")
+        if "skipweb" in extras and verify:
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行同时给了留痕与 skipweb：skipweb 是「确认非术语卡、"
+                "不做网络验证」，与留痕互相矛盾，二者只能选一个")
         if allow_rename and not update_id:
             raise CLI.UsageError(
                 f"清单第 {lineno} 行标了 rename 却没有覆盖 id：改名要拿既有概念名来比，"
@@ -872,7 +955,9 @@ def parse_manifest(path: Path) -> list[dict]:
                     "——第二遍会拿另一份草稿盖掉第一遍的结果")
             seen_id[update_id] = lineno
         items.append({"draft": draft, "verify": verify, "update_id": update_id,
-                      "allow_rename": allow_rename, "lineno": lineno})
+                      "allow_rename": allow_rename, "lineno": lineno,
+                      "skip_web": "skipweb" in extras,
+                      "allow_content_loss": "loss" in extras})
     if not items:
         raise CLI.UsageError(f"批次清单里没有任何条目：{path}")
     return items
@@ -892,8 +977,13 @@ def _print_batch_summary(rows: list[tuple], *, items: list[dict], failed: int) -
         wc = res.get("word_count")
         wc_txt = f"{wc} 字 " if isinstance(wc, int) else ""
         if res.get("id"):
+            diff = res.get("diff") or {}
+            tag_note = ""
+            tb, ta = diff.get("tags_before"), diff.get("tags_after")
+            if tb is not None and set(tb) != set(ta):
+                tag_note = f"（标签 {(' '.join(tb) or '-' )} → {(' '.join(ta) or '-')}）"
             print(f"  {i} {mark} id={res['id']} {wc_txt}"
-                  f"{' '.join(res.get('tags') or []) or '-'} {_concept(it['draft'])}")
+                  f"{' '.join(res.get('tags') or []) or '-'} {_concept(it['draft'])}{tag_note}")
         else:
             print(f"  {i} {mark} 未写入（退出码 {res['code']}） {_concept(it['draft'])}")
     tried = {r[0] for r in rows}
@@ -926,7 +1016,8 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     digests: dict[str, str] = {}
     for i, it in enumerate(items, 1):
         prefix = f"[{i}/{n}] "
-        code = precheck(run, it["draft"], it["verify"], skip_web, prefix=prefix)
+        line_skip_web = skip_web or it.get("skip_web", False)
+        code = precheck(run, it["draft"], it["verify"], line_skip_web, prefix=prefix)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
@@ -955,7 +1046,8 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     for i, it in enumerate(items, 1):
         res = write_one(run, it["draft"], it["verify"], update_id=it["update_id"],
                         allow_rename=it["allow_rename"],
-                        allow_content_loss=allow_content_loss, do_verify=do_verify,
+                        allow_content_loss=allow_content_loss or it.get("allow_content_loss", False),
+                        do_verify=do_verify,
                         expect_digest=digests.get(it["draft"], ""), prefix=f"[{i}/{n}] ")
         _print_diff(res.get("diff"))
         rows.append((i, it, res))
