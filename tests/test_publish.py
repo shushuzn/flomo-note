@@ -576,7 +576,8 @@ def test_readings_ignore_spaces_not_dates():
     check("读数：日期不计入", not any("年" in t or "月" in t or "日" in t
                                    for t in PB.readings("某年 1 月 2 日报道，")),
           PB.readings("某年 1 月 2 日报道，"))
-    check("读数：百分比与亿都算", set(PB.readings("涨 15%，120 亿美元")) == {"15%", "120亿"},
+    check("读数：百分比与亿都算",
+          PB.readings("涨 15%，120 亿美元") == {"15%": 1, "12000000000美元": 1},
           PB.readings("涨 15%，120 亿美元"))
 
 
@@ -584,7 +585,7 @@ def test_lost_readings_counts_multiplicity():
     """同一读数出现两次、改后只剩一次，也算丢了一个——只看「有没有」会放过这类。"""
     check("读数丢失：少一次也报",
           PB.lost_readings("约 320 万人因空气污染死亡，另有 320 万人患病",
-                           "约 320 万人因空气污染死亡") == ["320万"],
+                           "约 320 万人因空气污染死亡") == ["320万人"],
           PB.lost_readings("约 320 万人，另有 320 万人", "约 320 万人"))
     check("读数丢失：读数没少就不报",
           PB.lost_readings("约 320 万人", "约 320 万人，其余相同") == [],
@@ -595,7 +596,7 @@ def test_lost_readings_counts_multiplicity():
           PB.lost_readings("正文 8.68 亿元\n来源: 报道称营收 8.68 亿元", "正文 8.68 亿元") == [],
           PB.lost_readings("正文 8.68 亿元\n来源: 报道称营收 8.68 亿元", "正文 8.68 亿元"))
     check("读数：整行删要点仍报",
-          PB.lost_readings("正文 8.68 亿元\n- 要点：净利 1.45 亿元", "正文 8.68 亿元") == ["1.45亿"],
+          PB.lost_readings("正文 8.68 亿元\n- 要点：净利 1.45 亿元", "正文 8.68 亿元") == ["1.45亿元"],
           PB.lost_readings("正文 8.68 亿元\n- 要点：净利 1.45 亿元", "正文 8.68 亿元"))
     # 旧格式状态行把定价复述一遍（工具卡「商业模式=订阅 17 美元/月」），删状态行是
     # 格式硬限要求，行里的同值读数不算丢正文读数（实测 CoolPlugz 卡）。
@@ -709,7 +710,7 @@ def test_update_content_loss_blocks():
                                "--update-id", "ABC"], exec_fn)
         check("内容丢失：退出码 7（未写云）", code == 7, code)
         check("内容丢失：不发 memo_update", "memo_update" not in tools(calls), tools(calls))
-        check("内容丢失：点名少掉的读数", "读数「320万」" in err, err)
+        check("内容丢失：点名少掉的读数", "读数「320万人」" in err, err)
         check("内容丢失：给出放行开关", "--allow-content-loss" in err, err)
 
 
@@ -740,7 +741,7 @@ def test_update_content_loss_allowed():
                               "--update-id", "ABC", "--allow-content-loss"], exec_fn)
         check("放行：退出码 0", code == 0, code)
         check("放行：仍打印丢失的读数（stderr，与阻塞同一口径）",
-              "读数「320万」" in err, err[-300:])
+              "读数「320万人」" in err, err[-300:])
         check("放行：打印放行说明", "--allow-content-loss" in err, err[-300:])
         check("放行：照常发 memo_update", "memo_update" in tools(calls), tools(calls))
 
@@ -863,7 +864,10 @@ def test_batch_manifest_errors():
              [f"{rows[0][0]} | - | -", f"{dup} | - | -"], "正文完全相同"),
             ("同一 id 覆盖两次",
              [f"{rows[0][0]} | - | M9", f"{rows[1][0]} | - | M9"], "覆盖同一张卡"),
-            ("字段过多", [f"{rows[0][0]} | - | - | rename | 多余"], "字段过多"),
+            ("字段过多", [f"{rows[0][0]} | - | - | rename | skipweb | 多余"], "字段过多"),
+            ("第 5 段不是已知开关", [f"{rows[0][0]} | - | - | - | 多余"], "只接受 `skipweb`"),
+            ("skipweb 与留痕同给",
+             [f"{rows[0][0]} | {rows[0][1]} | - | - | skipweb"], "互相矛盾"),
             ("第 4 段不是 rename", [f"{rows[0][0]} | - | - | yes"], "只接受 `rename`"),
             ("rename 没有覆盖 id",
              [f"{rows[0][0]} | - | - | rename"], "却没有覆盖 id"),
@@ -1053,6 +1057,93 @@ def test_batch_next_steps():
               "None" not in out2, out2[-500:])
 
 
+def test_readings_scale_equivalence():
+    """同一读数换了写法（30,000 台 / 3 万台、109,000 美元 / 10.9 万美元）不判丢失。
+
+    按字面比对时，改写一张卡就会被判「读数丢失」，人只能加 --allow-content-loss
+    放行；放行用多了这道闸门就形同虚设。归一后比的是数值 + 真实单位，写法差异
+    不该阻塞，真丢的读数照旧拦。
+    """
+    check("读数归一：30,000 台 == 3 万台",
+          PB.readings("交付 30,000 台") == PB.readings("交付 3 万台"),
+          f"{PB.readings('交付 30,000 台')} vs {PB.readings('交付 3 万台')}")
+    check("读数归一：109,000 美元 == 10.9 万美元",
+          PB.readings("售价 109,000 美元") == PB.readings("售价 10.9 万美元"),
+          f"{PB.readings('售价 109,000 美元')} vs {PB.readings('售价 10.9 万美元')}")
+    check("读数归一：跨写法改写不算丢失",
+          PB.lost_readings("交付 30,000 台，售价 109,000 美元",
+                           "交付 3 万台，售价 10.9 万美元") == [],
+          PB.lost_readings("交付 30,000 台，售价 109,000 美元",
+                           "交付 3 万台，售价 10.9 万美元"))
+    check("读数归一：少一个数量级仍报丢失",
+          PB.lost_readings("交付 30,000 台", "交付 3,000 台") == ["30,000台"],
+          PB.lost_readings("交付 30,000 台", "交付 3,000 台"))
+    check("读数归一：单位不同不混为一谈",
+          PB.readings("30,000 台") != PB.readings("30,000 元"),
+          f"{PB.readings('30,000 台')} vs {PB.readings('30,000 元')}")
+
+
+def test_manifest_per_line_flags():
+    """第 5 段 `skipweb` / `loss` 逐行生效：混批里一行跳过网络验证、另一行照常带留痕。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _drafts(tmp, 2)
+        man = _manifest(tmp, [
+            f"{rows[0][0]} | - | - | - | skipweb,loss",
+            f"{rows[1][0]} | {rows[1][1]} | -",
+        ])
+        items = PB.parse_manifest(man)
+        check("清单：skipweb,loss 同时解析",
+              items[0]["skip_web"] and items[0]["allow_content_loss"],
+              items[0])
+        check("清单：未标开关的行两项都为 False",
+              not items[1]["skip_web"] and not items[1]["allow_content_loss"],
+              items[1])
+
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        exec_fn, calls = make_exec()
+        code, _out, _err = run(["--batch", str(man)], exec_fn)
+        gates = [c for c in calls if len(c) > 1 and Path(c[1]).name == "sop_gate.py"]
+        check("混批：退出码 0", code == 0, code)
+        check("混批：第 1 行闸门带 --skip-web",
+              "--skip-web" in gates[0], gates[0])
+        check("混批：第 2 行闸门不带 --skip-web",
+              "--skip-web" not in gates[1], gates[1])
+        check("混批：第 2 行仍带留痕",
+              any("--verify" in c for c in gates[1]), gates[1])
+
+
+def test_diff_reports_tag_change():
+    """覆盖时标签被换掉，差异里要有一行「标签 旧 → 新」——身份确认只比概念名。"""
+    rep = PB.diff_report("#AI/测试\n概念名\n\n正文", "#AI/测试 #AI/新标签\n概念名\n\n正文")
+    check("差异：给出改前标签", rep["tags_before"] == ["#AI/测试"], rep["tags_before"])
+    check("差异：给出改后标签",
+          rep["tags_after"] == ["#AI/测试", "#AI/新标签"], rep["tags_after"])
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        PB._print_diff(rep)
+    out = buf.getvalue()
+    check("差异：打印标签变化与增删",
+          "[标签]" in out and "加上 #AI/新标签" in out, out)
+
+    rep2 = PB.diff_report("#AI/测试\n概念名\n\n正文", "#AI/测试\n概念名\n\n正文")
+    check("差异：标签未变时前后一致", rep2["tags_before"] == rep2["tags_after"],
+          rep2["tags_before"])
+
+
+def test_precheck_echoes_concept():
+    """预检通过后必须回显第二行：质检只认词表内动词，写卡人得亲眼判一遍（H6b/H6d）。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d, _v = with_draft(Path(td), "#AI/测试\n某机首拆\n\n正文")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            PB._echo_concept(str(d))
+        out = buf.getvalue()
+    check("回显概念名", "某机首拆" in out, out[:120])
+    check("回显标签行", "#AI/测试" in out, out[:120])
+    check("提示删动词测试", "删动词测试" in out, out[:120])
+
+
 if __name__ == "__main__":
     for fn in (test_success_chain, test_gate_blocks, test_validate_blocks,
                test_create_failure_no_retry, test_idempotent_reuse,
@@ -1081,7 +1172,7 @@ if __name__ == "__main__":
                test_batch_rejects_single_draft_flags, test_batch_partial_failure,
                test_batch_rechecks_changed_draft, test_batch_update_route,
                test_batch_update_id_mismatch_blocks_all, test_batch_rename_column,
-               test_batch_next_steps):
+               test_batch_next_steps, test_precheck_echoes_concept):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
