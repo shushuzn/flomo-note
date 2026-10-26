@@ -16,8 +16,12 @@
 
 COVERS = ("scan_concept_duplication",)
 
+import contextlib
 import importlib.util
+import io
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent / "scripts"
@@ -68,8 +72,33 @@ def run_cases():
     check("空字符串返回空串", D.normalize("") == "", D.normalize(""))
 
 
+def test_main_smoke():
+    """main 必须能跑通：collect_memos 返回 (seen, failed, truncated) 三元组。
+
+    这里钉的是一个真实回归——取卡函数新增「未取尽」一档后，本脚本仍按两元组解包，
+    任何一次真实调用都会抛 ValueError；只测纯函数的用例全绿也发现不了。
+    """
+    class FakeClient:
+        def tool(self, name, args):
+            return {"structuredContent": {"memos": [
+                {"id": "a1", "content": "#AI/RAG\nRAG 检索\n\n正文"},
+                {"id": "a2", "content": "#AI/RAG\nRAG 检索（2024）\n\n正文"}]}}
+
+    out = Path(tempfile.gettempdir()) / "q_dup_test.json"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+        code = D.main(["--tags", "AI/RAG", "--limit", "5", "--json", str(out)],
+                      client=FakeClient())
+    check("main 能跑通（三元组解包不再抛异常）", code == 0, code)
+    check("main 打印样本量", "样本 2 张" in buf.getvalue(), buf.getvalue()[:200])
+    data = json.loads(out.read_text(encoding="utf-8"))
+    check("main 落盘同名簇", any(len(v) == 2 for v in data.get("dupes", {}).values())
+          or "RAG" in json.dumps(data, ensure_ascii=False), data)
+
+
 if __name__ == "__main__":
     run_cases()
+    test_main_smoke()
     print("---")
     ok = all(RESULTS)
     print(f"{'全部通过' if ok else '存在失败用例'}（{len(RESULTS)} 项）")
