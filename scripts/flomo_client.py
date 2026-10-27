@@ -44,7 +44,12 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import concept_keywords, find_truncation, memo_signature  # noqa: E402
+from memo_util import (  # noqa: E402
+    concept_keywords,
+    find_truncation,
+    memo_signature,
+    strip_trailing_br,
+)
 from cli_util import UsageError, cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
 import net_util  # noqa: E402  出网通道与「请求是否已发出」的唯一实现
 
@@ -372,6 +377,32 @@ def _exact_content_dup(client, content):
     return None
 
 
+def find_gate_credential(sig, gate_dir=None):
+    """在全部闸门凭证里按签名查找，返回 `(命中的路径或 None, 最新凭证签名)`。
+
+    不能只看最新一份：批次发布一次给 N 张卡各留一份凭证，按 mtime 只取最新会让
+    批次里其余卡全部错配、整批中止。按签名匹配仍保留「正文必须先过闸门」——
+    签名对不上就没有凭证。`gate_dir` 可注入，便于离线用例。
+    """
+    gate_dir = Path(gate_dir or (Path(__file__).parent.parent / ".sop_gate"))
+    try:
+        files = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        files = []
+    newest = None
+    for idx, path in enumerate(files):
+        try:
+            candidate = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        candidate_sig = candidate.get("signature", {})
+        if idx == 0:
+            newest = candidate_sig
+        if candidate_sig == sig:
+            return path, newest if newest is not None else candidate_sig
+    return None, newest
+
+
 # 云端存储层对 Markdown 元字符做的反斜杠转义，还原回原字符。
 # 只处理「反斜杠 + 元字符」这一形态，且**不碰本来就没有反斜杠的文本**——
 # 因此本地若本来就写了反斜杠，两侧都会被剥掉，不产生「本地多一个反斜杠」的假差异。
@@ -382,6 +413,12 @@ _MD_ESCAPES = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|~<>])")
 # 显示文本不同，不会被吃掉；非 mailto 链接（手写 `[文](http://…)`）同样不碰。
 # 这类链接化不由写入方决定，逐字比对必然不等，会把「卡存对了」报成写失败。
 _AUTO_MAILTO = re.compile(r"\[([^\[\]\n]+)\]\(mailto:\1\)")
+
+# 读接口把换行与标签行回成 `…<br>` 的形态，全库一致，属平台外层的渲染记号。
+# 剥离口径收敛在 `memo_util.strip_trailing_br`（签名、形态检查共用同一份实现）。
+def _strip_trailing_br(line):
+    """剥掉一行末尾的 `<br>` 串；写侧与读侧共用同一口径。"""
+    return strip_trailing_br(line)
 
 
 def _norm_body(text):
@@ -412,7 +449,12 @@ def _norm_body(text):
     任何按原文比对的检查都得跟着加同样的特例；保持「写进去什么、存回来什么」
     才是能一直成立的判据（写前提示见 `validate_memo.py` 的同名 WARN）。
 
-    比对单位取「逐行还原转义、删去行内水平空白、再丢弃空行后的行序列」：
+    四、**行尾的 `<br>` 标签**。读接口现在把每个换行连同标签行都回成
+    `#标签<br>` 的形态，全库一致，是平台外层的渲染记号，不是正文改动。
+    它按「行尾一串 `<br>`」整段剥掉；行中出现 `<br>`（人写的换行语义）不在此列，
+    照旧参与比对。
+
+    比对单位取「逐行还原转义、剥掉行尾 `<br>`、删去行内水平空白、再丢弃空行后的行序列」：
     **行界与所有非转义字符一律不宽容**——任何一行文字的增删改动、行序变化、
     错别字、公式内容改动都会判失败（卡片的分段结构由写前质检 `validate_memo.py`
     按 H14 守住，不由回读承担）。
@@ -420,7 +462,11 @@ def _norm_body(text):
     lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     kept = [ln for ln in lines if ln.strip()]
     return "\n".join(
-        re.sub(r"[ \t\u3000]+", "", _AUTO_MAILTO.sub(r"\1", _MD_ESCAPES.sub(r"\1", ln)))
+        re.sub(
+            r"[ \t\u3000]+",
+            "",
+            _AUTO_MAILTO.sub(r"\1", _MD_ESCAPES.sub(r"\1", _strip_trailing_br(ln))),
+        )
         for ln in kept
     )
 
@@ -530,14 +576,13 @@ def main():
                 "  必须先跑 scripts/sop_gate.py 或 scripts/publish.py 过闸门，再写云。\n"
             )
             return 5
-        # 检查最新凭证的签名是否匹配
-        import json as _json
-        latest_gate = _json.loads(gate_files[0].read_text(encoding="utf-8"))
-        gate_sig = latest_gate.get("signature", {})
-        if gate_sig != sig:
+        # 在全部凭证里按签名匹配，而不是只看最新一份：批次发布一次写 N 张卡，
+        # 每张各留一份凭证，按 mtime 只取最新会让批次里其余卡片全部错配、整批中止。
+        matched, gate_sig = find_gate_credential(sig, gate_dir)
+        if matched is None:
             sys.stderr.write(
-                f"[失败] 最新闸门凭证签名与本次卡片不匹配，拒绝写云。\n"
-                f"  凭证签名：{gate_sig}\n"
+                f"[失败] 闸门凭证签名与本次卡片均不匹配，拒绝写云。\n"
+                f"  最新凭证签名：{gate_sig}\n"
                 f"  卡片签名：{sig}\n"
                 f"  禁止用旧凭证写新卡。\n"
             )
@@ -599,9 +644,13 @@ def main():
             sys.stderr.write(f"[失败] 回读验收未过：{detail}\n")
             return 1
         sys.stderr.write(f"[验收] {detail}\n")
-        # 自动清理旧凭证：只留最新5个，防止堆积导致被旧凭证绕过
+        # 用完即弃：只删除本次实际匹配的那份凭证，再留最近 20 份兜底。
+        # 一份凭证只能证明「这份正文过了闸门」，用掉就该失效；按「最新 5 份」
+        # 统一裁剪会把批次里还没写到的卡片凭证一起删掉，正是批次中止的成因之一。
+        if matched is not None:
+            Path(matched).unlink(missing_ok=True)
         all_gates = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for old_gate in all_gates[5:]:
+        for old_gate in all_gates[20:]:
             old_gate.unlink(missing_ok=True)
     return 0
 

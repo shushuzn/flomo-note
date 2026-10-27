@@ -97,6 +97,14 @@ def run_cases():
     check("补空行不触发「第二行不应为空」的假提示",
           not any("第二行" in w for w in info["warnings"]), str(info["warnings"])[:150])
 
+    # 3b) 读接口把标签行与换行回成 `…<br>`（真机全库形态）：剥掉后必须照常判过。
+    br_style = "#科技/安全<br>\n\n持有型会话凭证<br>\n\n要点：<br>\n- 内容。<br>"
+    checks, info = VC.run("TESTID", FakeClient(memo(br_style)))
+    check("行尾 <br> 不触发非法字符",
+          by_name(checks)["形态检查（复用 validate_memo）"][0],
+          by_name(checks)["形态检查（复用 validate_memo）"][1])
+    check("行尾 <br> 不影响概念名落位", info["second"] == "持有型会话凭证", repr(info["second"]))
+
     # 4) 缺第二行概念名（早期存量卡的典型形态）
     no_concept = "#科技/安全\n\n要点：\n- 只有正文。\n"
     checks, _ = VC.run("TESTID", FakeClient(memo(no_concept)))

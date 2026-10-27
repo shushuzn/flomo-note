@@ -123,6 +123,10 @@ def run(memo_id: str, client=None, draft_path=None):
     memo = fetch(memo_id, client)
     content = memo.get("content") or ""
     raw = content.replace("\r\n", "\n").replace("\r", "\n")
+    # 平台读接口把换行连同标签行回成 `#标签<br>` 的形态，全库一致。它是外层渲染记号，
+    # 不是正文内容——不剥掉，形态检查会报「非法字符 <>」、逐字比对必然不等，
+    # 每张合规卡都被记成失败。剥离口径与写侧共用 `FC._strip_trailing_br`。
+    raw = "\n".join(FC._strip_trailing_br(ln) for ln in raw.split("\n"))
     norm, render_padded = _undo_render_blank(raw)
     lines = norm.split("\n")
     checks = []

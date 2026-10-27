@@ -20,6 +20,18 @@ import hashlib
 import re
 
 
+# 读接口把换行与标签行回成 `…<br>` 的形态（全库一致），是平台外层的渲染记号。
+# 只剥「行尾一串 `<br>`」；行中的 `<br>` 不碰——那是正文里人写的换行语义。
+# 签名、回读对账、形态检查三处共用这一个口径：各自写一份，迟早一边剥一边不剥，
+# 表现就是「查重找不到已有卡 → 建重复卡」「回读逐字不等 → 合规卡记成失败」。
+_TRAILING_BR = re.compile(r"(?:<br\s*/?>)+[ \t\u3000]*$", re.I)
+
+
+def strip_trailing_br(line):
+    """剥掉一行末尾的 `<br>` 串（平台渲染记号，不是正文内容）。"""
+    return _TRAILING_BR.sub("", line or "")
+
+
 def memo_signature(content):
     """返回 {"tagline","concept"} 或 None。
 
@@ -28,7 +40,7 @@ def memo_signature(content):
     """
     if not isinstance(content, str) or not content.strip():
         return None
-    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    lines = [strip_trailing_br(ln).strip() for ln in content.splitlines() if ln.strip()]
     if len(lines) < 2:
         return None
     tagline, concept = lines[0], lines[1]

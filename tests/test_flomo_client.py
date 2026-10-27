@@ -118,6 +118,19 @@ def run_norm_cases():
     check("_norm_body 链接化宽容不得掩盖链接之外的改动",
           FC._norm_body("Connect 为 a@b.c")
           != FC._norm_body("[Connect 为 c@b.c](mailto:c@b.c)"))
+    # 读接口把换行/标签行回成 `#标签<br>`（全库一致）：行尾 `<br>` 是渲染记号。
+    check("_norm_body 行尾 <br> 不影响判定",
+          FC._norm_body("#标签/子\n概念名\n正文")
+          == FC._norm_body("#标签/子<br>\n概念名<br>\n正文<br>"),
+          repr(FC._norm_body("#标签/子<br>\n概念名<br>\n正文<br>")))
+    check("_norm_body 行尾 <br/> 与 <BR> 同样剥掉",
+          FC._norm_body("A") == FC._norm_body("A<BR/>"),
+          repr(FC._norm_body("A<BR/>")))
+    check("_norm_body 只剥行尾 <br>，行中 <br> 照旧参与比对",
+          FC._norm_body("A\nB") != FC._norm_body("A<br>B"),
+          repr(FC._norm_body("A<br>B")))
+    check("_norm_body 行尾 <br> 宽容不得掩盖该行文字改动",
+          FC._norm_body("续航 430 公里") != FC._norm_body("续航 450 公里<br>"))
 
 
 def run_readback_cases():
@@ -205,6 +218,50 @@ def run_write_path_cases():
     check("拒绝发生在发请求之前", 0 <= idx_guard < idx_call, (idx_guard, idx_call))
     check("拒绝时给独立退出码（非 1，避免被读成网络失败）",
           "return 4" in m[idx_guard:idx_call] if idx_guard >= 0 else False)
+    # 批次写多张卡时每张各留一份凭证：必须按签名在全部凭证里找，不能只看最新一份。
+    check("闸门凭证按签名匹配（不只取最新一份）",
+          "find_gate_credential(sig, gate_dir)" in m and "gate_files[0]" not in m,
+          "main() 仍在只看最新凭证")
+
+
+def run_gate_credential_cases():
+    """闸门凭证查找：批次里较旧的那份也必须能被匹配到。"""
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        def write(name, sig, mtime):
+            p = Path(d) / name
+            p.write_text(json.dumps({"signature": sig}, ensure_ascii=False), encoding="utf-8")
+            os.utime(p, (mtime, mtime))
+            return p
+
+        sig_a = {"first": "#A/1", "second": "甲", "len": 10}
+        sig_b = {"first": "#B/2", "second": "乙", "len": 20}
+        write("old.json", sig_a, 1000)
+        write("new.json", sig_b, 2000)
+
+        hit, newest = FC.find_gate_credential(sig_a, d)
+        check("凭证匹配到较旧的一份（批次不再因最新不匹配而中止）",
+              hit is not None and Path(hit).name == "old.json", str(hit))
+        check("不匹配时回传最新凭证签名供报错", newest == sig_b, str(newest))
+
+        hit, _ = FC.find_gate_credential(sig_b, d)
+        check("凭证命中最新一份", hit is not None and Path(hit).name == "new.json", str(hit))
+
+        miss, newest = FC.find_gate_credential({"first": "#C"}, d)
+        check("签名都对不上时返回 None", miss is None, str(miss))
+
+        bad = Path(d) / "broken.json"
+        bad.write_text("{not json", encoding="utf-8")
+        os.utime(bad, (3000, 3000))
+        hit, _ = FC.find_gate_credential(sig_a, d)
+        check("坏凭证文件被跳过、不影响匹配", hit is not None, str(hit))
+
+        empty_dir = Path(d) / "empty"
+        empty_dir.mkdir()
+        hit, newest = FC.find_gate_credential(sig_a, empty_dir)
+        check("空目录返回 (None, None)", hit is None and newest is None, (hit, newest))
 
 
 def run_brief_cases():
@@ -534,6 +591,7 @@ if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
     run_write_path_cases()
+    run_gate_credential_cases()
     run_brief_cases()
     run_tool_data_cases()
     run_parse_options_cases()

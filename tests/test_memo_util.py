@@ -37,6 +37,14 @@ def run_signature():
     check("标签段后夹空行仍取到概念名",
           MU.memo_signature("#科技/机器人\n\n概念名\n正文\n")
           == {"tagline": "#科技/机器人", "concept": "概念名"})
+    # 读接口回成 `#标签<br>`（全库一致）：签名必须与本地草稿一致，否则查重找不到
+    # 已有卡 → 建重复卡，闸门凭证也对不上。
+    check("行尾 <br> 不影响签名（否则查重会建重复卡）",
+          MU.memo_signature("#科技/机器人<br>\n概念名<br>\n正文<br>")
+          == MU.memo_signature("#科技/机器人\n概念名\n正文"),
+          repr(MU.memo_signature("#科技/机器人<br>\n概念名<br>\n正文<br>")))
+    check("行中 <br> 仍属正文，不剥",
+          MU.strip_trailing_br("甲<br>乙") == "甲<br>乙")
     check("空串返回 None", MU.memo_signature("") is None)
     check("None 返回 None", MU.memo_signature(None) is None)
     check("非字符串返回 None", MU.memo_signature(123) is None)
