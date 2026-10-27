@@ -393,7 +393,16 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
             for m in memos:
                 content = m.get("content") or ""
                 lines = content.split("\n")
-                concept_line = lines[1] if len(lines) > 1 else "(无概念名行)"
+                # 找概念名行：跳过标签行和空行
+                concept_line = "(无概念名行)"
+                for i, ln in enumerate(lines):
+                    s = ln.strip()
+                    if not s:
+                        continue
+                    if i == 0 and s.startswith("#"):
+                        continue
+                    concept_line = s
+                    break
                 print(f"\n── {m.get('id')} | {concept_line}")
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
@@ -410,12 +419,30 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
                 for m in memos:
                     content = m.get("content") or ""
                     lines = content.split("\n")
-                    concept_line = lines[1].strip() if len(lines) > 1 else ""
+                    # 找概念名行：跳过标签行和空行，取第一个非空内容行
+                    concept_line = ""
+                    for i, ln in enumerate(lines):
+                        s = ln.strip()
+                        if not s:
+                            continue
+                        if i == 0 and s.startswith("#"):
+                            continue  # 标签行
+                        concept_line = s
+                        break
                     # 概念名完全相同，或者高度相似（去掉标点后前10字相同）
-                    from memo_util import signature_key
+                    from memo_util import signature_key, normalize_concept
                     current_key = signature_key(sig)
-                    gate_key = signature_key({"tagline": lines[0].strip() if lines else "", "concept": concept_line})
-                    if current_key and gate_key and current_key == gate_key:
+                    tagline = lines[0].strip() if lines else ""
+                    gate_key = signature_key({"tagline": tagline, "concept": concept_line})
+                    # 完整签名匹配（标签+概念名都相同）
+                    sig_match = current_key and gate_key and current_key == gate_key
+                    # 概念名归一化后相同（不管标签是否相同）——防止不同标签下建同名概念卡
+                    concept_same = (
+                        normalize_concept(current_concept)
+                        and normalize_concept(concept_line)
+                        and normalize_concept(current_concept) == normalize_concept(concept_line)
+                    )
+                    if sig_match or concept_same:
                         duplicate_found = True
                         duplicate_ids.append(m.get("id"))
             if duplicate_found:

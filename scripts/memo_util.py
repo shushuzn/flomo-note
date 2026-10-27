@@ -57,6 +57,16 @@ def signature_key(sig):
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+def normalize_concept(concept):
+    """概念名归一化：去空白、去标点、统一大小写，用于跨标签同名查重。"""
+    if not concept:
+        return ""
+    import re as _re
+    s = _re.sub(r"[\s\u3000]+", "", concept)  # 去所有空白
+    s = _re.sub(r"[^\w\u4e00-\u9fff]+", "", s)  # 去标点符号
+    return s.lower()
+
+
 def body_hash(content):
     """正文整体指纹（用于凭证，防"先跑闸门、后改正文"）。
 
