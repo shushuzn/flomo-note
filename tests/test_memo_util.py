@@ -41,8 +41,7 @@ def run_signature():
     # 已有卡 → 建重复卡，闸门凭证也对不上。
     check("行尾 <br> 不影响签名（否则查重会建重复卡）",
           MU.memo_signature("#科技/机器人<br>\n概念名<br>\n正文<br>")
-          == MU.memo_signature("#科技/机器人\n概念名\n正文"),
-          repr(MU.memo_signature("#科技/机器人<br>\n概念名<br>\n正文<br>")))
+          == MU.memo_signature("#科技/机器人\n概念名\n正文"))
     check("行中 <br> 仍属正文，不剥",
           MU.strip_trailing_br("甲<br>乙") == "甲<br>乙")
     check("空串返回 None", MU.memo_signature("") is None)
