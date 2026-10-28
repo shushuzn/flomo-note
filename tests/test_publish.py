@@ -997,6 +997,15 @@ def test_batch_update_route():
         last = calls[-1]
         check("批次覆盖：复核指向被覆盖的 id",
               last[last.index("--id") + 1] == "ABC", last)
+        # 预检那次闸门必须收到 --anchor-id：闸门的查重会把这行要覆盖的卡本身当成
+        # 「同名重复卡」拦下，整批一张都写不出去（真卡实测过）。
+        gate_calls = [c for c in calls if Path(c[1]).name == "sop_gate.py"]
+        check("批次覆盖：预检闸门带 --anchor-id",
+              bool(gate_calls) and "--anchor-id" in gate_calls[0],
+              gate_calls)
+        check("批次覆盖：--anchor-id 指向被覆盖的 id",
+              bool(gate_calls) and gate_calls[0][gate_calls[0].index("--anchor-id") + 1] == "ABC",
+              gate_calls)
 
 
 def test_batch_update_id_mismatch_blocks_all():

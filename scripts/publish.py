@@ -1019,7 +1019,8 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     for i, it in enumerate(items, 1):
         prefix = f"[{i}/{n}] "
         line_skip_web = skip_web or it.get("skip_web", False)
-        code = precheck(run, it["draft"], it["verify"], line_skip_web, prefix=prefix)
+        code = precheck(run, it["draft"], it["verify"], line_skip_web,
+                        update_id=it["update_id"], prefix=prefix)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
