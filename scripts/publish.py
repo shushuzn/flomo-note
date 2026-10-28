@@ -473,7 +473,9 @@ def _print_content_loss(rep: dict) -> None:
               f"多半是正则或替换的起点错了", file=sys.stderr)
     print("[阻塞] 草稿比原卡少了上面这些内容，未写云——整篇替换下这类丢失在写后对账里"
           "两边都不存在（草稿本身就少了一段），只能写前拦。确属有意重写（如把长卡压成"
-          "机制卡）请加 --allow-content-loss 放行，并在回读里逐条认领",
+          "机制卡）请加 --allow-content-loss 放行，并在回读里逐条认领"
+          "（读回全文的卡就地修属常规自修，见 SKILL.md H22b——自行确认后带开关重跑，"
+          "不必停下来等授权）",
           file=sys.stderr)
 
 
@@ -596,7 +598,9 @@ def _check_identity(cloud_head: list[str], local_head: list[str], allow_rename: 
         if not allow_rename:
             print(f"[阻塞] 目标卡概念名「{cloud_head[1]}」与草稿「{local_head[1]}」不同——"
                   f"疑似 id 抄错，硬写会把这张卡的正文盖到另一张卡上；"
-                  f"确属改名请显式授权（单卡 --allow-rename，批次清单第 4 段写 rename）",
+                  f"确属改名请显式授权（单卡 --allow-rename，批次清单第 4 段写 rename）"
+                  f"——概念名与正文错位的就地修卡属常规自修（SKILL.md H22b），"
+                  f"自行确认后带开关重跑，不必停下来等授权",
                   file=sys.stderr)
             return 6
         print(f"[放行] 概念名改名：「{cloud_head[1]}」→「{local_head[1]}」（改名授权）")
