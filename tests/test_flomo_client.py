@@ -264,6 +264,68 @@ def run_gate_credential_cases():
         check("空目录返回 (None, None)", hit is None and newest is None, (hit, newest))
 
 
+def run_clear_exempt_cases():
+    """H23 清空豁免：空白正文的 memo_update 必须真的发得出去。
+
+    事故形态：写入口加了「强制闸门凭证」（没有过 sop_gate 的一律拒写云）之后，
+    H23 明文规定的清空动作 `memo_update(id, content=' ')` 被自己挡死了——清空后的
+    正文没有任何内容，既无签名可比、也无凭证可挂，只报「正文不足两行，无法生成签名」。
+    修法是**只给空白正文的更新开豁免**（新建空卡照旧拒）。
+
+    用例锁住两侧：① 空白更新真的把请求发到云端；② 空白新建仍在发出前被拒——
+    「先建空卡再补内容」这条后门不能开。
+    """
+    import contextlib
+    import io
+
+    class _Capture(io.StringIO):
+        """带 reconfigure：main() 一进来就把 stderr 重配成 utf-8，纯 StringIO 没这方法。"""
+
+        def reconfigure(self, *args, **kwargs):
+            return None
+
+    class FakeClient:
+        """只记录 tool 调用；memo_update 返回 id，batch_get 回读清空后的空白。"""
+
+        def __init__(self, token=None):
+            self.calls = []
+
+        def init(self):
+            return None
+
+        def tool(self, name, arguments=None):
+            self.calls.append((name, arguments or {}))
+            if name == "memo_update":
+                return {"structuredContent": {"id": "TID"}}
+            if name == "memo_batch_get":
+                return {"structuredContent": {"memos": [{"id": "TID", "content": " "}]}}
+            raise AssertionError(f"不应出现的工具调用：{name}")
+
+    fake = FakeClient()
+    orig_token, orig_client, orig_argv = FC.load_token, FC.FlomoClient, sys.argv
+    try:
+        FC.load_token = lambda: ("fake-token", "test")
+        FC.FlomoClient = lambda token: fake
+        sys.argv = ["flomo_client.py", "memo_update",
+                    json.dumps({"id": "TID", "content": " "})]
+        buf = _Capture()
+        with contextlib.redirect_stderr(buf):
+            code = FC.main()
+        check("H23 清空：空白 memo_update 退出码 0", code == 0, (code, buf.getvalue()[:120]))
+        check("H23 清空：请求真的发到 memo_update",
+              ("memo_update", {"id": "TID", "content": " "}) in fake.calls, fake.calls)
+
+        fake.calls.clear()
+        sys.argv = ["flomo_client.py", "memo_create", json.dumps({"content": " "})]
+        buf = _Capture()
+        with contextlib.redirect_stderr(buf):
+            code = FC.main()
+        check("空白正文的 memo_create 仍被拒（不给建空卡留后门）", code == 5, code)
+        check("拒建空卡时一个请求都没发", fake.calls == [], fake.calls)
+    finally:
+        FC.load_token, FC.FlomoClient, sys.argv = orig_token, orig_client, orig_argv
+
+
 def run_brief_cases():
     """--brief 压缩列表回包，但绝不能把 batch_get 的全文截掉（H1 的后门）。"""
     memos = [
@@ -592,6 +654,7 @@ if __name__ == "__main__":
     run_readback_cases()
     run_write_path_cases()
     run_gate_credential_cases()
+    run_clear_exempt_cases()
     run_brief_cases()
     run_tool_data_cases()
     run_parse_options_cases()

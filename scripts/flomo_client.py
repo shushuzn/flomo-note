@@ -562,50 +562,62 @@ def main():
         # 防止绕过publish.py直接写云导致跳过查重/搜索/质检
         gate_dir = Path(__file__).parent.parent / ".sop_gate"
         content = arguments.get("content") or ""
-        # 计算本次卡片签名
-        from memo_util import memo_signature
-        sig = memo_signature(content)
-        if not sig:
-            sys.stderr.write("[失败] 卡片正文不足两行，无法生成签名，拒绝写云。\n")
-            return 5
-        # 找最新的凭证文件
-        gate_files = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not gate_files:
-            sys.stderr.write(
-                "[失败] 未检测到SOP闸门凭证（.sop_gate/*.json），拒绝直接写云。\n"
-                "  必须先跑 scripts/sop_gate.py 或 scripts/publish.py 过闸门，再写云。\n"
-            )
-            return 5
-        # 在全部凭证里按签名匹配，而不是只看最新一份：批次发布一次写 N 张卡，
-        # 每张各留一份凭证，按 mtime 只取最新会让批次里其余卡片全部错配、整批中止。
-        matched, gate_sig = find_gate_credential(sig, gate_dir)
-        if matched is None:
-            sys.stderr.write(
-                f"[失败] 闸门凭证签名与本次卡片均不匹配，拒绝写云。\n"
-                f"  最新凭证签名：{gate_sig}\n"
-                f"  卡片签名：{sig}\n"
-                f"  禁止用旧凭证写新卡。\n"
-            )
-            return 5
-        marks = find_truncation(arguments.get("content") or "")
-        if marks:
-            sys.stderr.write(
-                f"[失败] 正文含截断占位符 {marks[0]}，拒绝写入（退出码 4）。\n"
-                "  检索类回包（memo_search / memo_recommended）会把长正文中段挖掉，\n"
-                "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
-            )
-            return 4
-        # 自动还原 batch_get 读回时 flomo 存储层插入的 <br>：
-        # 读回的 content 里换行已被转成 <br>，若直接拼接写回会再叠一层，
-        # 变成 <br><br>（多余空行）。写前统一还原成换行，调用方无需手动清洗。
-        raw = arguments.get("content") or ""
-        if "<br" in raw:
-            cleaned = raw.replace("<br><br>", "\n\n").replace("<br>", "\n")
-            arguments["content"] = cleaned
-            sys.stderr.write(
-                f"[清洗] 正文含 {raw.count('<br')} 处 <br> 标签，已自动还原为换行"
-                f"（{len(raw)}→{len(cleaned)} 字符）。\n"
-            )
+        # 清空分支没有凭证可挂，先置 None：写后按「用掉即删」回收凭证时会读它
+        matched = None
+        if not content.strip():
+            # H23 清空：`memo_update(id, content=' ')` 是 SKILL 明文规定的常规写云动作
+            # （免确认执行）。清空后的正文没有任何内容，既无签名可比、也无凭证可挂——
+            # 若沿用下面的签名闸门，H23 这条动作会被自己的写入口挡死（实测报「正文不足
+            # 两行，无法生成签名」）。边界：**只放行空白正文的更新**；新建空卡没有意义，
+            # 照旧拒绝，不给「先建空卡、再补内容」留后门。
+            if name == "memo_create":
+                sys.stderr.write("[失败] memo_create 不接受空白正文（新建空卡无意义）。\n")
+                return 5
+            sys.stderr.write("[注意] 正文为空白：按 H23 执行清空，跳过闸门签名检查。\n")
+        else:
+            from memo_util import memo_signature
+            sig = memo_signature(content)
+            if not sig:
+                sys.stderr.write("[失败] 卡片正文不足两行，无法生成签名，拒绝写云。\n")
+                return 5
+            # 找最新的凭证文件
+            gate_files = sorted(gate_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if not gate_files:
+                sys.stderr.write(
+                    "[失败] 未检测到SOP闸门凭证（.sop_gate/*.json），拒绝直接写云。\n"
+                    "  必须先跑 scripts/sop_gate.py 或 scripts/publish.py 过闸门，再写云。\n"
+                )
+                return 5
+            # 在全部凭证里按签名匹配，而不是只看最新一份：批次发布一次写 N 张卡，
+            # 每张各留一份凭证，按 mtime 只取最新会让批次里其余卡片全部错配、整批中止。
+            matched, gate_sig = find_gate_credential(sig, gate_dir)
+            if matched is None:
+                sys.stderr.write(
+                    f"[失败] 闸门凭证签名与本次卡片均不匹配，拒绝写云。\n"
+                    f"  最新凭证签名：{gate_sig}\n"
+                    f"  卡片签名：{sig}\n"
+                    f"  禁止用旧凭证写新卡。\n"
+                )
+                return 5
+            marks = find_truncation(arguments.get("content") or "")
+            if marks:
+                sys.stderr.write(
+                    f"[失败] 正文含截断占位符 {marks[0]}，拒绝写入（退出码 4）。\n"
+                    "  检索类回包（memo_search / memo_recommended）会把长正文中段挖掉，\n"
+                    "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
+                )
+                return 4
+            # 自动还原 batch_get 读回时 flomo 存储层插入的 <br>：
+            # 读回的 content 里换行已被转成 <br>，若直接拼接写回会再叠一层，
+            # 变成 <br><br>（多余空行）。写前统一还原成换行，调用方无需手动清洗。
+            raw = arguments.get("content") or ""
+            if "<br" in raw:
+                cleaned = raw.replace("<br><br>", "\n\n").replace("<br>", "\n")
+                arguments["content"] = cleaned
+                sys.stderr.write(
+                    f"[清洗] 正文含 {raw.count('<br')} 处 <br> 标签，已自动还原为换行"
+                    f"（{len(raw)}→{len(cleaned)} 字符）。\n"
+                )
 
     # 幂等保护：memo_create 写前先查重，若云端已存在
     # 正文逐字相同的卡片则直接复用其 id、不再新建。无论 create 被触发几次，
