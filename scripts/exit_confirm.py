@@ -54,59 +54,60 @@ def main():
     sp = Path(args.search_log)
     if not sp.exists():
         errors.append(f"搜索记录不存在: {sp}")
-        print("[退出拦截] 不允许就这样退出：", file=sys.stderr)
-        for e in errors:
-            print(f"  - {e}", file=sys.stderr)
-        return 1
+        data = None
+    else:
+        try:
+            data = json.loads(sp.read_text(encoding="utf-8"))
+        except Exception as e:
+            errors.append(f"搜索记录解析失败: {e}")
+            data = None
 
-    data = json.loads(sp.read_text(encoding="utf-8"))
-    if not data.get("searched"):
-        errors.append("搜索记录里 searched 不为 true——必须真的搜过")
-    terms = data.get("terms", [])
-    if not terms:
-        errors.append("搜索记录里 terms 为空——至少搜过一个对象")
+    if data is not None:
+        if not data.get("searched"):
+            errors.append("搜索记录里 searched 不为 true——必须真的搜过")
+        terms = data.get("terms", [])
+        if not terms:
+            errors.append("搜索记录里 terms 为空——至少搜过一个对象")
 
-    for t in terms:
-        term = t.get("term", "?")
-        url = t.get("search_url", "")
-        title = t.get("title", "")
-        if not url:
-            errors.append(f"术语 {term} 缺 search_url")
-            continue
-        if not title:
-            errors.append(f"术语 {term} 缺 title")
-            continue
+        for t in terms:
+            term = t.get("term", "?")
+            url = t.get("search_url", "")
+            title = t.get("title", "")
+            if not url:
+                errors.append(f"术语 {term} 缺 search_url")
+                continue
+            if not title:
+                errors.append(f"术语 {term} 缺 title")
+                continue
 
-        if args.skip_fetch:
-            continue
+            if args.skip_fetch:
+                continue
 
-        # 真去抓URL，验证不是编造
-        page_text = fetch_page(url)
-        if not page_text or len(page_text) < 200:
-            errors.append(
-                f"术语 {term} 的search_url抓不到内容（可能是编造的URL）: {url}——"
-                f"必须填真实可访问的文章页"
-            )
-            continue
+            # 真去抓URL，验证不是编造
+            page_text = fetch_page(url)
+            if not page_text or len(page_text) < 200:
+                errors.append(
+                    f"术语 {term} 的search_url抓不到内容（可能是编造的URL）: {url}——"
+                    f"必须填真实可访问的文章页"
+                )
+                continue
 
-        # 页面内容里必须包含对象关键词（去掉标点后比对）
-        def normalize(s):
-            return re.sub(r"[\s\W_]+", "", s).lower()
+            # 页面内容里必须包含对象关键词（去掉标点后比对）
+            def normalize(s):
+                return re.sub(r"[\s\W_]+", "", s).lower()
 
-        page_norm = normalize(page_text[:20000])
-        term_norm = normalize(term)
-        # 取term里最长的中文段作为关键词
-        chunks = re.findall(r"[\u4e00-\u9fa5]{2,}", term)
-        hit = False
-        for c in chunks:
-            if normalize(c) and normalize(c) in page_norm:
-                hit = True
-                break
-        if not hit and chunks:
-            errors.append(
-                f"术语 {term} 的关键词「{chunks[0]}」在URL页面里找不到——"
-                f"search_url指向的页面和这个对象无关，疑似编造"
-            )
+            page_norm = normalize(page_text[:20000])
+            chunks = re.findall(r"[\u4e00-\u9fa5]{2,}", term)
+            hit = False
+            for c in chunks:
+                if normalize(c) and normalize(c) in page_norm:
+                    hit = True
+                    break
+            if not hit and chunks:
+                errors.append(
+                    f"术语 {term} 的关键词「{chunks[0]}」在URL页面里找不到——"
+                    f"search_url指向的页面和这个对象无关，疑似编造"
+                )
 
     # 3. dedup
     dp = Path(args.dedup_log)
@@ -124,6 +125,13 @@ def main():
         print("[退出拦截] 不允许就这样退出：", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("正确流程：", file=sys.stderr)
+        print("  1. fetch_article 抓取并读回全文", file=sys.stderr)
+        print("  2. 列出全部对象清单", file=sys.stderr)
+        print("  3. 对每个对象调 general_search，把返回的 title/snippet/url 原样写入 search_log", file=sys.stderr)
+        print("  4. 跑dedup.py查重，保存输出到文件", file=sys.stderr)
+        print("  5. 确认确实无建卡价值，再跑本脚本留痕", file=sys.stderr)
         return 1
 
     print(f"[退出留痕] 已记录：{len(objs)}个对象审视完毕，HTTP校验通过")

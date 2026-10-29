@@ -30,7 +30,7 @@ def check(label, ok, detail=""):
 
 
 def run(args):
-    p = subprocess.run([sys.executable, str(SCRIPT), *args],
+    p = subprocess.run([sys.executable, str(SCRIPT), "--skip-fetch", *args],
                        cwd=ROOT, capture_output=True, text=True, timeout=60)
     return p.returncode, p.stdout, p.stderr
 
@@ -41,6 +41,7 @@ def good_search(tmp):
         "searched": True,
         "terms": [{"term": "某对象", "query": "某对象 定义",
                    "conclusion": "查无此概念", "search_url": "https://example.com/a",
+                   "title": "某对象百科", "snippet": "某对象是...",
                    "in_body": []}]}, ensure_ascii=False), encoding="utf-8")
     return str(f)
 
