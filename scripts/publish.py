@@ -168,6 +168,85 @@ def _norm_lines(text: str) -> list[str]:
     return [ln for ln in FC._norm_body(text).splitlines() if ln.strip()]
 
 
+_PUNCT = re.compile(r"[\s，。；：、！？（）「」《》〈〉·—…,.!?;:'\"()\[\]【】-]+")
+_SHINGLE = 12
+_OVERLAP_LIMIT = 0.08
+
+
+def _line_key(line: str) -> str:
+    """整行比对键：去空白与标点，只留文字数字。同一句话换个标点仍是同一句话。"""
+    return _PUNCT.sub("", line or "")
+
+
+def _body_key(body: str) -> str:
+    """全文比对键（跨卡重合率用）：去空白标点，行序无关。"""
+    return _line_key("".join(_norm_lines(body)))
+
+
+def shared_lines(bodies: list[str]) -> list[tuple[str, list[int]]]:
+    """同批多稿之间**逐字相同的整行**（去标点后 ≥10 字）：[(原行, [稿序号…])]。
+
+    这是串位最典型的形态：把兄弟卡的一条要点原样抄进本卡。它字面上没错、质检也过，
+    因为没有任何校验是「拿两张卡互相看」的——H11③ 全靠人自己记得比对。
+    """
+    hit: dict[str, list] = {}
+    for i, body in enumerate(bodies):
+        for ln in _norm_lines(body):
+            k = _line_key(ln)
+            if len(k) >= 10:
+                slot = hit.setdefault(k, [ln, []])
+                if i not in slot[1]:
+                    slot[1].append(i)
+    return [(ln, idx) for ln, idx in hit.values() if len(idx) > 1]
+
+
+def overlap_pairs(bodies: list[str], *, k: int = _SHINGLE) -> list[tuple[int, int, float]]:
+    """同批稿两两的 12 字片段重合率：[(a, b, 较小稿被覆盖的比例)]，降序。
+
+    整行重复挡得住「原样抄」，挡不住「换个说法抄同一段事实」。这一项按字面重合报数，
+    交人看一眼——它只提示，不拦。
+    """
+    grams = []
+    for body in bodies:
+        s = _body_key(body)
+        grams.append({s[i:i + k] for i in range(max(0, len(s) - k + 1))})
+    out = []
+    for i in range(len(grams)):
+        for j in range(i + 1, len(grams)):
+            small = min(len(grams[i]), len(grams[j]))
+            if not small:
+                continue
+            share = len(grams[i] & grams[j]) / small
+            if share >= _OVERLAP_LIMIT:
+                out.append((i, j, share))
+    return sorted(out, key=lambda t: -t[2])
+
+
+def _concept_of(body: str) -> str:
+    """草稿的概念名：首个非标签非空行（与闸门同一口径）。"""
+    for ln in (body or "").splitlines():
+        ln = ln.strip()
+        if ln and not ln.startswith("#"):
+            return ln
+    return "(无概念名)"
+
+
+def audit_batch(bodies: list[str]) -> tuple[list[str], list[str]]:
+    """同批稿件互相核对：返回 (硬错, 软提示)。纯函数，不联网不落盘。
+
+    硬错 = 有整行重复（见 `shared_lines`）。写云前就拦，因为串位一旦写出去，改的是
+    N 张卡里的一张，剩下的还得逐张回读才发现。
+    软提示 = 字面重合偏高的卡对（换个说法抄同一段事实，整行比对看不见）。
+    """
+    names = [_concept_of(b) for b in bodies]
+    errors = [f"「{ln}」同时出现在 {names[idx[0]]} 与 {names[idx[1]]}"
+              for ln, idx in shared_lines(bodies)]
+    notes = [f"{names[i]} 与 {names[j]} 字面重合 {share:.0%}："
+             "逐条确认每条只归一张卡（H11③）"
+             for i, j, share in overlap_pairs(bodies)]
+    return errors, notes
+
+
 def _tag_tokens(text: str) -> list[str]:
     """首行标签段的 token 列表（顺序无关的比对用）。"""
     heads = _head_lines(text, 1)
@@ -1019,6 +1098,25 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检"
           f"{' + 覆盖对象' if any(it['update_id'] for it in items) else ''}），"
           "任何一张不过则一张都不写")
+    bodies = []
+    for it in items:
+        try:
+            bodies.append(Path(it["draft"]).read_text(encoding="utf-8"))
+        except OSError as exc:
+            print(f"[失败] 草稿读不出来（{it['draft']}）：{exc}——本批一张都没写",
+                  file=sys.stderr)
+            return 1
+    errs, notes = audit_batch(bodies)
+    if errs:
+        # 同批互抄是唯一「单看每张都合格、合起来错」的缺陷，只能在这一层拦
+        print("[失败] 同批卡片之间存在整行重复，未写云：", file=sys.stderr)
+        for e in errs:
+            print(f"         {e}", file=sys.stderr)
+        print("         同源多卡：每条只留在它真正描述的那张卡上，另一张改写或删掉",
+              file=sys.stderr)
+        return 3
+    for note in notes:
+        print(f"[注意] {note}")
     digests: dict[str, str] = {}
     for i, it in enumerate(items, 1):
         prefix = f"[{i}/{n}] "

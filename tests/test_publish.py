@@ -907,6 +907,52 @@ def test_batch_rejects_single_draft_flags():
         check("--batch + --draft：一个子脚本都没跑", calls == [], calls)
 
 
+def test_batch_shared_line_blocks():
+    """同批两张卡出现同一整行：写云前拦下，并点出是哪两张、哪一行。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 2)
+        shared = "参赛资格：市级、国家级体育传统项目学校为基本参赛范围"
+        rows[0][0].write_text(f"#教育/基础教育\n学校\n\n要点：\n- {shared}", encoding="utf-8")
+        rows[1][0].write_text(f"#体育/赛事\n系列比赛\n\n要点：\n- {shared}",
+                              encoding="utf-8")
+        man = _manifest_rows(tmp, rows)
+        exec_fn, calls = make_exec()
+        code, _out, err = run(["--batch", str(man)], exec_fn)
+        check("同批整行重复：退出码 3", code == 3, code)
+        check("同批整行重复：一个字节都没写", calls == [], calls)
+        check("同批整行重复：点出两张卡", "学校 与 系列比赛" in err, err)
+        check("同批整行重复：点出那一行", "市级、国家级体育传统项目学校" in err, err)
+
+
+def test_batch_shared_line_ignores_short_and_tag_lines():
+    """标签行、短行不算重复：两张卡用同一标签、同一句「要点：」是常态。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 2)
+        rows[0][0].write_text("#AI/测试\n甲\n\n要点：\n- 一句话\n正文甲", encoding="utf-8")
+        rows[1][0].write_text("#AI/测试\n乙\n\n要点：\n- 一句话\n正文乙", encoding="utf-8")
+        man = _manifest_rows(tmp, rows)
+        exec_fn, _calls = make_exec()
+        code, _out, _err = run(["--batch", str(man)], exec_fn)
+        check("短行/标签行相同：不拦", code == 0, code)
+
+
+def test_batch_overlap_note():
+    """整行不同但成大段字面重合：只提示不拦（换个说法抄同一段事实）。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        rows = _drafts(tmp, 2)
+        para = "北京市体育局与北京市教育委员会共同主办面向全市传统校学生的年度系列赛事"
+        rows[0][0].write_text(f"#体育/赛事\n甲\n\n- {para}其一", encoding="utf-8")
+        rows[1][0].write_text(f"#体育/赛事\n乙\n\n- {para}其二", encoding="utf-8")
+        man = _manifest_rows(tmp, rows)
+        exec_fn, _calls = make_exec()
+        code, out, _err = run(["--batch", str(man)], exec_fn)
+        check("字面重合：只提示不拦", code == 0, code)
+        check("字面重合：给出重合比例", "字面重合" in out and "%" in out, out[-400:])
+
+
 def test_batch_partial_failure():
     """第 2 张写入失败：已写的照实报告、不重发、不继续——重跑时只跑余下的。"""
     with tempfile.TemporaryDirectory() as tmp:
@@ -1181,7 +1227,10 @@ if __name__ == "__main__":
                test_batch_rejects_single_draft_flags, test_batch_partial_failure,
                test_batch_rechecks_changed_draft, test_batch_update_route,
                test_batch_update_id_mismatch_blocks_all, test_batch_rename_column,
-               test_batch_next_steps, test_precheck_echoes_concept):
+               test_batch_next_steps, test_precheck_echoes_concept,
+               test_batch_shared_line_blocks,
+               test_batch_shared_line_ignores_short_and_tag_lines,
+               test_batch_overlap_note):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
