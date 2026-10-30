@@ -864,9 +864,9 @@ def check(content):
     # 正则，改一侧会让另一侧静默失配，而失配只表现为「统计数字对不上」，很难察觉。
     # 概念名行号由 concept_name_index 统一给出（与 5.6 来源检测共用同一实现）。
     #
-    # `谓语动作（待判）` 是 slice_qualifiers 的第二档标签：动词后无宾语、前面又是
-    # 普通汉字词时，正则分不清复合术语与事件叙述，这一档只提示不阻断（见 memo_util）。
-    _SOFT_PREDICATE = "谓语动作（待判）"
+    # 谓语动作**只提示不阻断**：判据是 H6b 的要求（换个时点 / 版本还成立吗），
+    # 靠「紧邻成分是类别词还是专名」区分，属专名识别，正则做不对。判不了就不判，
+    # 只把可疑处报出来由人定——硬判会把误拦从术语挪到事件名上，挪不掉。
     cname_idx = concept_name_index(lines)
     if cname_idx is not None:
         # 概念名须是**名词短语**（H14），写成整句即失去签名作用：分句标点（逗号 / 句号 /
@@ -887,11 +887,10 @@ def check(content):
         # 与标点同理：判 ERR 会逼人改书名。
         hits = [] if _wrapped_title else slice_qualifiers(lines[cname_idx].strip())
         if hits:
-            # 谓语动作分两档（memo_util 证据分级）：结构确定的主谓/动宾阻断，
-            # 「汉字词 + 动词」这种分不清复合术语与事件叙述的只提示。
-            # 混为一谈就会重演旧设计——为了不误拦术语而维护一张豁免词表。
-            hard = [(k, v) for k, v in hits if k != _SOFT_PREDICATE]
-            soft = [v for k, v in hits if k == _SOFT_PREDICATE]
+            # 切片与谓语处置相反：切片是**形态**问题（可剥离的限定结构），判 ERR；
+            # 谓语是**语义**问题（说的是东西还是事），判 WARN 交人。
+            hard = [(k, v) for k, v in hits if k != "谓语动作"]
+            soft = [v for k, v in hits if k == "谓语动作"]
             if hard:
                 detail = "、".join(f"{k}「{v}」" for k, v in hard)
                 err(f"第 {cname_idx + 1} 行概念名称含切片限定（{detail}）——"
@@ -900,10 +899,11 @@ def check(content):
                     f"不是特例。取该对象的稳定指称作概念名，切片信息写进正文要点（H6b）")
             if soft:
                 detail = "、".join(f"「{v}」" for v in dict.fromkeys(soft))
-                warn(f"第 {cname_idx + 1} 行概念名称含动词 {detail} 且其后无宾语——"
-                     f"这种形态分不清两种东西：复合术语（「睡眠呼吸暂停」）与事件叙述"
-                     f"（「某集团主动退市」）。术语按 H13 不得为过检改写，不改；"
-                     f"若这句说的是「谁做了什么」，按 H6b 取对象名作概念名，动作移入正文。")
+                warn(f"第 {cname_idx + 1} 行概念名称含动词 {detail}——请按 H6b 的要求"
+                     f"判它是对象名还是事件名，最省事的自查是：**换个时点 / 版本，"
+                     f"这个名称还成立吗**。`睡眠呼吸暂停` 换个年份仍是同一病症名（对象），"
+                     f"`塔塔父子上市` 只在那一刻成立（事件）。是事件就取对象名作概念名、"
+                     f"动作移入正文；是术语则按 H13 不得为过检改写，不改。")
 
     # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
     # 预印本卡须基于正文写作（SKILL 流程第 1 步「预印本正文优先」）：只抓 arXiv /abs/ 之类摘要页，
