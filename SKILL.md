@@ -134,7 +134,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 `python scripts/fetch_article.py <url>`，抓完读回全文。
 
 ### 2. 验证
-专业术语须真搜索标准名称与定义，留痕到 verify.json，搜完写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。
+专业术语须真搜索标准名称与定义（走 `search_web.py`：结果与查询词块不相关即否决并换引擎），留痕到 verify.json，搜完写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。
 
 ### 3. 列对象清单
 读完全文写下所有有名字的对象，对每个对象分别走第 4–9 步，全部处理完才进复盘（H6c）。

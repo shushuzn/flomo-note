@@ -70,9 +70,13 @@ TOKEN=""
 CRED_FILE="$HOME/.git-credentials"
 if [ -f "$CRED_FILE" ]; then
   # 凭据文件可能含多个主机/账号条目，只取 github.com 那条（去重后取首条）。
+  # 末尾的 `|| true` 不是保险丝，是必需的：脚本开了 `set -euo pipefail`，
+  # grep 无匹配会让整条管道返回非 0，**在下面那段提示打印之前**就把脚本杀掉——
+  # 实测把凭据写成 `https://<token>@github.com`（少了用户名段）时，脚本静默退出 1，
+  # 一个字都没输出，排查只能靠 `bash -x`。提示写得再好，到不了人眼前就等于没有。
   TOKEN="$(grep -E '^https://[^/@:]+:[^@]+@github\.com' "$CRED_FILE" \
            | head -1 \
-           | sed -E 's#https://[^:]*:([^@]*)@.*#\1#')"
+           | sed -E 's#https://[^:]*:([^@]*)@.*#\1#' || true)"
 fi
 if [ -z "$TOKEN" ]; then
   echo "[push] 错误：~/.git-credentials 中无 github.com 条目，无法避开 reg.exe 黑名单。" >&2
@@ -91,6 +95,13 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=core.hooksPath
 export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
 if [ "$NO_COMMIT" -eq 0 ]; then
+  # 提交身份必须先在，否则 git 会打一段「tell me who you are」然后失败，
+  # 而那时文件已经 add 完，读的人分不清是认证问题还是身份问题。
+  if [ -z "$(git config user.email || true)" ] || [ -z "$(git config user.name || true)" ]; then
+    echo "[push] 错误：本仓库没有提交身份（git config user.name / user.email），提交会被 git 拒绝。" >&2
+    echo "[push] 按仓库既有作者设置后重试：git config user.name '<name>'; git config user.email '<email>'" >&2
+    exit 4
+  fi
   if [ "${#FILES[@]}" -gt 0 ]; then
     git add "${FILES[@]}"
   elif git diff --cached --quiet; then
