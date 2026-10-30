@@ -52,6 +52,12 @@ DEFAULT_MIN_HITS = None
 
 # 查询里的这些词块不承载「这个对象是什么」，命中它们不构成相关性证据。
 # 只收问句尾巴与常识性虚词，不收领域词——「政策」「参数」是实义，命中该算数。
+# 判定「这一路可信」时，至少要有这么长的一个词块命中。
+# 实测：查询「PEP Python 增强提案 状态」时某引擎的首条是「人民教育出版社官方网站」
+# （其英文简称同样是 PEP），它同时含「PEP」与「状态」，按命中个数算能过，内容却完全无关。
+# 短缩写与通用词凑出的命中不计为证据；长词块（4 字及以上）才承载查询的特指信息。
+STRONG_TOKEN_MIN = 4
+
 _STOPWORDS = frozenset({
     "定义", "是什么", "什么意思", "含义", "介绍", "怎么", "如何", "为什么", "哪些",
 })
@@ -84,7 +90,7 @@ def query_tokens(query: str) -> list:
     return tokens
 
 
-def relevance(query: str, results: list, min_hits=None) -> dict:
+def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
     """这一路结果是否可信：查询词块是否真的出现在标题/摘要里。
 
     返回 `{"ok", "tokens", "matched", "need"}`。`need` 默认取词块数的半数（至少 1）：
@@ -93,6 +99,11 @@ def relevance(query: str, results: list, min_hits=None) -> dict:
     模糊匹配会把「城中区」判成「城中村」。
     """
     tokens = query_tokens(query)
+    # 只看引擎自己排在前面的几条，不看整页并集。
+    # 实测反例：查「PEP Python 增强提案 状态」时前三条全是「人民教育出版社」（英文简称
+    # 也是 PEP），真正对的 PEP 8 文档排在第 7 条。整页取并集会让这一路判成可信——
+    # 相关性不能靠「九条里有一条对」凑出来，那等于把排序能力还给调用方人肉承担。
+    results = results[:top_k] if top_k and top_k > 0 else results
     if not tokens:
         need = 0
     elif min_hits is None:
@@ -103,8 +114,10 @@ def relevance(query: str, results: list, min_hits=None) -> dict:
         f"{item.get('title', '')} {item.get('snippet', '')}" for item in results
     ).casefold()
     matched = [token for token in tokens if token.casefold() in haystack]
+    strong = [token for token in matched if len(token) >= STRONG_TOKEN_MIN]
+    has_strong = any(len(token) >= STRONG_TOKEN_MIN for token in tokens)
     return {
-        "ok": bool(tokens) and len(matched) >= need,
+        "ok": bool(tokens) and len(matched) >= need and (bool(strong) or not has_strong),
         "tokens": tokens,
         "matched": matched,
         "need": need,

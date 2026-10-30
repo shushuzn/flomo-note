@@ -92,6 +92,37 @@ def test_junk_is_rejected():
     check("内容相关 → 放行", good["ok"] is True, good)
 
 
+def test_short_acronym_is_not_evidence():
+    """实测假命中：查询「PEP Python 增强提案 状态」，首条是「人民教育出版社官方网站」。
+
+    它同时含「PEP」与「状态」——按命中个数算能过，内容却是另一个东西。
+    判据要求至少一个 4 字以上的词块命中，短缩写凑数不算证据。
+    """
+    html = """
+    <li class="b_algo"><h2><a href="https://pep.com.cn/">PEP - 人民教育出版社官方网站</a></h2>
+    <p>人民教育出版社 版权所有 京ICP备 状态：正常</p></li>
+    """
+    junk = SW.parse_bing(html)
+    verdict = SW.relevance("PEP Python 增强提案 状态", junk)
+    check("短缩写凑数 → 判不可信", verdict["ok"] is False, verdict)
+    check("确实命中了短词（说明拦的是强弱而不是有没有）",
+          "PEP" in verdict["matched"], verdict)
+
+    good = SW.relevance("Python 增强提案 PEP 流程", SW.parse_sogou(SOGOU_GOOD_PEP))
+    check("长词块命中的真结果仍放行", good["ok"] is True, good)
+
+    # 整页并集不够：真结果排在很后面、前排全是同名异义时，这一路仍不可信。
+    buried = SW.parse_bing(html) * 3 + SW.parse_sogou(SOGOU_GOOD_PEP)
+    check("正确结果埋在第七位 → 仍判不可信",
+          SW.relevance("PEP Python 增强提案", buried)["ok"] is False, "前三条全无关")
+
+
+SOGOU_GOOD_PEP = """
+<div class="vrwrap"><h3><a href="/link?url=x">python中的pep是什么</a></h3>
+<div class="text-layout">PEP 是 Python 增强提案，描述语言与流程的变更。</div></div>
+"""
+
+
 def test_real_url_landing():
     """留痕地址必须来自同一张引擎表，且真发出过的那一次。"""
     report = SW.run_search("非改居", engines=("baidu",),
@@ -163,6 +194,7 @@ def test_min_hits():
 def main():
     test_tokens()
     test_junk_is_rejected()
+    test_short_acronym_is_not_evidence()
     test_real_url_landing()
     test_fallback_engine()
     test_all_rejected()
