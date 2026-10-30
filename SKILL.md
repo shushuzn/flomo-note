@@ -215,7 +215,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ### 技能文档治理（与写卡执行无关）
 
-**H25 · 文档改动走独立流程。** 修订一律等用户指令；commit 后立即 push 并以 `git ls-remote` 核对，一律走 `scripts/push_skill.sh "msg"`，禁手搓 git 命令。复盘建议的落点只能是云端卡片。
+**H25 · 文档改动走独立流程。** 修订一律等用户指令；**commit 与 push 用同一次 `scripts/push_skill.sh "msg"` 完成，禁裸 `git commit`**（只提交不推送等于没交付），随后 `git ls-remote` 核对；禁手搓 git 命令。复盘建议的落点只能是云端卡片。
 **H26 · 笔记只在云端。** 本地不落盘任何卡片正文；`.mcp.json`（含 token）不提交。
 **H27 · 收尾强制清理（不等确认）。** 列名 → 打包 `.workbuddy/trash/` → 断言完整 → 删除 → 复核为 0，一律走 `scripts/cleanup.py`。`--verify` 与清理共用同一基准（`.workbuddy/.cleanup_run`）——看到残留先看基准来源那一行。不得删当轮素材（H24）。
 **H28 · 文档禁写日期与事件。** 理由只作抽象陈述；`ENVIRONMENT.md` 只写「是什么」。已落到 `check_skill_docs.py`（日期 ERR、叙事词 WARN，全文档受扫；唯一豁免是协议 / 版本常量行，逐条打印 SKIP 保持可见）。

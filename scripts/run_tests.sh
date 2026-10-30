@@ -66,6 +66,14 @@ if ! compgen -G "tests/test_*.py" > /dev/null; then
   exit 1
 fi
 
+# 失败详情的落点：失败用例的完整输出另存一份，末尾打印路径。
+# 起因很实际：把本脚本的输出管道给 tail 之类的截断工具时，**失败行正好在被截掉的那段**，
+# 屏幕上只剩「存在失败（1/27 项）」，看不出是哪一条。人于是重跑一遍全量去捞详情——
+# 一次断言失败要跑两次全量。留一份完整日志，重跑就没有必要了。
+FAILLOG="$REPO_ROOT/_tmp/tests-fail.log"
+mkdir -p "$REPO_ROOT/_tmp"
+: > "$FAILLOG"
+
 run_one() {
   local label="$1"; shift
   total=$((total + 1))
@@ -76,6 +84,7 @@ run_one() {
   else
     echo "FAIL"
     printf '%s\n' "$out" | sed 's/^/    /'
+    printf '=== %s ===\n%s\n\n' "$label" "$out" >> "$FAILLOG"
     rc=1
     failed=$((failed + 1))
   fi
@@ -91,5 +100,6 @@ if [[ "$rc" == "0" ]]; then
   echo "[tests] 全部通过（$total 项）"
 else
   echo "[tests] 存在失败（$failed/$total 项）"
+  echo "[tests] 失败用例完整输出：$FAILLOG（不必重跑全量）"
 fi
 exit $rc
