@@ -96,6 +96,22 @@ if [ "$NO_COMMIT" -eq 0 ]; then
   elif git diff --cached --quiet; then
     # 用 -A（含新增与删除），不用 -u：-u 只处理已入库文件，会漏掉新增文件，
     # 造成「提交成功但远端缺文件」。仅在暂存区为空时才这么做。
+    #
+    # 但 -A 会把工作区里任何未跟踪文件一起带上，而提交信息只写主题——事后再看
+    # 无从分辨哪些是刻意提交的。调用方若把文件列表写错（例如把 msg 里的反引号
+    # 交给 shell 展开，参数被吞、FILES 变空），就会走到这里。故先列出来：非交互
+    # 环境无法确认，但至少让人当场看见这批文件要入库。
+    UNTRACKED_ALL="$(git ls-files --others --exclude-standard)"
+    if [ -n "$UNTRACKED_ALL" ]; then
+      N_UNTRACKED="$(printf '%s\n' "$UNTRACKED_ALL" | wc -l | tr -d ' ')"
+      echo "[push] 注意：暂存区为空，将 git add -A，连带 $N_UNTRACKED 个未跟踪文件：" >&2
+      printf '%s\n' "$UNTRACKED_ALL" | head -10 | sed 's/^/[push]   /' >&2
+      # 不能写成 [ ... ] && echo：条件为假时整个表达式返回 1，set -e 会当场退出
+      if [ "$N_UNTRACKED" -gt 10 ]; then
+        echo "[push]   …（另有 $((N_UNTRACKED - 10)) 个）" >&2
+      fi
+      echo "[push] 若非本意，Ctrl-C 后改用 git add <files> 再跑本脚本 --no-commit" >&2
+    fi
     git add -A
   else
     # 暂存区已有内容 = 调用方已精确决定提交范围，此时绝不再 -A：
