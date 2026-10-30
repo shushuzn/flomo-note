@@ -588,6 +588,72 @@ def run_size_case():
     return ok
 
 
+def run_anchor_case():
+    """操作要素锚点：改写时丢掉的**记号**必须被拦下。
+
+    夹具取真实 SKILL.md 的副本再改——因为这张锚点表的判据就是「这份文档里必须有
+    这些记号」，另造一份假文档只会把锚点表抄第二遍，抄本一漂就两边都对不上。
+    每条变异先断言「真的改动过」，否则目标文字将来被改写后变异成了空操作，
+    用例会静默变成恒真检查（改了等于没改，照样全绿）。
+    """
+    ok = True
+    src = (HERE.parent / "SKILL.md").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        skill = root / "SKILL.md"
+
+        # 锚点检查按布局判断事实源（SKILL.md + AGENTS.md 同在该目录才算本仓库），
+        # 故夹具要带上 AGENTS.md，否则被测函数直接跳过、用例会假通过
+        (root / "AGENTS.md").write_text("# 维护约定\n", encoding="utf-8")
+        skill.write_text(src, encoding="utf-8")
+        base = CD.check_skill_anchors(root)
+        ok &= base == []
+        print(f"{'PASS' if not base else 'FAIL'}  本仓库 SKILL.md 的操作要素齐全")
+        for m in base:
+            print("      ERR :", m)
+
+        # 按「上一轮压缩时真丢过的五个记号」各变异一次——这几条正是这层检查的由来
+        mutations = [
+            ("流程第 8 步的闸门脚本", "sop_gate.py", "闸门"),
+            ("H23 的清空写法", "content=' '", "content=空"),
+            ("附录的切片实现出处", "_SLICE_RE", "切片正则"),
+            ("H6d 的实现函数名", "_predicate_hits", "实现"),
+            ("H28 的 SKIP 可见性", "SKIP", "不打印"),
+        ]
+        for label, old, new in mutations:
+            assert old in src, f"变异目标 {old!r} 已不在文档里，用例失效"
+            mut = src.replace(old, new)
+            assert mut != src, f"变异 {old!r} 未生效"
+            skill.write_text(mut, encoding="utf-8")
+            errs = CD.check_skill_anchors(root)
+            hit = len(errs) == 1 and old in errs[0]
+            ok &= hit
+            print(f"{'PASS' if hit else 'FAIL'}  删掉{label}被判错")
+            for m in errs:
+                print("      ERR :", m)
+
+        # 新增条目却不登记锚点：规则加了，守卫没跟上
+        skill.write_text(src + "\n**H99 · 新规则。** 正文。\n", encoding="utf-8")
+        errs = CD.check_skill_anchors(root)
+        hit = any("H99" in m and "未登记" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  新增 H 条目未登记锚点被判错")
+
+        # 锚点指向已删条目：悬空锚点会让守卫静默失效
+        skill.write_text(src.replace("**H21 · ", "**H21x · "), encoding="utf-8")
+        errs = CD.check_skill_anchors(root)
+        hit = any("H21" in m and "已不存在" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  锚点指向已删条目被判错")
+
+    # 恒真防线：锚点词写在标题句里时永远命中，必须报出来而不是当作通过
+    errs = CD._anchor_misses("H1", ("读卡",), "**H1 · 读卡必须取全文。**", "**H1 · 读卡必须取全文。**")
+    hit = len(errs) == 1 and "永远命中" in errs[0]
+    ok &= hit
+    print(f"{'PASS' if hit else 'FAIL'}  锚点词落在标题句里被判恒真")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
@@ -598,6 +664,7 @@ if __name__ == "__main__":
     results.append(run_cli_flags_case())
     results.append(run_coverage_case())
     results.append(run_size_case())
+    results.append(run_anchor_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

@@ -13,9 +13,11 @@
   ERR  用例不声称覆盖：每个 `scripts/*.py` 都要出现在某个用例的 `COVERS` 里，
        且每个用例都必须有 `COVERS` 声明（可用空元组表示不针对具体脚本）
   ERR  SKILL.md 超长：总字符数超过 MAX_SKILL_CHARS（技能文件每轮载入，须有上限）
+  ERR  操作要素丢失：H 条目 / 流程步骤里登记的记号（脚本、选项、函数名、硬数字）
+       在文档中找不到——改写换说法可以，把记号改没了读者就照做不了
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-后六条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后七条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
 
@@ -101,8 +103,8 @@ ANNEX_REF_TRIGGER = re.compile(r"附录\s*(?:末\s*)?(?:[·・]\s*[「『“]?|[
 ANNEX_REF_STOP = "」』”\"，。、；：）)\n*`"
 # 流程步骤引用：第 5 步 / 第 ⑤ 步。只认带「步」字的形态——「第 ⑥ 段」说的是
 # publish 的输出段，不是流程步骤，不该被它约束。
-STEP_REF_RE = re.compile(r"第\s*([0-9]|[①②③④⑤⑥⑦⑧⑨])\s*步")
-STEP_TITLE_RE = re.compile(r"^###\s+([1-9])\.", re.M)
+STEP_REF_RE = re.compile(r"第\s*([0-9]{1,2}|[①②③④⑤⑥⑦⑧⑨])\s*步")
+STEP_TITLE_RE = re.compile(r"^###\s+([1-9][0-9]?)\.", re.M)
 CIRCLED_STEPS = {c: str(i) for i, c in enumerate("①②③④⑤⑥⑦⑧⑨", start=1)}
 # 脚本引用：**文档里**写的 scripts/x.py / tests/x.py 应当真的存在，否则照着跑会报
 # 「文件不存在」。目录名一并捕获、各自到对应目录核——工具与用例分属两层，只认
@@ -144,6 +146,61 @@ SCRIPT_SUFFIXES = {".py", ".sh"}
 
 # SKILL.md 总字数上限。取总字符数（含标点空白）是最严口径，换算法也不会失守。
 MAX_SKILL_CHARS = 10000
+
+# 各条目的「操作要素」锚点。只登记**可执行的记号**（脚本名 / 选项名 / 函数名 /
+# 键名 / 硬数字），不登记论据句——论据可以重写，锚住它只会逼人改锚点表。
+# 判断标准：这一项删掉之后，读者是否还能照做？不能，就该进这张表。
+SKILL_ANCHORS = {
+    "H1": ("content_truncated", "memo_batch_get"),
+    "H2": ("word_count",),
+    "H3": ("flomo_client.py", "dedup.py"),
+    "H4": ("structuredContent",),
+    "H5": ("payload",),
+    "H6": ("首行标签", "转义"),
+    "H6b": ("删动词测试",),
+    "H6c": ("退出前必须查重",),
+    "H6d": ("_predicate_hits",),
+    "H6f": ("产品线卡",),
+    "H7": ("进程卡", "盘点"),
+    "H8": ("不构成同一事件",),
+    "H9": ("覆盖式重组",),
+    "H10": ("判例",),
+    "H11": ("逐条认领",),
+    "H12": ("linked_memos",),
+    "H13": ("营销",),
+    "H14": ("第二行概念名",),
+    "H15": ("参考链接",),
+    "H16": ("这张卡从什么载体上抄下来",),
+    "H17": ("#顶层/二级",),
+    "H18": ("tag_tree",),
+    "H19": ("定理",),
+    "H20": ("重排",),
+    "H21": ("伤亡",),
+    "H22": ("memo_update",),
+    "H22b": ("全库普查",),
+    "H23": ("单空格", "content=' '"),
+    "H24": ("当次会话",),
+    "H25": ("push_skill.sh", "ls-remote"),
+    "H26": (".mcp.json",),
+    "H27": ("cleanup.py", ".cleanup_run"),
+    "H28": ("check_skill_docs.py", "SKIP"),
+}
+# 流程各步的命令与选项：步骤标题丢了不会有人发现（下一步照样能读通），
+# 但「第 8 步的闸门是哪个脚本」这种信息只在这里出现一次。
+STEP_ANCHORS = {
+    "1": ("fetch_article.py",),
+    "2": ("verify.json", "--skip-reason"),
+    "4": ("tag_tree", "tagcheck.py"),
+    "5": ("--keywords", "--ids"),
+    "6": ("exit_confirm.py", "--search-log"),
+    "3": (),  # 只有顺序判据（逐对象走 4-9 步），无可执行记号可锚
+    "7": (),  # 只有格式判据（按 H14 写），无可执行记号可锚
+    "8": ("publish.py", "--draft", "sop_gate.py"),
+    "9": ("memo_create",),
+    "10": ("--anchor-id", "--show-body", "max_memos", "tag_rename"),
+}
+# 既不属某条 H、也不属某一步的散记号（附录里的替代写法与实现出处）。
+GLOBAL_ANCHORS = ("a(at)b.c", "_SLICE_RE", '{"limit":2000}')
 # 任何技能文档都不豁免日期扫描——H28 是严格禁止，无例外。
 # ENVIRONMENT.md 同样受日期（ERR）与叙事词（WARN）双重约束：
 # 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的"。
@@ -543,6 +600,106 @@ def check_skill_size(root: Path) -> list[str]:
     ]
 
 
+def check_skill_anchors(root: Path) -> list[str]:
+    """每条规则的「操作要素」必须还在——改写可以换说法，不能把记号改没了。
+
+    来由：压缩 SKILL.md 时删掉的不是句子而是**记号**——`_predicate_hits`、
+    `_SLICE_RE`、`sop_gate.py`、`a(at)b.c`、H28 的 SKIP 豁免。这些丢了之后全文
+    依旧通顺，检查也全绿，只是读者照着做不了：找不到实现函数、不知道第 8 步的
+    闸门是哪个脚本、遇到必须写裸邮箱的场合没有替代写法。当时是靠人按条目逐项
+    grep 才捞回来的，**靠人记的核对等于没有核对**。
+
+    三向都拦（缺一个方向就有一种漏法）：
+      ① 文档里的条目没登记锚点——新增规则时「它掉不得的那几个记号」没人定义；
+      ② 锚点表里的条目在文档中已不存在——删条目后锚点悬空，守卫静默失效；
+      ③ 登记的记号在文档里找不到——改写时被顺手删掉的正是这种。
+
+    外加一条恒真防线：锚点词若就写在条目自己的标题句里，它永远命中，等于没查
+    （命中率≈100% 的判据要先怀疑判据本身）。
+
+    **限度**：锚点只保证「记号还在」，保证不了「论断还对」——判据被改弱的那些
+    情况仍要人读。锚点也刻意只取可执行的记号（脚本 / 选项 / 函数 / 键名 / 硬数字），
+    不取论据句：论据本来就可以重写，把它锚住只会逼人改锚点表。
+    """
+    p = root / "SKILL.md"
+    if not p.is_file():
+        return []
+    # 锚点表是**本仓库**技能文档的义务，不是通用文档规则：`--root` 指向外部目录时
+    # 没有「这份文档该写哪些记号」的事实源，按布局判断（同 check_test_coverage），
+    # 不拿本项目的锚点表去要求别人的文档。
+    if not (root / "AGENTS.md").is_file():
+        return []
+    text = p.read_text(encoding="utf-8", errors="replace")
+    lines = text.split("\n")
+
+    # 条目 -> 它的**标题句**（`**H1 · …**` 这一段，不含后面的正文）。
+    # 写在标题句里的词不能当锚点：它随条目名一起被保留，永远命中，等于没查。
+    # 粒度必须到标题句而不是整行——本文件的条目是整段成行，拿整行比等于什么都没比。
+    oneline, onestmt = {}, {}
+    for ln in lines:
+        m = H_DEF_RE.search(ln)
+        if not m:
+            continue
+        hid = m.group(1)
+        oneline.setdefault(hid, ln)
+        sm = re.search(r"\*\*" + re.escape(hid) + r"[^*\n]*\*\*", ln)
+        onestmt.setdefault(hid, sm.group(0) if sm else "")
+    errs = []
+    for hid in oneline:
+        if hid not in SKILL_ANCHORS:
+            errs.append(
+                f"SKILL.md: {hid} 未登记操作要素锚点——新增条目时须在 "
+                f"check_skill_docs.SKILL_ANCHORS 写明「删掉读者就执行不了」的记号，"
+                f"否则它被改写掉时没有任何检查会报"
+            )
+    for hid, tokens in SKILL_ANCHORS.items():
+        if hid not in oneline:
+            errs.append(
+                f"SKILL.md: 锚点表登记的 {hid} 在文档里已不存在——删条目时同步删锚点，"
+                f"悬空锚点会让这条守卫静默失效"
+            )
+            continue
+        errs += _anchor_misses(hid, tokens, onestmt[hid], text)
+
+    # 流程步骤同理：第 8 步丢过 `sop_gate.py`，读起来仍是「闸门 + 质检全过才写云」
+    steps = {}
+    for ln in lines:
+        m = STEP_TITLE_RE.search(ln)
+        if m:
+            steps.setdefault(m.group(1), ln)
+    for num in steps:
+        if num not in STEP_ANCHORS:
+            errs.append(
+                f"SKILL.md: 流程第 {num} 步未登记操作要素锚点——新增步骤须在 "
+                f"check_skill_docs.STEP_ANCHORS 写明该步的命令 / 选项"
+            )
+    for num, tokens in STEP_ANCHORS.items():
+        if num not in steps:
+            errs.append(f"SKILL.md: 锚点表登记的流程第 {num} 步已不存在——同步删锚点")
+            continue
+        errs += _anchor_misses(f"流程第 {num} 步", tokens, steps[num], text)
+
+    # 文档级记号：散落在附录里、既不属某条 H 也不属某一步的那几个
+    errs += _anchor_misses("附录", GLOBAL_ANCHORS, "\x00", text)
+    return errs
+
+
+def _anchor_misses(label, tokens, statement, text):
+    out = []
+    for t in tokens:
+        if t in statement:
+            out.append(
+                f"SKILL.md: {label} 的锚点 {t!r} 就在它自己的标题句里，永远命中，"
+                f"等于没查——改取正文里的记号"
+            )
+        elif t not in text:
+            out.append(
+                f"SKILL.md: {label} 丢了操作要素 {t!r}（锚点表登记的必需记号）——"
+                f"改写时被删掉了，读者照做不了；确认要删就同步删锚点并说明理由"
+            )
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -577,6 +734,8 @@ def main(argv=None):
     errs += check_test_coverage(root)
     # 第五层：长度——条目只增不减时，文件会一路涨到没人读得动，而任何单项检查都不报
     errs += check_skill_size(root)
+    # 第六层：记号——压长度时最先掉的不是句子而是脚本名 / 选项名，全文照样通顺
+    errs += check_skill_anchors(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):
