@@ -179,7 +179,7 @@ SKILL_ANCHORS = {
     "H21": ("伤亡",),
     "H22": ("memo_update",),
     "H22b": ("全库普查",),
-    "H23": ("单空格", "content=' '"),
+    "H23": ("retire.py", "#待清理", "--ids"),
     "H24": ("当次会话",),
     "H25": ("push_skill.sh", "ls-remote"),
     "H26": (".mcp.json",),

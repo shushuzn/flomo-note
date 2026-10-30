@@ -120,7 +120,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 - 闸门开关属常规操作：确属改名带 `--allow-rename`，确属有意压写带 `--allow-content-loss`；被拦下的每条读数都要在回读里认领（留在卡内 / 移进它该在的卡 / 确属移出）。
 - 正文里的他卡编号一律删除（H12）。
 
-**H23 · 清理前先经全文核对。** 清空前 `memo_batch_get` 确认是哪一张（H1）。清空 = `memo_update(id, content=' ')`（**单空格**，空串被忽略）；卡片仍在，内容被抹除。清空会连带置空标签，独占标签随之从树里消失，故引用标签簇名前必须重新 `tag_tree` 现采。云端状态一律现查，不进记忆。
+**H23 · 退场前先经全文核对。** 退场前 `memo_batch_get` 核身份（H1）。退场 = `retire.py --ids <id,…>`：卡面换成 `#待清理` + 概念名 + 原标签原字数，用户按该标签在 App 批量删（`#待清理` 是唯一单级标签，H17 例外）。改挂标签会让独占标签消失，引簇名前须 `tag_tree` 现采。
 
 **H24 · 素材保留。** 抓取的原文、草稿、被替换的旧卡全文、请求 JSON 须保留至少当次会话的全部轮次，不在同一轮收尾时全删；清理只清与近轮无关的历史（H27）。
 
@@ -164,8 +164,8 @@ description: Use when the user sends a link, asks to save an article, clip a web
 - **本卡全文自查（阻塞）**：先 `verify_card.py --id <id> --draft <草稿> --show-body` 打底，再通读补人读项（H11）。不为看全文去拼 `memo_batch_get` 请求文件（H5）。
 - **新建合理性 / 错配 / 硬塞**：应更新既有卡（H9）、塞进元层面筐（H18）、标签与主体不符（H18）——是则当轮处置。
 - **标签归并与补挂**：仅命名不同则 `tag_rename` 归并（异步生效，禁据读回未变即判失败）；回执看两个数——`updated_memos` 为 0 是一条没写（须带 `max_memos` 重跑），小于 `matched_memos` 是标签已分裂。宽簇吞掉具体主题则当轮建二级或改挂。
-- **跨卡合并**：按 H9/H10/H11/H23 全流程免确认；报告主卡 id、合并后字数、被清空 id、标签结果。绝不声明「已合并两张卡」。
-- **违规汇编卡拆解**：读全文按 H8 切分→逐张建卡（各走查重与自检）→背景回填主卡→无独有信息则清空（H23）→现采 `tag_tree` 核计数。
+- **跨卡合并**：按 H9/H10/H11/H23 全流程免确认；报告主卡 id、合并后字数、退场 id、标签结果。绝不声明「已合并两张卡」。
+- **违规汇编卡拆解**：读全文按 H8 切分→逐张建卡（各走查重与自检）→背景回填主卡→无独有信息则退场（H23）→现采 `tag_tree` 核计数。
 - 确无近邻：写明已现查 tag_tree 与关键词。
 
 ## 四、收尾输出
@@ -189,7 +189,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ### 工具与调用
 - 读：`memo_search` / `memo_batch_get` / `memo_recommended` / `tag_tree` / `tag_search`；写只有 `memo_create` / `memo_update` / `tag_rename`。参数名以 `--help` 为准，错名被 `additionalProperties: false` 拒。
-- **无 `memo_delete`**：物理删除只能用户在 App 内做，技能侧不调用。**无 `memo_merge`**：合并 = 并入主卡 + 清空源卡（H9/H23）。
+- **无 `memo_delete`**：物理删除只能用户在 App 内做，技能侧不调用。**无 `memo_merge`**：合并 = 并入主卡 + 源卡退场（H9/H23）。
 - **两个读接口的「少给」是常态**：`memo_search` / `memo_recommended` 截断中段；`memo_batch_get` 一次要 10 张长卡会静默少回。缺的 id 逐张补取——补得到是「要得太多」，补不到才是卡已删。
 - 禁传 `linked_memos`（H12）；端点、鉴权、代理见 `ENVIRONMENT.md`。
 

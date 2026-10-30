@@ -537,6 +537,24 @@ def _load_arguments(argv: list[str]) -> dict:
     return parsed
 
 
+RETIRE_TAG = "#待清理"
+
+
+def is_retire_skeleton(content):
+    """H23 退场骨架的**唯一合法形态**：`#待清理` + 概念名 + 「原标签/原字数」一行。
+    判得死一点：首行必须是退场标签；其余非空行 ≤2 且不得以 `#` 开头；全文 ≤300 字符。
+    任何一条不满足就落回签名闸门——骨架是容器，不许当正文通道。"""
+    if not content or len(content) > 300:
+        return False
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    if not lines or lines[0] != RETIRE_TAG:
+        return False
+    rest = lines[1:]
+    if len(rest) > 2:
+        return False
+    return not any(ln.startswith("#") for ln in rest)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -574,6 +592,12 @@ def main():
                 sys.stderr.write("[失败] memo_create 不接受空白正文（新建空卡无意义）。\n")
                 return 5
             sys.stderr.write("[注意] 正文为空白：按 H23 执行清空，跳过闸门签名检查。\n")
+        elif is_retire_skeleton(content):
+            # H23 退场：骨架只有「#待清理 + 原概念名 + 原标签/原字数」三行，装不下任何
+            # 概念内容，签名闸门对它没有可校验的语义（同清空分支的道理）。**只放行这一固定
+            # 形态**：首行必须是 `#待清理`、其余行不得含 `#`、总长受限——超出任一条件即落回
+            # 签名闸门，堵掉借骨架夹带正文的后门。
+            sys.stderr.write("[注意] 退场骨架：按 H23 跳过闸门签名检查。\n")
         else:
             from memo_util import memo_signature
             sig = memo_signature(content)
