@@ -552,6 +552,42 @@ def run_coverage_case():
     return ok
 
 
+def run_size_case():
+    """SKILL.md 长度上限：差一个字就越线，必须真拦。
+
+    只断言「超长报错」不够——判据可能根本没被调用（比如检查函数写了却没接进
+    main），而那种情况下本仓库的真实文件也照样全绿（它现在确实在限额内）。
+    所以两个方向都测：**刚好到限放行、多一字报错**，再加一条「本仓库真实文件在限内」。
+    """
+    ok = True
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        skill = root / "SKILL.md"
+        skill.write_text("字" * CD.MAX_SKILL_CHARS, encoding="utf-8")
+        errs = CD.check_skill_size(root)
+        ok &= errs == []
+        print(f"{'PASS' if not errs else 'FAIL'}  刚好到上限放行（{CD.MAX_SKILL_CHARS} 字）")
+
+        skill.write_text("字" * (CD.MAX_SKILL_CHARS + 1), encoding="utf-8")
+        errs = CD.check_skill_size(root)
+        hit = len(errs) == 1 and "超 1" in errs[0]
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  多一个字即报错并给出超出量")
+        for m in errs:
+            print("      ERR :", m)
+
+        (root / "lonely").mkdir()
+        ok &= CD.check_skill_size(root / "lonely") == []
+        print(f"{'PASS' if CD.check_skill_size(root / 'lonely') == [] else 'FAIL'}  没有 SKILL.md 时不报")
+
+    real = CD.check_skill_size(HERE.parent)
+    ok &= real == []
+    print(f"{'PASS' if not real else 'FAIL'}  本仓库 SKILL.md 在限额内")
+    for m in real:
+        print("      ERR :", m)
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
@@ -561,6 +597,7 @@ if __name__ == "__main__":
     results.append(run_cross_ref_case())
     results.append(run_cli_flags_case())
     results.append(run_coverage_case())
+    results.append(run_size_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

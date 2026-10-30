@@ -12,9 +12,10 @@
   ERR  命令行选项失效：文档里 `scripts/x.py --flag` 的 `--flag` 不是该脚本认识的选项
   ERR  用例不声称覆盖：每个 `scripts/*.py` 都要出现在某个用例的 `COVERS` 里，
        且每个用例都必须有 `COVERS` 声明（可用空元组表示不针对具体脚本）
+  ERR  SKILL.md 超长：总字符数超过 MAX_SKILL_CHARS（技能文件每轮载入，须有上限）
   WARN 历史事件叙事：曾经 / 当时 / 当天 / 事后发现 / 上次推送 等回溯措辞
 
-后五条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
+后六条都是**跨文件结构检查**：逐行扫一遍能查措辞，查不出「入口文档漏掉一整个
 脚本」。README 是项目入口，清单缺项只表现为「照着 README 找不到这一步」——
 不会报错，直到有人手跑一遍才发现少了 publish.py 这类主干脚本。
 
@@ -140,6 +141,9 @@ NARRATIVE_SELF_EXEMPT = {"check_skill_docs.py", "test_check_skill_docs.py"}
 
 DOC_SUFFIXES = {".md", ".py", ".sh"}
 SCRIPT_SUFFIXES = {".py", ".sh"}
+
+# SKILL.md 总字数上限。取总字符数（含标点空白）是最严口径，换算法也不会失守。
+MAX_SKILL_CHARS = 10000
 # 任何技能文档都不豁免日期扫描——H28 是严格禁止，无例外。
 # ENVIRONMENT.md 同样受日期（ERR）与叙事词（WARN）双重约束：
 # 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的"。
@@ -517,6 +521,28 @@ def check_test_coverage(root: Path) -> list[str]:
     return errs
 
 
+def check_skill_size(root: Path) -> list[str]:
+    """SKILL.md 必须在一万字以内。
+
+    这条限的是**加载成本**：技能文件每轮都会被读进上下文，规则条目只增不减时，
+    真正会被执行的那几条会被淹没在边界案例里。此前本文件没有任何长度判据，
+    规则一条条往后追加，涨到两万五千字也没人报错——**没有闸门的规则等于没有规则**。
+
+    判据取总字符数（含标点与空白），是各口径里最严的一种，免得换口径时反复。
+    """
+    p = root / "SKILL.md"
+    if not p.is_file():
+        return []
+    n = len(p.read_text(encoding="utf-8", errors="replace"))
+    if n <= MAX_SKILL_CHARS:
+        return []
+    return [
+        f"SKILL.md 共 {n} 字，超过上限 {MAX_SKILL_CHARS} 字（超 {n - MAX_SKILL_CHARS}）"
+        f"——技能文件每轮都要载入，规则只增不减会把要执行的那几条淹没。"
+        f"新增边界案例时同步删掉已被脚本接管的复述段落，不要只往后追加"
+    ]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -549,6 +575,8 @@ def main(argv=None):
     errs += check_doc_cli_flags(root)
     # 第四层：清单里有这个脚本，不代表有人验证它——新增脚本不写用例同样全绿
     errs += check_test_coverage(root)
+    # 第五层：长度——条目只增不减时，文件会一路涨到没人读得动，而任何单项检查都不报
+    errs += check_skill_size(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):
