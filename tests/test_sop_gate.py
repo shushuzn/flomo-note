@@ -212,6 +212,48 @@ def run_no_gate_cases():
     check("授权凭证正文指纹不符时降级失效（退出码 1）", _run() == 1)
 
 
+def run_symbolic_term_cases():
+    """符号型术语的落点判定：`M+`、`C++`、`.NET` 这类名字含连接符号。
+
+    实测写「M+、蓬皮杜中心与 MoMA 文化联盟」那张卡时，旧词块正则只认
+    「字母开头」与「连续汉字」，`M+` 里的 `+` 既非字母也非汉字，被切成裸 `M`，
+    于是正文里明明白白写着 `M+`，闸门却报「在卡正文中找不到落点」，
+    只能靠人工补 `in_body` 才过闸。判据本该自己认得出这个名字。
+    """
+    # 1) 词块切分：符号是名字的一部分，不是切分点
+    for term in ("M+", "C++", ".NET", "Node.js", "MoMA"):
+        toks = GATE._TOKEN_RE.findall(term)
+        check(f"词块保留完整符号：{term}", toks == [term], toks)
+
+    # 2) 落点比对：正文里有 `M+`，术语就是 `M+`，必须算命中
+    body = (
+        "#文化/艺术\n"
+        "M+、蓬皮杜中心与 MoMA 文化联盟\n"
+        "\n"
+        "这是 M+ 香港、蓬皮杜中心与 MoMA 三方成立的文化联盟。\n"
+    )
+    hit = [t for t in GATE._name_tokens("M+") if GATE._norm(t) in GATE._norm(body)]
+    check("M+ 落点在正文中命中", hit == ["M+"], hit)
+
+    # 3) 反向：正文里没有该符号时仍要报未命中（不能靠放宽到「有字母就算」）
+    empty = "#文化/艺术\n\n蓬皮杜中心与纽约现代艺术博物馆三方联盟。\n"
+    miss = [t for t in GATE._name_tokens("M+") if GATE._norm(t) in GATE._norm(empty)]
+    check("正文无 M+ 时判未命中", miss == [], miss)
+
+    # 4) 端到端：这个术语的验证条目不再被闸门拦下
+    import json as _json, tempfile as _tf
+    tmp = Path(_tf.mkdtemp()) / "v.json"
+    tmp.write_text(_json.dumps({"searched": True, "terms": [
+        {"term": "M+", "query": "q",
+         "conclusion": "香港的当代视觉文化博物馆",
+         "search_url": "https://example.com/q"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    b, n = [], []
+    GATE._check_web(str(tmp), body, b, n)
+    check("M+ 验证条目过闸（不再被误拦）", not b, b)
+
+
+
 def run_check_web_cases():
     """_check_web：留痕校验 + 「结论已落进正文」的落点校验（离线，只读文件）。"""
     import json as _json
@@ -575,6 +617,38 @@ def run_dedup_net_cases():
           "科技/机器人学" not in got.get("tag_neighbors", []))
 
 
+def run_semantic_neighbor_cases():
+    """新建二级标签时，近邻提示要能指出**该并进哪个既有簇**。
+
+    实测写「塞上银龄行动」时新建了 `政策/老龄`，而库里的 `政策/社会保障`、
+    `政策/卫生` 才是语义近邻；旧实现按字符串相似度排，相似度全为 0，
+    提示退化成「中小企业、交通、产业」这种任意字典序条目，对判断毫无帮助。
+    """
+    tree = ["政策/社会保障", "政策/卫生", "政策/公共卫生",
+            "政策/中小企业", "政策/交通", "政策/产业"]
+
+    b, n = [], []
+    got = GATE._check_tags(tree, "#政策/老龄", b, n)
+    rec = got["tags"][0]
+    check("语义近邻优先于相似度",
+          rec.get("near")[:1] == ["社会保障"], rec.get("near"))
+    check("近邻不含无关条目（中小企业/交通/产业）",
+          not (set(rec.get("near") or []) & {"中小企业", "交通", "产业"}),
+          rec.get("near"))
+    check("新建二级仍不阻塞", b == [], b)
+
+    # 表里没有的主题：退回相似度排序，不因此失效
+    b, n = [], []
+    got = GATE._check_tags(tree, "#政策/云计算", b, n)
+    check("表外主题仍给近邻（退回相似度）", bool(got["tags"][0].get("near")), got["tags"][0])
+
+    # 语义表本身必须指向真实可能存在的簇名（防止表里写错字后永远命中不了）
+    bad = [k for k, v in GATE.TAG_SEMANTIC_NEIGHBORS.items()
+           if not v or not all(isinstance(x, str) and x for x in v)]
+    check("语义近邻表无非空条目", not bad, bad)
+
+
+
 def run_tag_check_cases():
     """_check_tags 标签存在性核对（假 client，不联网）。
 
@@ -756,12 +830,14 @@ if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
     run_check_web_cases()
+    run_symbolic_term_cases()
     run_assemble_gate_cases()
     run_concept_keyword_cases()
     run_no_gate_cases()
     run_tag_tree_net_cases()
     run_dedup_net_cases()
     run_tag_check_cases()
+    run_semantic_neighbor_cases()
     run_review_net_cases()
     run_usage_consistency_cases()
     print("---")

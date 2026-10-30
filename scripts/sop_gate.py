@@ -140,9 +140,32 @@ _EVIDENCE_RE = re.compile(
 # 评级类关键结论（无数字，但同样属「搜到的实质信息」）。
 _RATING_RE = re.compile(r"(?:五|四|三|两)星")
 # 术语词块：结论无关键参数时，按术语本身的 ASCII / 中文词块比对落点。
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-_.]{1,}|[\u4e00-\u9fff]{2,}")
+# 符号型术语的落点判定：`M+`、`C++`、`.NET`、`Node.js` 这类名字含连接符号，
+# 旧正则只认「字母开头」或「连续汉字」，`+` 既非字母也非汉字，于是 `M+` 被切成
+# 裸 `M`——比对上正文里的 `M+` 失败，闸门报「在卡正文中找不到落点」。
+# 实测写 M+ 那张卡就是靠人工补 in_body 才过闸，而判据本该自己认得出这个名字。
+# 故允许名字内部出现 `+ . _ -`，但**不放在开头**（`+` 开头更像公式或列表符号）。
+_TOKEN_RE = re.compile(
+    r"[.]?[A-Za-z][A-Za-z0-9\-_.]*(?:[+][A-Za-z0-9\-_.]*)*"
+    r"|[\u4e00-\u9fff]{2,}"
+)
 # 「本卡将新建该簇」时列几个同顶层最相近的现有二级供人判断（只作提示）。
 TAG_NEAR_SHOW = 3
+
+# 新建二级标签时的**语义近邻**候选：字符相似度对中文几乎无效
+# （`老龄` vs `社会保障` 相似度 0），故对常见易混主题显式给出该并进哪个既有簇。
+# 只作提示，不阻断——是否同一簇属语义判断，由人定（误拦比漏检更危险）。
+# 新增主题时在此补一行；表里没有的仍按相似度排，不因此失效。
+TAG_SEMANTIC_NEIGHBORS = {
+    "老龄": ("社会保障", "卫生", "公共卫生", "民政"),
+    "养老": ("社会保障", "卫生"),
+    "提示词": ("人工智能", "智能体", "大模型"),
+    "陶瓷": ("家居", "消费", "建材"),
+    "博物馆": ("文化遗产", "文物保护", "艺术"),
+    "戏剧": ("文学", "影视", "艺术"),
+    "可再生能源": ("新能源", "电力", "中国电力"),
+    "小语言模型": ("大模型", "开源模型", "推理部署"),
+}
 
 
 def _tag_names(tags):
@@ -303,8 +326,16 @@ def _check_tags(tags, tagline, blockers, notes):
                                 for n in names)
         siblings = [n.split("/", 1)[1] for n in names
                     if tag_key(n).startswith(top_k + "/") and n.count("/") == 1]
-        near = sorted(siblings, key=lambda s: -difflib.SequenceMatcher(None, s, leaf).ratio())
-        near = [s for s in near[:TAG_NEAR_SHOW]]
+        # 近邻提示要能真的指出「该并进哪个既有簇」。
+        # 旧实现按**字符串相似度**排，而语义近邻往往字形无关——`政策/社会保障`
+        # 与要新建的 `政策/老龄` 相似度为 0，提示就退化成「列前三个同顶层二级」，
+        # 而排在最前的通常是任意字母序/字典序条目（实测给的是「中小企业、交通、产业」），
+        # 对判断毫无帮助。故先按同义词表取语义近邻，相似度只作同顶层内的排序补充。
+        related = TAG_SEMANTIC_NEIGHBORS.get(leaf, ())
+        semantic = [x for x in siblings if x in related]
+        rest = sorted((x for x in siblings if x not in semantic),
+                      key=lambda x: -difflib.SequenceMatcher(None, x, leaf).ratio())
+        near = (semantic + rest)[:TAG_NEAR_SHOW]
         if near:
             rec["near"] = near
         if dup:
