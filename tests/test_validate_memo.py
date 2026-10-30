@@ -16,6 +16,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+# 输出统一走 utf-8：用例名与断言详情里有 GBK 编不出来的字符（如 "♯" U+266F、
+# 从服务回包解码出来的替换符），打到 GBK 控制台会 UnicodeEncodeError，
+# 于是"用例跑挂了"其实只是"打印挂了"。本仓库脚本（dedup / fetch_article /
+# flomo_client / netdoctor）启动时也都是这个动作。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 HERE = Path(__file__).resolve().parent.parent / "scripts"
 spec = importlib.util.spec_from_file_location("validate_memo", HERE / "validate_memo.py")
 VM = importlib.util.module_from_spec(spec)

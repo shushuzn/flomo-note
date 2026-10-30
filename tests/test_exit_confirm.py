@@ -29,10 +29,30 @@ def check(label, ok, detail=""):
     print(line)
 
 
+def _decode(raw):
+    """子进程输出按 utf-8 → gbk 依次试解。
+
+    不能直接用 subprocess 的 text=True：它按**父进程 locale** 解码，而子进程写
+    管道时用的是 PYTHONIOENCODING（没设才回落到 locale）。两者不一致时——例如
+    环境里设了 PYTHONIOENCODING=utf-8，而本机 locale 是 GBK——读线程抛
+    UnicodeDecodeError，stdout/stderr 变成 None，断言随即炸成
+    「argument of type 'NoneType' is not a container」，与真正的原因无关。
+    实测：不设该变量通过，设了必红；CI 是 UTF-8 locale，所以一直没暴露。
+    """
+    if not raw:
+        return ""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def run(args):
     p = subprocess.run([sys.executable, str(SCRIPT), "--skip-fetch", *args],
-                       cwd=ROOT, capture_output=True, text=True, timeout=60)
-    return p.returncode, p.stdout, p.stderr
+                       cwd=ROOT, capture_output=True, timeout=60)
+    return p.returncode, _decode(p.stdout), _decode(p.stderr)
 
 
 def good_search(tmp):

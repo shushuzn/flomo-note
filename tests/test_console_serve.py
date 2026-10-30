@@ -41,6 +41,14 @@ import sys
 import time
 from pathlib import Path
 
+# 输出统一走 utf-8：用例名与断言详情里有 GBK 编不出来的字符（如 "♯" U+266F、
+# 从服务回包解码出来的替换符），打到 GBK 控制台会 UnicodeEncodeError，
+# 于是"用例跑挂了"其实只是"打印挂了"。本仓库脚本（dedup / fetch_article /
+# flomo_client / netdoctor）启动时也都是这个动作。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 REPO = Path(__file__).resolve().parent.parent
 SERVER = REPO / "scripts" / "serve_console.py"
 MCP = REPO / ".mcp.json"
@@ -70,6 +78,10 @@ def spawn(port: int) -> subprocess.Popen:
     """起服务；清掉代理变量，避免子进程把回环请求交给系统代理。"""
     env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
     env["NO_PROXY"] = env["no_proxy"] = "*"
+    # 子进程 stdio 钉成 utf-8：下面几处都是按 utf-8 解 stderr（断言里要按中文
+    # 比对，如"已有服务在监听"）。不钉的话子进程用 locale（本机 GBK）吐字节，
+    # utf-8 解出来是替换符，断言必红——而且红的是"编码"不是"服务行为"。
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.Popen(
         [sys.executable, str(SERVER), "--port", str(port)],
         cwd=str(REPO),
@@ -259,7 +271,9 @@ def main() -> int:
         lan = subprocess.Popen(
             [sys.executable, str(SERVER), "--port", str(free_port()), "--host", "0.0.0.0"],
             cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")},
+            env={**{k: v for k, v in os.environ.items()
+                    if not k.lower().endswith("_proxy")},
+                 "PYTHONIOENCODING": "utf-8"},
         )
         try:
             rc_lan = lan.wait(timeout=15)
