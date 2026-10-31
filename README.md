@@ -135,6 +135,8 @@ flomo-note/
 | `scan_truncated.py` | 存量取证：找正文被「检索回包截断版」覆盖过的卡（正文中段缺一段）。候选只从检索回包取 id、判定只看 `memo_batch_get` 的真实正文；取不回正文即退出码 2，不把「没读到」报成干净 |
 | `push_skill.sh` | 文档改动强制推送（提交 + 推送 + 远端 HEAD 回读核对） |
 | `sync_skill.sh` | 把仓库 `SKILL.md` 同步到实际被加载的技能目录；`--check` 只比对（审计用），不一致即非 0 |
+| `rss_store.py` | RSS 条目的本地存储与状态：读/未读、按 id 或链接标记已读、保留期清理。**未读满 7 天删、已读满 1 天删**（`gc()` 是唯一实现）。「读过」只认显式 `mark_read`——不推断处理痕迹，判据是「按 SOP 处理过了」。子命令 `list` / `mark-read` / `gc` / `counts` |
+| `rss_fetch.py` | 从 `feeds.opml`（阅读器导出的订阅清单）拉取 RSS 2.0 / Atom，归一后写入 `rss_store`，末尾自动跑保留期清理。单源失败只记账继续跑（汇总后退出码 2），一个源挂了不拖垮其余源 |
 
 ### 取件与通道
 
@@ -312,6 +314,32 @@ python scripts/validate_memo.py --no-gate memo_body.txt
 **自检通过标准**：EXIT=0（0 ERR）。闸门凭证缺失 / 签名不符 / 正文指纹不符 / 已过期 / 验证未执行 / 标签核对缺失，任一情形判 ERR 阻断写云。
 
 ---
+
+## 订阅源取件（RSS）
+
+除了人贴链接，也可以让脚本按订阅清单拉条目。**它只负责「把条目拿到手、摆进库里」**，挑哪条、做不做卡仍走既有流程——工具不判断价值。
+
+```bash
+# 1. 拉取（读 feeds.opml，写 .rss/feeds.db，末尾自动清理过期条目）
+python3 scripts/rss_fetch.py
+
+# 2. 看今天有什么未读
+python3 scripts/rss_store.py list --unread
+
+# 3. 对某条走完 SOP（建卡或退出留痕）后，标记已读
+python3 scripts/rss_store.py mark-read "https://example.com/article"
+```
+
+**保留期**（`rss_store.py gc`，`rss_fetch.py` 每次拉取末尾自动执行）：
+
+| 状态 | 判据 | 保留 |
+|------|------|------|
+| 未读 | `read_at IS NULL` | 入库满 7 天删除 |
+| 已读 | 标记过 `mark-read` | 标记满 1 天删除 |
+
+「读过」= **按 SOP 对这个处理过了**（建卡或退出留痕），由人显式标记。工具不推断处理痕迹——「看过标题」不是「处理完」，自动推断会让保留期失效。已读条目删掉的只是本地索引，正文与结论早已在云端。
+
+`feeds.opml` 用阅读器导出的标准格式（`outline` 的 `xmlUrl`），一份清单两处可用；它和 `.rss/` 都不入库。
 
 ## 工作流示例
 
