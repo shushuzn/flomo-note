@@ -150,6 +150,42 @@ def test_interleaved_word_order():
 
 
 
+def test_generic_words_not_evidence():
+    """通用词（相机 / App / 软件）不单独构成证据，判定以专有词块为准。
+
+    实测查「Chromagraph 相机 App 莱恩约翰逊」时，真实结果只出现品牌名
+    「Chromagraph」——旧判据要求半数词块命中，通用词恰恰是最难中的那些，
+    于是把对题结果整页否掉。
+    """
+    v = SW.relevance("Chromagraph 相机 App 莱恩约翰逊", [
+        {"title": "Mac鸭子 – 专注Mac的科技博客", "snippet": "Chromagraph Camera 上架 App Store"},
+    ])
+    check("通用词被剔出判定", "App" not in v["tokens"] and "相机" not in v["tokens"], v)
+    check("品牌名命中即放行", v["ok"] is True, v)
+
+    # 只有通用词、没有品牌名的结果仍要被拒
+    junk = SW.relevance("Chromagraph 相机 App 莱恩约翰逊", [
+        {"title": "Windows 帮助和学习 | Microsoft Support", "snippet": "相机设置与应用"},
+    ])
+    check("只有通用词仍拒绝", junk["ok"] is False, junk)
+
+
+
+def test_name_variant_match():
+    """译名用字差异不该否掉对题结果：标题写「约翰逊」，查询是「莱恩约翰逊」。"""
+    v = SW.relevance("Chromagraph 相机 App 莱恩约翰逊", [
+        {"title": "《利刃出鞘》同款影像风格,导演约翰逊做了款 iPhone 相机 App", "snippet": ""},
+    ])
+    check("译名变体命中", v["ok"] is True, v)
+    check("姓氏片段被认作命中", "莱恩约翰逊" in v["matched"], v)
+
+    junk = SW.relevance("Chromagraph 相机 App 莱恩约翰逊", [
+        {"title": "http://192.168.1.1 路由器 登录管理界面 | IP地址", "snippet": ""},
+    ])
+    check("无关结果仍拒绝", junk["ok"] is False, junk)
+
+
+
 def test_real_url_landing():
     """留痕地址必须来自同一张引擎表，且真发出过的那一次。"""
     report = SW.run_search("非改居", engines=("baidu",),
@@ -223,6 +259,8 @@ def main():
     test_junk_is_rejected()
     test_short_acronym_is_not_evidence()
     test_interleaved_word_order()
+    test_generic_words_not_evidence()
+    test_name_variant_match()
     test_real_url_landing()
     test_fallback_engine()
     test_all_rejected()

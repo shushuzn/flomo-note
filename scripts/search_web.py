@@ -52,6 +52,16 @@ DEFAULT_MIN_HITS = None
 
 # 查询里的这些词块不承载「这个对象是什么」，命中它们不构成相关性证据。
 # 只收问句尾巴与常识性虚词，不收领域词——「政策」「参数」是实义，命中该算数。
+#
+# 通用词（generic）：与任何主题搭配都成立的词。它们**不单独构成证据**——「相机」「App」
+# 这类词在十万条结果里都能找到，命中它们说明不了答对了问题；但它们与专有名词同时出现时
+# 仍是有效佐证。实测查「Chromagraph 相机 App 莱恩约翰逊」时，真实结果只出现品牌名
+# 「Chromagraph」，旧判据要求「半数词块命中」于是把它否掉，而通用词恰好是最难中的那些。
+_GENERIC_WORDS = frozenset({
+    "相机", "App", "app", "应用", "软件", "工具", "官网", "官方", "下载",
+    "发布", "推出", "新闻", "资讯", "科技", "数码", "智能", "手机",
+    "公司", "企业", "产品", "功能", "使用", "如何", "怎么", "是什么",
+})
 # 判定「这一路可信」时，至少要有这么长的一个词块命中。
 # 实测：查询「PEP Python 增强提案 状态」时某引擎的首条是「人民教育出版社官方网站」
 # （其英文简称同样是 PEP），它同时含「PEP」与「状态」，按命中个数算能过，内容却完全无关。
@@ -109,12 +119,16 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
     # 「女子交警铁骑队」（同词交错），整块比对会判「只命中 1/1」而否掉一整页对题结果
     # （实测搜狗 6 条全是各地女子铁骑队报道，全被否）。故短词块（2-3 字）退化为子串判断，
     # 长词块仍按整块——长词块才是承载特指信息的部分。
+    # 判据以**专有词块**为准：先剔掉通用词，只数能标识主题的那些。
+    # 全查询都是通用词时（如「相机 App」）退回全部词块，否则无从判断。
+    strong_tokens = [t for t in tokens if t not in _GENERIC_WORDS]
+    judging = strong_tokens or tokens
     if not tokens:
         need = 0
     elif min_hits is None:
-        need = max(1, (len(tokens) + 1) // 2)
+        need = max(1, (len(judging) + 1) // 2)
     else:
-        need = min(min_hits, len(tokens))
+        need = min(min_hits, len(judging))
     haystack = " ".join(
         f"{item.get('title', '')} {item.get('snippet', '')}" for item in results
     ).casefold()
@@ -122,6 +136,13 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
         t = token.casefold()
         if t in haystack:
             return True
+        # 译名/别名的姓部分单独出现也算命中：「莱恩约翰逊」对上标题里的「约翰逊」
+        # （实测搜狗首条就是 IT 之家原文，只因写法差一个译名用字被否）。
+        # 只认**姓氏级**片段：取词块最后 2-3 个汉字，避免把任意短子串当证据。
+        if not token.isascii() and len(token) >= 3:
+            for size in (3, 2):
+                if len(token) > size and token[-size:] in haystack:
+                    return True
         # 中文词块可能被插入修饰语而不再连续（查询「交警 女子铁骑队」，真实标题写作
         # 「女子交警铁骑队」——同五个字换了语序）。此时按**字集合包含**判断：词块的每个字
         # 都出现在结果里，即算命中。这把「换语序」与「答错问题」区分开：
@@ -130,12 +151,12 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
         if not token.isascii() and 2 <= len(token) <= 5:
             return all(ch in haystack for ch in token)
         return False
-    matched = [token for token in tokens if _hit(token)]
+    matched = [token for token in judging if _hit(token)]
     strong = [token for token in matched if len(token) >= STRONG_TOKEN_MIN]
     has_strong = any(len(token) >= STRONG_TOKEN_MIN for token in tokens)
     return {
         "ok": bool(tokens) and len(matched) >= need and (bool(strong) or not has_strong),
-        "tokens": tokens,
+        "tokens": judging,
         "matched": matched,
         "need": need,
     }
