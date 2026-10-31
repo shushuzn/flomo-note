@@ -188,10 +188,15 @@ def shared_lines(bodies: list[str]) -> list[tuple[str, list[int]]]:
 
     这是串位最典型的形态：把兄弟卡的一条要点原样抄进本卡。它字面上没错、质检也过，
     因为没有任何校验是「拿两张卡互相看」的——H11③ 全靠人自己记得比对。
+
+    首行标签段不参与比对：同一专题的两张卡共用一套标签是常态，而 `#` `/` 不在标点表里，
+    标签一多就会凑够 10 字被误判成串位。标签不是内容，串位要抓的是要点那几行。
     """
     hit: dict[str, list] = {}
     for i, body in enumerate(bodies):
         for ln in _norm_lines(body):
+            if ln.lstrip().startswith("#"):
+                continue
             k = _line_key(ln)
             if len(k) >= 10:
                 slot = hit.setdefault(k, [ln, []])

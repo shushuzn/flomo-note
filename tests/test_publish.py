@@ -926,16 +926,24 @@ def test_batch_shared_line_blocks():
 
 
 def test_batch_shared_line_ignores_short_and_tag_lines():
-    """标签行、短行不算重复：两张卡用同一标签、同一句「要点：」是常态。"""
+    """标签行、短行不算重复：两张卡用同一套标签、同一句「要点：」是常态。
+
+    标签行要用**够长**的两个标签造（`#` 与 `/` 不在标点表里，一拼就过 10 字），
+    否则这条用例只验到「短行不拦」，验不到标签行被排除——它本来就该被排除。
+    """
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
         rows = _drafts(tmp, 2)
-        rows[0][0].write_text("#AI/测试\n甲\n\n要点：\n- 一句话\n正文甲", encoding="utf-8")
-        rows[1][0].write_text("#AI/测试\n乙\n\n要点：\n- 一句话\n正文乙", encoding="utf-8")
+        tags = "#AI/安全 #AI/对齐"
+        rows[0][0].write_text(f"{tags}\n甲\n\n要点：\n- 一句话\n正文甲", encoding="utf-8")
+        rows[1][0].write_text(f"{tags}\n乙\n\n要点：\n- 一句话\n正文乙", encoding="utf-8")
         man = _manifest_rows(tmp, rows)
         exec_fn, _calls = make_exec()
         code, _out, _err = run(["--batch", str(man)], exec_fn)
         check("短行/标签行相同：不拦", code == 0, code)
+        check("标签行本身不进比对键",
+              PB.shared_lines([f"{tags}\n甲\n\n- 甲的一条独立要点", f"{tags}\n乙\n\n- 乙的一条独立要点"]) == [],
+              PB.shared_lines([f"{tags}\n甲\n\n- 甲的一条独立要点", f"{tags}\n乙\n\n- 乙的一条独立要点"]))
 
 
 def test_batch_overlap_note():
