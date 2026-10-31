@@ -30,7 +30,7 @@ flomo 极简卡片笔记技能：把网页、文章、想法整理成条条 flom
 - `SKILL.md` —— 执行细则（唯一细则源）
 - `ENVIRONMENT.md` —— 环境备忘（路径、代理、端口、推送通道等随环境变化的细节）
 - `scripts/` —— 工具脚本（控制台三件套在内：`serve_console.py` 服务、`console_cloud.py` 云端访问、`console_data.py` 本地数据抽取）
-- `tests/` —— 回归用例（`test_*.py`，与 `scripts/` 下的脚本一一配套；不进任何写卡流程）
+- `tests/` —— 回归用例（`test_*.py`，与 `scripts/` 下的脚本一一对应；不进任何写卡流程）
 - `web/` —— 项目控制台前端（静态资源；配 `scripts/serve_console.py` 起本地服务）
 - `.mcp.json` —— flomo MCP 配置（含 Bearer token，已忽略）
 - 笔记实体 —— 只在云端 flomo，本地不存在
