@@ -368,6 +368,10 @@ def heading_gap(page: str, text: str) -> dict:
 
     **只作告警、不作判据**：标题可能只出现在导航或推荐位里，也可能本就属于被裁掉
     的附录块，故宁可多报一句让人核对，不据此改动抽取结果。
+
+    调用方须传**裁剪前**的抽取结果：页尾推荐位的标题会被 `trim_tail_noise` 有意
+    裁掉，拿裁后正文来比，会把刚裁掉的标题当成截断证据（IT之家「相关文章」即此
+    形态）。这里只回答抽取阶段有没有少拿内容。
     """
     headings = page_headings(page)
     if not headings:
@@ -540,6 +544,12 @@ def main(argv: list[str] | None = None) -> int:
         found = find_published_in_text(body)
         if found:
             meta["published"], pub_src = found, "正文兜底"
+    # 章节缺口要在**裁剪前**的抽取结果上判：`trim_tail_noise` 有意裁掉页尾的
+    # 推荐位 / 相关文章 / APP 下载块，拿裁后正文去比整页标题，会把刚裁掉的
+    # 那些标题当成「页面有、正文没有」的截断证据，报出假警报（IT之家 598 / 596
+    # 的「相关文章」即此形态）。裁剪是另一条已单独打印的动作，这里只问抽取阶段
+    # 有没有少拿内容；真截断时缺失的标题在裁剪前也不在正文里，告警照旧会出。
+    extracted = body
     raw_len = len(body)
     body, lead_cut = trim_lead_noise(body, meta["title"])
     body, tail_cut = trim_tail_noise(body, min_chars)
@@ -564,7 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[裁剪] 原 {raw_len} 字符 → {len(body)}：{'、'.join(cuts)}")
     else:
         print("[裁剪] 无首尾噪音（原样保留）")
-    gap = heading_gap(page, body)
+    gap = heading_gap(page, extracted)
     for line in gap_warnings(gap):
         print(line)
     print(f"[文件] {out}")
