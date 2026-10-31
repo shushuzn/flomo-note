@@ -90,6 +90,7 @@ def query_tokens(query: str) -> list:
     return tokens
 
 
+
 def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
     """这一路结果是否可信：查询词块是否真的出现在标题/摘要里。
 
@@ -104,6 +105,10 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
     # 也是 PEP），真正对的 PEP 8 文档排在第 7 条。整页取并集会让这一路判成可信——
     # 相关性不能靠「九条里有一条对」凑出来，那等于把排序能力还给调用方人肉承担。
     results = results[:top_k] if top_k and top_k > 0 else results
+    # 词块判定用**字符包含**而非整块相等：查询「交警 女子铁骑队」时，真实结果标题写作
+    # 「女子交警铁骑队」（同词交错），整块比对会判「只命中 1/1」而否掉一整页对题结果
+    # （实测搜狗 6 条全是各地女子铁骑队报道，全被否）。故短词块（2-3 字）退化为子串判断，
+    # 长词块仍按整块——长词块才是承载特指信息的部分。
     if not tokens:
         need = 0
     elif min_hits is None:
@@ -113,7 +118,19 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
     haystack = " ".join(
         f"{item.get('title', '')} {item.get('snippet', '')}" for item in results
     ).casefold()
-    matched = [token for token in tokens if token.casefold() in haystack]
+    def _hit(token: str) -> bool:
+        t = token.casefold()
+        if t in haystack:
+            return True
+        # 中文词块可能被插入修饰语而不再连续（查询「交警 女子铁骑队」，真实标题写作
+        # 「女子交警铁骑队」——同五个字换了语序）。此时按**字集合包含**判断：词块的每个字
+        # 都出现在结果里，即算命中。这把「换语序」与「答错问题」区分开：
+        # 假命中（《城中之城》对上「城中村改造」）缺「改」「造」等字，仍然漏底。
+        # 只对 2-5 字的中文词块生效；更长的词块仍要求整块出现，避免把一句话拆成字后误放。
+        if not token.isascii() and 2 <= len(token) <= 5:
+            return all(ch in haystack for ch in token)
+        return False
+    matched = [token for token in tokens if _hit(token)]
     strong = [token for token in matched if len(token) >= STRONG_TOKEN_MIN]
     has_strong = any(len(token) >= STRONG_TOKEN_MIN for token in tokens)
     return {

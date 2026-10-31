@@ -123,6 +123,33 @@ SOGOU_GOOD_PEP = """
 """
 
 
+def test_interleaved_word_order():
+    """词块被插入修饰语而不再连续时，仍要认出这是同一件事。
+
+    实测查「交警 女子铁骑队」，搜狗 6 条全是各地女子铁骑队报道、全部对题，
+    但标题写作「女子**交警**铁骑队」——五个字换了语序，整块比对判「只命中 1/1」，
+    整页被否。判据改为字集合包含（2-5 字中文词块）后放行，而缺字的假命中仍然漏底。
+    """
+    good = SW.relevance("交警 女子铁骑队", [
+        {"title": "机动与温情并行:中轴线上的女子交警铁骑队的平安守护", "snippet": ""},
+        {"title": "交警铁骑羞答答的玫瑰", "snippet": ""},
+        {"title": "交警铁骑队 - 搜狗百科", "snippet": ""},
+    ])
+    check("语序交错的真结果放行", good["ok"] is True, good)
+    check("两个词块都认成命中", good["matched"] == ["交警", "女子铁骑队"], good)
+
+    # 反向：缺字的假命中仍要被拒（《城中之城》缺「改」「造」）
+    junk = SW.relevance("城中村改造 政策", [
+        {"title": "城中之城（2024年电视剧）_百度百科", "snippet": "《城中之城》金融反腐剧"},
+    ])
+    check("缺字的假命中仍拒绝", junk["ok"] is False, junk)
+    check("短缩写凑数仍拒绝",
+          SW.relevance("PEP Python 增强提案 状态", [
+              {"title": "PEP - 人民教育出版社官方网站", "snippet": "版权信息 状态：正常"},
+          ])["ok"] is False)
+
+
+
 def test_real_url_landing():
     """留痕地址必须来自同一张引擎表，且真发出过的那一次。"""
     report = SW.run_search("非改居", engines=("baidu",),
@@ -195,6 +222,7 @@ def main():
     test_tokens()
     test_junk_is_rejected()
     test_short_acronym_is_not_evidence()
+    test_interleaved_word_order()
     test_real_url_landing()
     test_fallback_engine()
     test_all_rejected()
