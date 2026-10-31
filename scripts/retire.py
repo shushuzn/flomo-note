@@ -10,11 +10,13 @@
   2. 第二行原概念名
   3. 末行「原标签 + 原字数」
 正文一律备份到 `_tmp/retire_backup/<id>.txt`，云端的骨架不含正文（H26：正文不落盘例外见 H24 素材保留）。
+骨架不带平台渲染记号：读接口把标签行回成 `#标签<br>`，`<br>` 在解析时剥掉（同 `memo_util` 口径）。
 
 用法：
   python scripts/retire.py --ids ID1,ID2 [--dry-run]
   python scripts/retire.py --file <tsv>        # 取每行第一列 id
 先逐张 `memo_batch_get` 取全文核对（H1），再覆盖写入，写入后回读核对骨架与字数。
+`--dry-run` 只打印计划：不写云端，也不落备份（备份属写路径的保险）。
 写前必须能取到全文：取不到就跳过该张并计入失败，绝不「先打标签再说」。
 退出码：0=全部成功（含跳过已空卡）；1=有失败；2=用法错误。
 """
@@ -30,6 +32,7 @@ from flomo_client import (  # noqa: E402
     RETIRE_TAG, FlomoClient, FlomoError, load_token, readback_check, tool_data,
 )
 from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+from memo_util import strip_trailing_br  # noqa: E402
 
 _OPTS = [
     Opt("--ids", "ids", default="", hint="；多个 id 请用逗号在一次里给全"),
@@ -41,16 +44,25 @@ _OPTS = [
 BACKUP_DIR = _HERE.parent / "_tmp" / "retire_backup"
 
 
+def _clean_text(text):
+    """去掉平台渲染记号：读接口把换行连同标签行回成 `#政策/产业<br>`，其中 `<br>` 是
+    记号、不是标签名的一部分。不剥就会写进骨架末行（「原标签：政策/产业<br>」）。
+    剥离口径与签名/回读共用 `memo_util.strip_trailing_br`，不另写一份正则。
+    骨架每格只占一行，行内换行压成空格。"""
+    return strip_trailing_br(text or "").replace("\n", " ").strip()
+
+
 def build_skeleton(name, tags, word_count):
     """骨架固定三行；除首行外不许出现 `#`，避免它被当成真卡或挂错标签。"""
-    clean_name = (name or "").strip().replace("#", "").replace("\n", " ")
-    tag_text = "、".join(t for t in tags if t) or "（无）"
+    clean_name = _clean_text(name).replace("#", "")
+    clean_tags = [_clean_text(t).lstrip("#") for t in (tags or [])]
+    tag_text = "、".join(t for t in clean_tags if t) or "（无）"
     return f"{RETIRE_TAG}\n{clean_name}\n\n原标签：{tag_text}；原字数：{word_count}"
 
 
 def parse_card(content):
     """从原文取「概念名 + 标签」，供骨架与备份文件名使用（H1 全文已在手）。"""
-    lines = [ln.strip() for ln in (content or "").splitlines()]
+    lines = [_clean_text(ln) for ln in (content or "").splitlines()]
     tags = [t.lstrip("#") for t in (lines[0].split() if lines else []) if t.startswith("#")]
     name = ""
     for ln in lines[1:]:
@@ -71,13 +83,12 @@ def retire_one(client, memo_id, dry_run=False, fallback=None):
     """
     memos = tool_data(client.tool("memo_batch_get", {"ids": [memo_id]})).get("memos") or []
     content = (memos[0].get("content") or "") if memos else ""
-    if content.strip():
+    has_body = bool(content.strip())
+    if has_body:
         name, tags = parse_card(content)
         word_count = memos[0].get("word_count") or len(content)
         if not name:
             return "fail", "取不到概念名，按 H1 拒绝盲写"
-        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-        (BACKUP_DIR / f"{memo_id}.txt").write_text(content, encoding="utf-8")
     elif fallback:
         name, word_count, tags = fallback
     else:
@@ -85,7 +96,13 @@ def retire_one(client, memo_id, dry_run=False, fallback=None):
 
     skeleton = build_skeleton(name, tags, word_count)
     if dry_run:
+        # 只看计划 = 一个字节都不动：既不写云端，也不落备份。
+        # 备份是写路径的保险（写完卡面就变了，全文只此一份），不该成为预览的副作用——
+        # 否则「只看一眼计划」就把正文落到了本地磁盘上。
         return "ok", f"[dry-run] {name}（原 {word_count} 字）→ 骨架 {len(skeleton)} 字"
+    if has_body:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        (BACKUP_DIR / f"{memo_id}.txt").write_text(content, encoding="utf-8")
     try:
         tool_data(client.tool("memo_update", {"id": memo_id, "content": skeleton}))
     except FlomoError as exc:
@@ -141,8 +158,10 @@ def main(argv=None):
         tally[state] += 1
         print(f"{n:>3}/{len(ordered)} {memo_id} {state.upper()} {why}")
 
-    print(f"[结果] 退场 {tally['ok']} 张，跳过 {tally['skip']} 张，失败 {tally['fail']} 张")
-    print(f"[备份] {BACKUP_DIR}")
+    head = "计划" if args["dry_run"] else "退场"
+    print(f"[结果] {head} {tally['ok']} 张，跳过 {tally['skip']} 张，失败 {tally['fail']} 张")
+    # 预览没有落盘，就别报一个「备份在…」——用户会去那个目录找，发现是空的。
+    print("[备份] （dry-run 未落盘）" if args["dry_run"] else f"[备份] {BACKUP_DIR}")
     return 0 if tally["fail"] == 0 else 1
 
 
