@@ -1,0 +1,19 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+commit: 8fad7a77f603b37890d478accf73168fc654cb0e
+branch: master
+exported_at: "2026-10-24T11:03:15Z"
+modules:
+    root:
+        dir_name: flomo-note 技能根文档与 OpenCode Go 代理
+        title: flomo-note 技能根文档与 OpenCode Go 代理
+        scope:
+            - README.md
+            - AGENTS.md
+            - ENVIRONMENT.md
+            - opencode-go-proxy.js
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
