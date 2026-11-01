@@ -100,6 +100,8 @@ SPEC = [
     Opt("--db", "db", default=rss_store.DEFAULT_DB),
     Opt("--limit", "limit", "int", low=1, high=500, default=100,
         hint="（每个源最多取几条，防止个别源一次刷出几百条）"),
+    Opt("--if-older-than", "if_older_than", "float", low=0.0, high=8760.0, default=None,
+        hint="（小时；上次拉取还没这么久就整体跳过，供高频调用方使用）"),
     Opt("--no-gc", "no_gc", "flag"),
     Opt("--timeout", "timeout", "float", low=1.0, high=120.0, default=30.0),
 ]
@@ -118,6 +120,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     conn = rss_store.connect(opts["db"])
+
+    # 距上次拉取太久就先说一声：本环境没有 cron，拉取全靠人（或调用方）触发，
+    # 而「未读七天」的保留期意味着超过七天不拉，条目没见到就过期了。
+    age = rss_store.fetch_age_hours(conn)
+    if age is not None:
+        stale = "（已超过 7 天，未读条目可能正在过期）" if age > 24 * rss_store.UNREAD_KEEP_DAYS else ""
+        print(f"[上次拉取] {age:.1f} 小时前{stale}")
+    else:
+        print("[上次拉取] 从未拉取过")
+
+    if opts["if_older_than"] is not None and age is not None and age < opts["if_older_than"]:
+        print(f"[跳过] 上次拉取仅 {age:.1f} 小时前，不足 {opts['if_older_than']} 小时")
+        return 0
     total_new = total_dup = 0
     failures: list[str] = []
     try:
@@ -134,8 +149,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[拉取] {feed} → 新增 {added}、重复 {dup}")
 
         stat = rss_store.counts(conn)
+        stamp = rss_store.record_fetch(conn)
         print(f"[入库] 合计新增 {total_new}、重复 {total_dup}；"
-              f"库内 {stat['total']} 条（未读 {stat['unread']}）")
+              f"库内 {stat['total']} 条（未读 {stat['unread']}）；拉取于 {stamp[:19]}")
 
         if opts["no_gc"]:
             print("[清理] 已跳过（--no-gc）")

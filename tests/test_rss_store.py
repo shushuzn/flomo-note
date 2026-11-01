@@ -54,6 +54,22 @@ class RssStoreTest(unittest.TestCase):
 
     # ---- 读 / 未读状态 ----
 
+    def test_last_fetch_absent_then_recorded(self) -> None:
+        self.assertIsNone(rss_store.last_fetch(self.conn))
+        self.assertIsNone(rss_store.fetch_age_hours(self.conn))
+        stamp = rss_store.record_fetch(self.conn)
+        self.assertEqual(rss_store.last_fetch(self.conn), stamp)
+
+    def test_fetch_age_hours(self) -> None:
+        past = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(timespec="seconds")
+        rss_store.record_fetch(self.conn, at=past)
+        self.assertAlmostEqual(rss_store.fetch_age_hours(self.conn), 5.0, delta=0.05)
+
+    def test_record_fetch_overwrites(self) -> None:
+        rss_store.record_fetch(self.conn, at="20260101T000000+0000")
+        rss_store.record_fetch(self.conn, at="20260601T000000+0000")
+        self.assertEqual(rss_store.last_fetch(self.conn), "20260601T000000+0000")
+
     def test_new_item_is_unread(self) -> None:
         rss_store.add_items(self.conn, FEED, [_item("http://a/1")])
         stat = rss_store.counts(self.conn)

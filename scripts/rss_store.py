@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS items_fetched ON items(fetched_at);
 CREATE INDEX IF NOT EXISTS items_read ON items(read_at);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -170,6 +174,33 @@ def gc(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict:
     removed = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
     conn.commit()
     return {"removed": removed, "unread_cut": unread_cut, "read_cut": read_cut}
+
+
+def record_fetch(conn: sqlite3.Connection, *, at: str | None = None) -> str:
+    """记下本次拉取时刻，返回该时刻。供 `--if-older-than` 判断新旧。"""
+    stamp = at or _now()
+    conn.execute("INSERT INTO meta(key, value) VALUES('last_fetch', ?)"
+                 " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (stamp,))
+    conn.commit()
+    return stamp
+
+
+def last_fetch(conn: sqlite3.Connection) -> str | None:
+    """上次成功拉取的时刻；从未拉过返回 None。"""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'last_fetch'").fetchone()
+    return row["value"] if row else None
+
+
+def fetch_age_hours(conn: sqlite3.Connection, *, now: datetime | None = None) -> float | None:
+    """距上次拉取多少小时；从未拉过返回 None（调用方按「需要拉」处理）。"""
+    stamp = last_fetch(conn)
+    if not stamp:
+        return None
+    parsed = _parse(stamp)
+    if parsed is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return (now - parsed).total_seconds() / 3600.0
 
 
 def counts(conn: sqlite3.Connection) -> dict:

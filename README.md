@@ -323,6 +323,9 @@ python scripts/validate_memo.py --no-gate memo_body.txt
 # 1. 拉取（读 feeds.opml，写 .rss/feeds.db，末尾自动清理过期条目）
 python3 scripts/rss_fetch.py
 
+# 只想在拉得很少时空跑：超过 6 小时才真去抓（本环境无 cron，靠调用方触发）
+python3 scripts/rss_fetch.py --if-older-than 6
+
 # 2. 看今天有什么未读
 python3 scripts/rss_store.py list --unread
 
@@ -336,6 +339,8 @@ python3 scripts/rss_store.py mark-read "https://example.com/article"
 |------|------|------|
 | 未读 | `read_at IS NULL` | 入库满 7 天删除 |
 | 已读 | 标记过 `mark-read` | 标记满 1 天删除 |
+
+**没有自动拉取**：本环境的 cron 未运行（proot 下无 init 拉起），项目内不含任何定时设施，拉取靠调用方触发。`rss_fetch.py` 会在每次运行时报告距上次拉取多久，超过 7 天（未读保留期）会提示「未读条目可能正在过期」；`--if-older-than N` 可让它在不足 N 小时时直接跳过，便于被高频调用而不重复劳动。
 
 「读过」= **按 SOP 对这个处理过了**（建卡或退出留痕），由人显式标记。工具不推断处理痕迹——「看过标题」不是「处理完」，自动推断会让保留期失效。已读条目删掉的只是本地索引，正文与结论早已在云端。
 
