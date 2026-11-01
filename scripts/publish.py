@@ -114,6 +114,8 @@ _OPTS = [
     CLI.Opt("--update-id", "update_id", default=""),
     CLI.Opt("--allow-rename", "allow_rename", "flag"),
     CLI.Opt("--allow-content-loss", "allow_content_loss", "flag"),
+    CLI.Opt("--allow-near-concept", "allow_near_concept", default="",
+            hint="概念名疑似重复（包含关系）时写明理由放行，随闸门凭证留痕"),
     CLI.Opt("--dry-run", "dry_run", "flag"),
     CLI.Opt("--skip-web", "skip_web", "flag"),
     CLI.Opt("--no-verify-card", "no_verify_card", "flag"),
@@ -833,7 +835,8 @@ def _concept(draft: str) -> str:
     return heads[1] if len(heads) > 1 else "?"
 
 
-def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "", prefix: str = "") -> int:
+def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "",
+             prefix: str = "", allow_near: str = "") -> int:
     """① 闸门 → ② 质检。返回 0 通过 / 2 闸门未过 / 3 质检 ERR。**不写云。**"""
     _step(prefix + "① 流程闸门 sop_gate")
     gate_cmd = [PY, str(SCRIPT_DIR / "sop_gate.py"), "--memo", draft]
@@ -843,6 +846,8 @@ def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "", 
         gate_cmd.append("--skip-web")
     if update_id:
         gate_cmd += ["--anchor-id", update_id]
+    if allow_near.strip():
+        gate_cmd += ["--allow-near-concept", allow_near]
     code, out, err = run(gate_cmd)
     if out.strip():
         print(_tail(out))
@@ -1120,7 +1125,7 @@ def _print_batch_next(ids: list[str], do_verify: bool) -> None:
 
 
 def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
-              allow_content_loss: bool, do_verify: bool) -> int:
+              allow_content_loss: bool, do_verify: bool, allow_near: str = "") -> int:
     n = len(items)
     print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检"
           f"{' + 覆盖对象' if any(it['update_id'] for it in items) else ''}），"
@@ -1149,7 +1154,8 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
         prefix = f"[{i}/{n}] "
         line_skip_web = skip_web or it.get("skip_web", False)
         code = precheck(run, it["draft"], it["verify"], line_skip_web,
-                        update_id=it["update_id"], prefix=prefix)
+                        update_id=it["update_id"], prefix=prefix,
+                        allow_near=allow_near)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
@@ -1212,6 +1218,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
     update_id = ns["update_id"].strip()
     allow_rename = ns["allow_rename"]
     allow_content_loss = ns["allow_content_loss"]
+    allow_near = ns["allow_near_concept"]
     dry_run = ns["dry_run"]
     skip_web = ns["skip_web"]
     verify_card = not ns["no_verify_card"]
@@ -1220,7 +1227,8 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         # 清单逐条指定草稿/留痕/覆盖对象；命令行上再给一份，读起来像「全批的默认值」，
         # 实际只会作用于第一条或被忽略——两种解释都错，故直接拒而不是挑一种。
         for flag, given in (("--draft", draft), ("--verify", verify),
-                            ("--update-id", update_id), ("--allow-rename", allow_rename)):
+                            ("--update-id", update_id), ("--allow-rename", allow_rename),
+                            ("--allow-near-concept", allow_near)):
             if given:
                 raise CLI.UsageError(
                     f"--batch 与 {flag} 不能同时给：批量的草稿、留痕与覆盖对象一律逐条写在清单里")
@@ -1249,7 +1257,8 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         print(f"[失败] 草稿读不出来：{exc}", file=sys.stderr)
         return 1
 
-    code = precheck(run, draft, verify, skip_web, update_id=update_id)
+    code = precheck(run, draft, verify, skip_web, update_id=update_id,
+                    allow_near=allow_near)
     if code:
         return code
 

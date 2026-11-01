@@ -7,7 +7,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 > **本文件是唯一细则源**，全文须在 10000 字以内（`check_skill_docs.py` 硬拦）。环境（路径、代理、端口）见 `ENVIRONMENT.md`，顶层约定见 `AGENTS.md`。
 
-**读法**：硬限只在第二节定义一次，他处只写编号；「判据」要你做什么，「反例」划边界，机制在脚本里。
+**读法**：硬限只在第二节定义一次，他处只写编号；判据在这里，机制在脚本里。
 
 ## 一、根本纪律（三条）
 
@@ -24,7 +24,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **本节管** H1–H24 的全部硬限；**不管**动作顺序（第三节）、输出格式（第四节）、参考细节与文档治理（第五节）。
 
-定位：读卡 H1/H2；调工具 H3–H6；概念名 H6b/H6d；材料非概念 H6c；拆卡 H7；同事件 H8–H11；正文写什么 H12/H13；格式 H14–H16；标签 H17/H18；图片 H19；改卡 H20–H24。
+定位：读卡 H1/H2；调工具 H3–H6；概念名 H6b/H6d；材料非概念 H6c；同名判定 H6e；拆卡 H7；同事件 H8–H11；正文写什么 H12/H13；格式 H14–H16；标签 H17/H18；图片 H19；改卡 H20–H24。
 
 ### A. 读写工具与概念定义
 
@@ -32,7 +32,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **H2 · 字数只认实测。** 取 `memo_batch_get` 全文长度或 `word_count`，严禁按截断内容估算，无实测写「未实测」。
 
-**H3 · flomo 调用一律走脚本、逐次调用。** `python scripts/flomo_client.py <tool> --file <json>`；每个关键词单独调用并读该次原始返回，禁把多次调用塞进临时脚本或循环合并成一份结果。查重走 `scripts/dedup.py`、标签走 `scripts/tagcheck.py`，它们逐次打印、每次返回独立成块。列表回包加 `--brief`，不写内联解析。参数名以 `--help` 为准，不靠试错（错名只回 `additionalProperties` 错误）。
+**H3 · flomo 调用一律走脚本、逐次调用。** `python scripts/flomo_client.py <tool> --file <json>`；每个关键词单独调用并读该次原始返回，禁把多次调用塞进临时脚本或循环合并成一份结果。查重走 `scripts/dedup.py`、标签走 `scripts/tagcheck.py`，它们逐次打印、每次返回独立成块。列表回包加 `--brief`，不写内联解析。
 
 **H4 · 返回值是包裹结构。** 数据在 `structuredContent`（或解析 `content[].text`）；直接取 `result["memos"]` 永远取不到，会造成「查重看似通过、实际没查到」。查重结论以程序解析为准，不靠肉眼扫打印。
 
@@ -46,6 +46,8 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **H6d · 有动词不等于错，看它是构词还是谓语。** 动词在词首且后接名词（发布会、开源模型、手机拆解指南）是构词成分；动词前有实义成分（GPT-6 发布、蔚来ET9 上市）是谓语。正则只能**提示**（`memo_util._predicate_hits`），判定按 H6b 四条自己来——同形的 `睡眠呼吸暂停` 与 `塔塔父子上市` 只有人分得清。
 
 **H6c · 列对象清单，逐个建卡。** 读完全文把所有有名字的对象写下，每个对象分别建卡或更新，不挑最显眼的一个。对象能独立回答「这是什么」就建卡；纯事件（谁打谁、谁谈了什么）跳过。退出前必须查重。
+
+**H6e · 同名按对象查，不按批次查。** 每个对象各自比对概念名；一批多条链接也逐条查，禁以「本批查过一次」代替。闸门按标签簇整簇翻页比对，同名即阻塞，须 `--update-id` 合并。
 - **信息不足先补事实层**：材料只给名字时，先联网补定义、公开参数、法规条款与生效状态、可核沿革；不补分析结论与归因（H13）。补齐仍不成立（查无此对象或仅一方判断）才可退出，并点名查了什么。
 - **材料与检索冲突**：两边都有出处就并列写并注明差异（多见于比例、规模、统计范围），不择一、不取中间值。
 - **一张卡只装一个概念**（边界见 H7）。
@@ -144,12 +146,12 @@ description: Use when the user sends a link, asks to save an article, clip a web
 `tag_tree` 现采，`tagcheck.py` 核存在性，不精确就新建二级（H17/H18）。
 
 ### 5. 查重
-`dedup.py --keywords "词1,词2"` 两路并查；命中后必须 `--ids` 回读全文，不凭标签名判断「不是同一个」。
+`dedup.py --keywords "词1,词2"` 两路并查；命中后必须 `--ids` 回读全文，不凭标签名判断「不是同一个」。闸门另按整簇翻页比对概念名（H6e）。
 
 ### 6. 判断
 三选一：无命中→新建；完全重复→更新；同事件→合并（H8–H10）。
 
-**退出也必须留痕（阻塞）**：任何「不建卡」的决定禁止口头说「窄口径退出」，须先列清单、逐对象搜索、跑查重，再执行 `python scripts/exit_confirm.py --objects "…" --search-log <json> --dedup-log <txt> --reason "…"`；退出码非 0 即拦截。
+**退出也必须留痕（阻塞）**：不建卡须先列清单、逐对象搜索、跑查重，再跑 `exit_confirm.py --objects "…" --search-log <json> --dedup-log <txt> --reason "…"`；退出码非 0 即拦截。
 
 ### 7. 写作
 按 H14 写：标签行→概念名→空行→正文。
@@ -196,7 +198,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ### flomo 富文本实测（与 H14 互补：H14 定结构，本段定渲染）
 - 能渲染：加粗、高亮、下划线、列表；不渲染（标记原样显示）：标题、引用、代码块、链接、表格、图片。
-- **本库取舍**：强调类一律不用，只用列表，`validate_memo.py` 判 ERR；存量按 H22b 处置，不做普查。
+- **本库取舍**：强调类一律不用，只用列表，`validate_memo.py` 判 ERR；存量按 H22b 处置。
 - 判定边界都在 `validate_memo.py`：表格只认三种真形态（`P(A|B)` 这类紧贴竖线不算）；单星号须成对且整段无空白（`f*g` 不算）；尖括号只认闭合标签（`|x|<R` 不算）；裸邮箱会被自动链接化，非必要不写，必要时写 `a(at)b.c`。
 
 ### 标签树现采
@@ -211,7 +213,6 @@ description: Use when the user sends a link, asks to save an article, clip a web
 - **判据在 H6b，不在脚本**。脚本只做两件确定的事：可剥离的切片形态判 ERR（`_SLICE_RE`）；动作词命中判 WARN 提醒。谓语不进阻断路径（见 H6d）。
 - 识别走 `memo_util.slice_qualifiers`，质检与取证共用；禁在调用方另写正则（失配只表现为数字对不上）。
 - 切片各类平级同格，不为某类开豁免；只拦可剥离形态：`医疗事故` 去掉事件名词不成词属对象名，`Qwen3` 里的数字不拦。
-- 「动+名」构词不进提示，只看括号外（括注里的「通报」多为名词）。
 - **误拦比漏检更危险**：合法对象名一条都不得被拦；判不准的交人读，不硬判。
 
 ### 技能文档治理（与写卡执行无关）

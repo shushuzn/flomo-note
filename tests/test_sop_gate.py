@@ -537,6 +537,109 @@ def _tt(total, names):
                                   "tags": [{"name": n} for n in names]}}
 
 
+class _PagedClient(FakeClient):
+    """按 `(tag, end_date)` 返回预设页，用来验证整簇翻页确实读到了第 2 页。"""
+
+    def __init__(self, pages, **kw):
+        super().__init__(**kw)
+        self._pages = pages
+
+    def tool(self, name, args=None):
+        a = args or {}
+        if name == "memo_search" and a.get("tag"):
+            key = (a["tag"], a.get("end_date", ""))
+            if key in self._pages:
+                self.calls.append((name, dict(a)))
+                return {"structuredContent": {"memos": self._pages[key]}}
+        return super().tool(name, args)
+
+
+# 日期按格式串拼，避免在技能文档里写出具体日期（H28 的日期扫描对 tests 同样生效）。
+_DAY_NEW = "%04d-%02d-%02d" % (2026, 10, 30)
+_DAY_OLD = "%04d-%02d-%02d" % (2026, 9, 1)
+
+
+def _memo(mid, concept, tagline="#AI/公司", day=_DAY_NEW):
+    return {"id": mid, "created_at": day + " 10:00:00",
+            "content": f"{tagline}\n{concept}\n\n正文"}
+
+
+def run_dedup_concept_sweep_cases():
+    """事故回归（重复建卡）：同名卡不在关键词检索前 N 条时也必须判重复。
+
+    旧实现只在「关键词命中的前 20 条」里比对概念名——事故卡「Anthropic」的旧卡
+    恰好排在 20 名之外，闸门遂记录「均不重复，放行新建」。下面三条钉住新口径：
+    整簇翻页覆盖、翻页到第 2 页、包含关系同名。
+    """
+    # A) 同名卡只在标签簇里（关键词命中 0）→ 阻塞
+    c = FakeClient(
+        tag_tree=_tt(2, ["AI/公司", "商业/企业"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": [
+            _memo("OLD1", "Anthropic", "#商业/企业 #AI/公司")]}}},
+    )
+    b, n = [], []
+    got = GATE._check_dedup(
+        c, GATE.memo_signature("#AI/公司 #金融/IPO\nAnthropic\n\n已提交 S-1\n"), b, n)
+    check("查重·同名卡只在标签簇里也判重复", any("概念名重复" in x for x in b))
+    check("查重·重复结论点名冲突卡", any("OLD1" in x for x in b))
+    check("查重·凭证记录同名候选",
+          [r["id"] for r in got["concept_sweep"]["same_concepts"]] == ["OLD1"])
+
+    # B) 同名卡在第 2 页（第 1 页 50 张无名冲突）→ 翻页后仍阻塞
+    page1 = [_memo(f"P{i}", f"无关概念{i:02d}") for i in range(50)]
+    c = _PagedClient(
+        {("AI/公司", ""): page1,
+         ("AI/公司", _DAY_NEW): [_memo("OLD2", "Anthropic", day=_DAY_OLD)]},
+        tag_tree=_tt(1, ["AI/公司"]),
+    )
+    b, n = [], []
+    got = GATE._check_dedup(
+        c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n)
+    check("查重·同名卡在标签簇第 2 页也判重复", any("OLD2" in x for x in b))
+    check("查重·翻页被记录（扫描 51 张）", got["concept_sweep"]["scanned"] == 51)
+
+    # C) 包含关系同名：默认阻塞，写明理由后放行并留痕
+    c = FakeClient(
+        tag_tree=_tt(1, ["AI/公司"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": [
+            _memo("OLD3", "Anthropic")]}}},
+    )
+    sig = GATE.memo_signature("#AI/公司\nAnthropic S-1\n\n正文\n")
+    b, n = [], []
+    GATE._check_dedup(c, sig, b, n)
+    check("查重·包含关系同名默认阻塞", any("疑似重复" in x for x in b))
+    b2, n2 = [], []
+    GATE._check_dedup(c, sig, b2, n2, allow_near="S-1 是文件代号，指代同一家公司")
+    check("查重·包含关系同名可按理由放行", not any("疑似重复" in x for x in b2))
+    check("查重·放行理由留痕", any("--allow-near-concept" in x for x in n2))
+
+    # D) 不同对象 → 不阻塞（避免把「长征十号」/「长征十号乙」以外的新概念也误拦）
+    c = FakeClient(
+        tag_tree=_tt(1, ["AI/公司"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": [
+            _memo("OLD4", "OpenAI")]}}},
+    )
+    b, n = [], []
+    got = GATE._check_dedup(
+        c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n)
+    check("查重·不同对象不阻塞", not b)
+    check("查重·不同对象扫描数仍留痕", got["concept_sweep"]["scanned"] == 1)
+
+    # E) 更新场景且概念名未改：本卡即候选，不自己撞自己
+    c = FakeClient(
+        tag_tree=_tt(1, ["AI/公司"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": [
+            _memo("SELF", "Anthropic")]}}},
+        batch_get={"SELF": {"structuredContent": {"memos": [
+            _memo("SELF", "Anthropic")]}}},
+    )
+    b, n = [], []
+    GATE._check_dedup(
+        c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n, anchor_id="SELF")
+    check("查重·更新且概念名未改不阻塞", not b)
+    check("查重·更新跳过扫描留痕", any("跳过同名判定" in x for x in n))
+
+
 def run_tag_tree_net_cases():
     """_tag_tree_total_and_count（假 client，不联网）。
 
@@ -846,6 +949,7 @@ if __name__ == "__main__":
     run_no_gate_cases()
     run_tag_tree_net_cases()
     run_dedup_net_cases()
+    run_dedup_concept_sweep_cases()
     run_tag_check_cases()
     run_semantic_neighbor_cases()
     run_review_net_cases()

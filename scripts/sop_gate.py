@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """SOP 流程闸门 —— 把"靠自觉"的检查型步骤变成"必须留痕"。
 
-背景（事故复盘）：SOP 九步里的 ②验证（网络搜索）、⑤查重两路并查、
-⑧复盘三路现查，此前全靠执行者自觉，没有任何机械强制。
+背景（事故复盘）：SOP 九步里的 ②验证（网络搜索）、⑤查重、⑧复盘现查，
+此前全靠执行者自觉，没有任何机械强制。
 执行者跳过时，`validate_memo.py` 只校验卡片**文本格式**，完全无从发现
 "流程步骤没做"——于是出现"卡写对了但 SOP 漏做"的事故。
 
@@ -18,11 +18,14 @@
   python sop_gate.py --memo <正文路径> --verify <验证记录JSON>
   python sop_gate.py --memo <正文路径> --skip-web --skip-reason "理由"  # 非术语卡，显式声明无需网络验证
   python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
+  python sop_gate.py --memo <正文路径> --verify <JSON> --allow-near-concept "理由"  # 疑似同名但确属不同对象
   python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
   python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
 
   查重关键词由脚本自行从概念名派生（见 `_check_dedup` 的 `keywords_of_concept`），
   无需也无法由调用方传入——本脚本**不提供** `--search-kw` 参数。
+  概念名判定不依赖检索排序：每个标签簇整簇翻页 + 概念名关键词翻页取候选，
+  逐卡比对归一化概念名；同名直接阻塞，包含关系同名须 `--allow-near-concept "理由"`。
 
 验证记录 JSON 结构（由调用方在完成第 2 步网络搜索后手工落盘）：
   {
@@ -87,10 +90,12 @@ from memo_util import (
     body_hash,
     keywords_of_concept,
     memo_signature,
+    normalize_concept,
     signature_key,
     tag_key,
     tag_leaves,
 )
+from scan_concept_duplication import normalize as strip_slice_name
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -112,8 +117,10 @@ _HUMAN_ITEMS = [
     },
     {
         "item": "⑤ 查重：命中候选是否同一事件",
-        "why": "闸门只保证两路真的跑了、候选被读到；「是否撞卡」须按 H8 三项语义判定，机器判不了",
-        "evidence": "dedup.keyword_hits / dedup.tag_neighbors（候选已留痕）",
+        "why": "闸门只保证概念名扫描真的跑了（整簇翻页）、同名候选被读出并阻塞；"
+               "「不同名但是否同一事件/同一对象的另一种叫法」仍须按 H8 语义判定",
+        "evidence": "dedup.concept_sweep（扫描范围、同名/疑似同名候选、取不尽项）"
+                    "与 dedup.keyword_hits / dedup.tag_neighbors",
     },
     {
         "item": "⑧ 本卡全文自查（H11 ①–④）",
@@ -369,13 +376,95 @@ def _tag_tree_total_and_count(client):
     return total, tags or []
 
 
-def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
-    """⑤ 查重两路并查：memo_search 关键词扫 + tag_tree 同主标签细分比对。
+# 概念名扫描的翻页上限与页长。服务端 `memo_search` 单次上限 50，且不认 offset，
+# 只能按 `end_date` 日期游标往回翻。10 页 = 单簇最多 500 张；取不尽会记 `truncated`，
+# 由闸门在 notes 里明说「只扫到这些」，不把「没扫完」写成「没有重复」。
+SWEEP_PAGE_LIMIT = 50
+SWEEP_MAX_PAGES = 10
+# 包含关系视为「疑似同名」时，多出来的部分最长多少字。事件卡常把主体写进概念名
+# （「某甲批评 Anthropic：…」），若只看包含关系，任何关于该主体的新卡都会被拦。
+# 只认「对象名 + 短后缀」（「Anthropic」/「Anthropic S-1」）这一种形态。
+NEAR_EXTRA_MAX = 6
 
-    本函数只负责"两路都真的跑了、且结果被读到"；是否撞卡由调用方在
-    正文自检时判断（闸门不做语义合并决策）。命中候选会写进凭证供人工复核。
 
-    `tree` 可传入已采到的标签列表，免得与第 ④ 步各采一次；不传则自行现采。
+def _sweep_memos(client, params, max_pages=SWEEP_MAX_PAGES):
+    """按日期游标翻页取卡，返回 (memos, truncated)。
+
+    翻页逻辑与 `scan_qualified_concepts.collect_memos(full=True)` 同口径：
+    末页不足一页即到头；同一天卡片数超过一页时游标无法前进，记 `truncated`。
+    """
+    seen, order, end_date, truncated = {}, [], "", False
+    for _ in range(max_pages):
+        p = dict(params, limit=SWEEP_PAGE_LIMIT)
+        if end_date:
+            p["end_date"] = end_date
+        memos = _result_memos(client.tool("memo_search", p))
+        fresh = [m for m in memos if m.get("id") and m["id"] not in seen]
+        for m in fresh:
+            seen[m["id"]] = m
+            order.append(m["id"])
+        if len(memos) < SWEEP_PAGE_LIMIT:
+            break
+        days = [(m.get("created_at") or "")[:10] for m in fresh]
+        days = [d for d in days if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+        if not days:
+            truncated = True
+            break
+        oldest = min(days)
+        if oldest == end_date:
+            truncated = True
+            break
+        end_date = oldest
+    else:
+        truncated = True
+    return [seen[i] for i in order], truncated
+
+
+def _concept_identity(name):
+    """概念名的同一性口径：① 外形归一（空白/标点/大小写）② 抹掉切片限定后的对象名。
+
+    两口径都取自既有实现（`memo_util.normalize_concept` 与
+    `scan_concept_duplication.normalize`），不另写一套正则——三处各写一套时，
+    改一侧会让另两侧静默失配，而失配只表现为「判定结论对不上」。
+    """
+    return normalize_concept(name), strip_slice_name(name or "").lower()
+
+
+def _concept_relation(cur, other):
+    """返回 'same' / 'near' / ''。
+
+    same：任一同一性口径完全相同——机器可断定是同一对象，直接阻塞。
+    near：一方是另一方的真子串、短名 ≥4 字，且多出来的部分 ≤ `NEAR_EXTRA_MAX`
+          （「Anthropic」/「Anthropic S-1」、`长征十号`/`长征十号乙`）。
+          这既可能是同一对象的切片卡，也可能确是两个对象，机器判不了，故同样
+          **默认阻塞**，须 `--allow-near-concept` 写明理由放行。多出来的部分更长时
+          （事件卡「某甲批评 Anthropic：…」）不算 near——那不是对象名，是句子。
+    """
+    a1, a2 = cur
+    b1, b2 = _concept_identity(other)
+    if a1 and a1 == b1:
+        return "same"
+    if a2 and a2 == b2:
+        return "same"
+    for x, y in ((a2, b2), (b2, a2)):
+        if x and y and x != y and len(x) >= 4 and x in y:
+            if len(y.replace(x, "", 1)) <= NEAR_EXTRA_MAX:
+                return "near"
+    return ""
+
+
+def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
+                 allow_near=""):
+    """⑤ 查重三路并查：概念名整簇扫描（判定路）+ memo_search 关键词 + tag_tree 标签路。
+
+    **判定路为什么必须整簇翻页**（事故复盘）：旧实现只在「关键词命中的前 20 条」
+    里比对概念名。同一概念名「Anthropic」的两张卡，旧卡排在关键词检索 20 名之外，
+    闸门遂记录「经自动检查概念名均不重复，确认为误命中，放行新建」——查重是否
+    有效取决于检索排序，等于没查。现在改为按本卡每个标签簇整簇翻页（叠加概念名
+    关键词翻页）取回候选，逐卡比对归一化概念名；与检索排序、单页条数都无关。
+
+    后两路仍保留：关键词命中会打印全文供人工复核，标签路把「近邻几个簇 /
+    本卡将新建簇」写进凭证。证据不足时宁可不放行：取不尽会记为 truncated。
     """
     concept = sig["concept"]
     kws = keywords_of_concept(concept, limit=2)
@@ -383,13 +472,18 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
         blockers.append("无法从概念名派生查重关键词")
         return {}
     hits = {}
+    keyword_memos = {}
     for kw in kws:
-        res = client.tool("memo_search", {"keywords": kw, "limit": 20})
-        memos = _result_memos(res)
+        memos = _result_memos(
+            client.tool("memo_search", {"keywords": kw, "limit": SWEEP_PAGE_LIMIT})
+        )
         hits[kw] = [
             {"id": m.get("id"), "content_head": (m.get("content") or "")[:60]}
             for m in memos
         ]
+        for m in memos:
+            if m.get("id"):
+                keyword_memos[m["id"]] = m
         notes.append(f"查重·关键词「{kw}」命中 {len(memos)} 条")
     # 第二路：tag_tree 列同主标签细分
     if tree is None:
@@ -410,10 +504,7 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
         absent = "" if f"{top}/{leaf}" in names else "（该标签不在树中，本卡将新建簇）"
         notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
     # 命中>0 自动取全文打印：不看全文就过不了闸门
-    all_hit_ids = []
-    for _kw, memos in hits.items():
-        all_hit_ids.extend(m["id"] for m in memos)
-    all_hit_ids = list(dict.fromkeys(all_hit_ids))  # 去重保序
+    all_hit_ids = list(keyword_memos)
     if all_hit_ids:
         print(f"\n═══ 查重命中 {len(all_hit_ids)} 张卡，全文如下（必须逐张确认不是重复）═══")
         # 分批取，每批≤10
@@ -437,53 +528,96 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
                 print(f"\n── {m.get('id')} | {concept_line}")
                 print(content[:300])
         print("═══ 命中卡全文结束 ═══\n")
-        # 更新已有卡时不阻塞（anchor_id就是要更新的卡）
-        if not anchor_id:
-            # 自动检查：有没有概念名和当前概念名相同或高度相似的
-            current_concept = sig["concept"]
-            duplicate_found = False
-            duplicate_ids = []
-            for i in range(0, min(len(all_hit_ids), 20), 10):
-                chunk = all_hit_ids[i:i+10]
-                res = client.tool("memo_batch_get", {"ids": chunk})
-                memos = _result_memos(res)
-                for m in memos:
-                    content = m.get("content") or ""
-                    lines = content.split("\n")
-                    # 找概念名行：跳过标签行和空行，取第一个非空内容行
-                    concept_line = ""
-                    for i, ln in enumerate(lines):
-                        s = ln.strip()
-                        if not s:
-                            continue
-                        if i == 0 and s.startswith("#"):
-                            continue  # 标签行
-                        concept_line = s
-                        break
-                    # 概念名完全相同，或者高度相似（去掉标点后前10字相同）
-                    from memo_util import normalize_concept, signature_key
-                    current_key = signature_key(sig)
-                    tagline = lines[0].strip() if lines else ""
-                    gate_key = signature_key({"tagline": tagline, "concept": concept_line})
-                    # 完整签名匹配（标签+概念名都相同）
-                    sig_match = current_key and gate_key and current_key == gate_key
-                    # 概念名归一化后相同（不管标签是否相同）——防止不同标签下建同名概念卡
-                    concept_same = (
-                        normalize_concept(current_concept)
-                        and normalize_concept(concept_line)
-                        and normalize_concept(current_concept) == normalize_concept(concept_line)
-                    )
-                    if sig_match or concept_same:
-                        duplicate_found = True
-                        duplicate_ids.append(m.get("id"))
-            if duplicate_found:
-                blockers.append(
-                    f"查重命中 {len(all_hit_ids)} 张卡，其中 {len(duplicate_ids)} 张概念名与当前完全相同：{', '.join(duplicate_ids)}。"
-                    f"这是重复卡，必须用 --update-id 更新，不能新建。"
-                )
+
+    # 更新场景：概念名没改时，本卡自己就在候选里，同名判定无从谈起（跳过扫描，
+    # 省下一批整簇翻页）；确属改名的更新仍要扫——新名字撞上别的卡同样是重复。
+    enforce = True
+    if anchor_id:
+        try:
+            am = _result_memos(client.tool("memo_batch_get", {"ids": [anchor_id]}))
+        except FlomoError:
+            am = []
+        old_sig = memo_signature(am[0].get("content")) if am else None
+        old_concept = old_sig["concept"] if old_sig else ""
+        if old_concept and _concept_relation(_concept_identity(concept), old_concept) == "same":
+            enforce = False
+            notes.append("查重·更新场景且概念名未改，跳过同名判定（本卡即候选）")
+        elif not old_concept:
+            notes.append("查重·更新场景但读不到原概念名，仍执行同名判定")
+
+    sweep_rec = {"tag_clusters": [], "queries": [], "scanned": 0,
+                 "truncated": [], "same_concepts": [], "near_concepts": []}
+    if enforce:
+        candidates = dict(keyword_memos)
+        for cluster in dict.fromkeys(near):
+            memos, truncated = _sweep_memos(client, {"tag": cluster})
+            sweep_rec["tag_clusters"].append(
+                f"{cluster}({len(memos)}{'·截断' if truncated else ''})")
+            if truncated:
+                sweep_rec["truncated"].append(f"标签簇 {cluster}")
+            for m in memos:
+                candidates.setdefault(m["id"], m)
+        # 概念名本身也翻页查一遍：标签换到完全无关的簇时，整簇扫描扫不到，
+        # 关键词检索是唯一可能命中的一路（同样翻页，不吃单页 50 条的上限）。
+        for q in dict.fromkeys([concept, normalize_concept(concept)]):
+            if not q or len(q) < 2:
+                continue
+            memos, truncated = _sweep_memos(client, {"keywords": q}, max_pages=3)
+            sweep_rec["queries"].append(
+                f"{q}({len(memos)}{'·截断' if truncated else ''})")
+            if truncated:
+                sweep_rec["truncated"].append(f"关键词 {q}")
+            for m in memos:
+                candidates.setdefault(m["id"], m)
+        sweep_rec["scanned"] = len(candidates)
+
+        cur_id = _concept_identity(concept)
+        for mid, m in candidates.items():
+            if mid == anchor_id:
+                continue
+            csig = memo_signature(m.get("content"))
+            if not csig:
+                continue
+            rel = _concept_relation(cur_id, csig["concept"])
+            if not rel:
+                continue
+            rec = {"id": mid, "concept": csig["concept"],
+                   "tagline": (csig["tagline"] or "")[:80]}
+            if rel == "same":
+                sweep_rec["same_concepts"].append(rec)
             else:
-                notes.append(f"查重·命中 {len(all_hit_ids)} 张卡，经自动检查概念名均不重复，确认为误命中，放行新建")
-    return {"keyword_hits": hits, "tag_neighbors": sorted(set(near))}
+                sweep_rec["near_concepts"].append(rec)
+
+        if sweep_rec["same_concepts"]:
+            detail = "；".join(
+                f"{r['id']}「{r['concept']}」（{r['tagline']}）"
+                for r in sweep_rec["same_concepts"][:5])
+            blockers.append(
+                f"概念名重复·整簇扫描 {sweep_rec['scanned']} 张候选，发现同一对象已有卡：{detail}。"
+                "这是重复卡，必须用 --update-id 合并到该卡，不能新建。"
+            )
+        if sweep_rec["near_concepts"]:
+            detail = "；".join(
+                f"{r['id']}「{r['concept']}」" for r in sweep_rec["near_concepts"][:5])
+            if allow_near.strip():
+                notes.append(f"查重·疑似同名已按理由放行（--allow-near-concept：{allow_near.strip()}）：{detail}")
+            else:
+                blockers.append(
+                    f"概念名疑似重复·整簇扫描 {sweep_rec['scanned']} 张候选，"
+                    f"发现包含关系同名卡：{detail}。确属同一对象必须 --update-id 合并；"
+                    "确属不同对象（如型号后缀不同）加 --allow-near-concept \"理由\" 重跑。"
+                )
+        if sweep_rec["truncated"]:
+            notes.append("查重·候选取不尽：" + "、".join(sweep_rec["truncated"])
+                         + "——同名结论只覆盖已取到的卡")
+        notes.append(
+            f"查重·概念名整簇扫描 {sweep_rec['scanned']} 张候选"
+            f"（标签簇 {len(sweep_rec['tag_clusters'])} 个、概念名查询 {len(sweep_rec['queries'])} 次）："
+            f"同名 {len(sweep_rec['same_concepts'])} 张、疑似同名 {len(sweep_rec['near_concepts'])} 张"
+        )
+    return {"keyword_hits": hits, "tag_neighbors": sorted(set(near)),
+            "concept_sweep": sweep_rec}
+
 
 
 def _check_review(client, sig, blockers, notes, anchor_id=None):
@@ -624,6 +758,13 @@ def main():
     ap.add_argument("--out", help="凭证输出路径（默认 .sop_gate/<signature>.json）")
     ap.add_argument("--anchor-id", help="可选：本卡 id（更新场景下可作 memo_recommended 锚点）")
     ap.add_argument(
+        "--allow-near-concept",
+        metavar="REASON",
+        default="",
+        help="概念名疑似同名（一方是另一方子串，如「长征十号」/「长征十号乙」）时，"
+             "确认是不同对象后写明理由放行；理由随凭证留痕。",
+    )
+    ap.add_argument(
         "--allow-no-gate",
         metavar="REASON",
         help="显式授权本卡在 validate_memo.py 侧可降级闸门（仅限批量处理历史卡）；"
@@ -668,7 +809,8 @@ def main():
                 "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
             )
     tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
-    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id)  # ⑤
+    dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id,
+                         allow_near=args.allow_near_concept)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧
 
     notes.append(
