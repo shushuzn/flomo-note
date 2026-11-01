@@ -75,15 +75,15 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import (  # noqa: E402
+from cli_util import cli_entry
+from flomo_client import (
     FlomoClient,
     FlomoError,
     _result_memos,
     load_token,
     tool_data,
 )
-from cli_util import cli_entry  # noqa: E402
-from memo_util import (  # noqa: E402
+from memo_util import (
     body_hash,
     keywords_of_concept,
     memo_signature,
@@ -411,7 +411,7 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
         notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
     # 命中>0 自动取全文打印：不看全文就过不了闸门
     all_hit_ids = []
-    for kw, memos in hits.items():
+    for _kw, memos in hits.items():
         all_hit_ids.extend(m["id"] for m in memos)
     all_hit_ids = list(dict.fromkeys(all_hit_ids))  # 去重保序
     if all_hit_ids:
@@ -461,7 +461,7 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None):
                         concept_line = s
                         break
                     # 概念名完全相同，或者高度相似（去掉标点后前10字相同）
-                    from memo_util import signature_key, normalize_concept
+                    from memo_util import normalize_concept, signature_key
                     current_key = signature_key(sig)
                     tagline = lines[0].strip() if lines else ""
                     gate_key = signature_key({"tagline": tagline, "concept": concept_line})
@@ -528,7 +528,7 @@ def _check_review(client, sig, blockers, notes, anchor_id=None):
                 anchor_src = f"标签簇「{path}」首条（关键词无命中）"
                 break
     if not anchor:
-        where = "、".join(f"`{t}/{l}`" for t, l in leaves) or "（首行无合法标签）"
+        where = "、".join(f"`{t}/{lf}`" for t, lf in leaves) or "（首行无合法标签）"
         blockers.append(
             "复盘第 ⑧ 步无法取锚：未给 `--anchor-id`，关键词检索无命中，"
             f"本卡标签簇 {where} 里也没有任何卡。"
@@ -650,7 +650,7 @@ def main():
     else:
         web = _check_web(args.verify, content, blockers, notes)
 
-    token, src = load_token()
+    token, _src = load_token()
     client = FlomoClient(token)
     client.init()
 

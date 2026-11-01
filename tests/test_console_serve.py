@@ -287,7 +287,7 @@ def main() -> int:
 
         # 白名单算出来只能是本机名，不得因通配绑定变成「任意名」
         sys.path.insert(0, str(SERVER.parent))
-        import serve_console as SC  # noqa: E402
+        import serve_console as SC
         wild = SC.allowed_hostnames("0.0.0.0")
         check("通配绑定不产出任意宿主名",
               "evil.example" not in wild and all(n for n in wild), str(sorted(wild)[:5]))

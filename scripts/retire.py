@@ -28,10 +28,15 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from flomo_client import (  # noqa: E402
-    RETIRE_TAG, FlomoClient, FlomoError, load_token, readback_check, tool_data,
-)
 from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+from flomo_client import (  # noqa: E402
+    RETIRE_TAG,
+    FlomoClient,
+    FlomoError,
+    load_token,
+    readback_check,
+    tool_data,
+)
 from memo_util import strip_trailing_br  # noqa: E402
 
 _OPTS = [

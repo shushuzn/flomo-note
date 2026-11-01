@@ -61,6 +61,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -156,14 +157,10 @@ def _force_remove(p: Path):
     if p.is_dir() and not p.is_symlink():
         shutil.rmtree(p, ignore_errors=True)
         return
-    try:
+    with suppress(OSError):
         p.chmod(stat.S_IWRITE)
-    except OSError:
-        pass
-    try:
+    with suppress(FileNotFoundError):
         os.remove(p)
-    except FileNotFoundError:
-        pass
 
 
 def collect(keep_minutes=None, skipped=None, now=None):
@@ -336,7 +333,10 @@ def main():
             print(f"[cleanup] 残留 {len(left)} 个（应清未清）：")
             for p in left:
                 print(f"  {p}")
-            sys.exit(1)
+            # 退出码交给 __main__ 的 sys.exit(main()) 传出：库函数直接 sys.exit
+            # 会让「import cleanup 后调 main()」的调用方（含测试）被 Exit 掀掉，
+            # 而不是拿到一个可判断的返回值。
+            return 1
         print(f"[cleanup] 残留 = 0，OK（近轮素材保留 {len(skipped)} 个）")
         return
 
@@ -384,4 +384,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

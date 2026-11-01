@@ -1,8 +1,12 @@
 name: CI
 
 # 目的只有一个：把「改完脚本忘了跑用例」从靠自觉变成每次推送都会被检查。
-# 跑的就是本地那条命令（scripts/run_tests.sh），不在 CI 里另写一套判据——
-# 两套判据必然分叉，分叉之后就没人知道到底哪个算过。
+# 判据仍然只有一份——bash scripts/run_tests.sh，不在 CI 里另写一套。这里新增的
+# 三个阶段都是**入口**不是第二套判据：
+#   ruff check / mypy：静态检查，全仓库一个配置（pyproject.toml），本地同命令；
+#   pytest：收的是 run_tests.sh 同一批 tests/test_*.py（conftest.py 用 runpy
+#           按脚本原语义执行），换来的只是 -x / 单文件 / IDE / coverage 入口。
+# 哪个阶段红都能在本地用同一条命令复现，不存在「CI 一套本地一套」。
 
 on:
   push:
@@ -15,16 +19,42 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # 矩阵即版本承诺：pyproject 的 requires-python 下限由这里最老的一档决定，
+    # 往上不封顶。fail-fast: false —— 三个版本各自报，不让 3.11 的红挡住 3.13 的绿。
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: 准备 Python
+      - name: 准备 Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       # 用例全部是标准库 + 桩客户端，不读 token、不联网（已实测：移走 .mcp.json 后
-      # 13 套仍全过），因此这里**不配任何 secrets**。若哪天有人给用例加了真实凭据依赖，
+      # 仍全过），因此这里**不配任何 secrets**。若哪天有人给用例加了真实凭据依赖，
       # 这一步会直接红——那正是要暴露的问题，不要靠加 secret 掩盖。
+      # 开发期工具（ruff/pytest/mypy/coverage）只装进 CI 与开发机，不进任何写卡
+      # 流程——运行期依赖仍为零。清单从 pyproject 的 dev extra 现读，不在这里重抄
+      # 一份：抄第二份就等于埋一份会漂移的判据。
+      - name: 装开发期工具（清单唯一来源：pyproject 的 dev extra）
+        run: |
+          pip install $(python -c "import tomllib; print(' '.join(tomllib.load(open('pyproject.toml','rb'))['project']['optional-dependencies']['dev']))")
+
+      - name: ruff check（lint，规则集见 pyproject）
+        run: python -m ruff check scripts/ tests/
+
       - name: 离线回归（用例 + 技能文档纪律）
         run: bash scripts/run_tests.sh
+
+      - name: mypy（类型，基线见 pyproject）
+        run: python -m mypy scripts/
+
+      # coverage 只出报告不设门禁：行覆盖基线还没建立，先知道数字再谈门槛——
+      # 一上来就 --cov-fail-under 只会得到一个拍脑袋的百分比。
+      - name: pytest（第二入口）+ 覆盖率报告
+        run: |
+          python -m coverage run -m pytest -q
+          python -m coverage report

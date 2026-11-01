@@ -14,6 +14,7 @@ COVERS = ("flomo_client", "cli_util",)
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,19 @@ FC = _load("flomo_client", "flomo_client.py")
 CU = _load("cli_util", "cli_util.py")
 
 RESULTS = []
+
+
+def _main_src():
+    """取 main() 起的源码，供结构锁定切片。
+
+    锚点只认函数名、不认返回注解：注解是后来补的，签名文本一变，
+    写死 `def main():` 的锁定就整体抛 ValueError——锁的东西反而看不见了。
+    """
+    src = (SCRIPT_DIR / "flomo_client.py").read_text(encoding="utf-8")
+    hits = [m.start() for m in re.finditer(r"^def main\(", src, re.M)]
+    if len(hits) != 1:
+        raise AssertionError(f"flomo_client.py 应有且只有一个 main()，实际 {len(hits)} 个")
+    return src[hits[0]:]
 
 
 def check(label, ok, detail=""):
@@ -202,8 +216,7 @@ def run_readback_cases():
 
 def run_write_path_cases():
     """写命令内部必须真的调用回读（结构锁定，防被无意摘掉）。"""
-    src = (SCRIPT_DIR / "flomo_client.py").read_text(encoding="utf-8")
-    m = src[src.index("def main():"):]
+    m = _main_src()
     check("写成功分支内调用 readback_check",
           "readback_check(client, created_id" in m, "main() 内未调用")
     check("回读未过时非 0 退出",
@@ -222,6 +235,63 @@ def run_write_path_cases():
     check("闸门凭证按签名匹配（不只取最新一份）",
           "find_gate_credential(sig, gate_dir)" in m and "gate_files[0]" not in m,
           "main() 仍在只看最新凭证")
+
+
+def run_truncation_reject_cases():
+    """含截断占位符的正文必须在发出任何请求前被拒（行为级）。
+
+    上面那几条是文本位置锁定，只能证明「拒绝写在 client.tool 之前」；守卫若被改成
+    永不成立（`if False and ...`、条件写反之类），文本顺序依旧、锁却已经失效——
+    而这类失效没有别的用例能发现：写出去的是一张中段永久缺失的卡，写后回读比的是
+    同一段坏文本，照样判「一致」。所以这里真的调 main()，看退出码与请求数。
+
+    差分一侧同样重要：同一段正文去掉占位符后必须能走到闸门检查（退出码 5），
+    否则「返回 4」可能只是桩或别的前置条件造成的，与占位符无关。
+    """
+    import contextlib
+    import io
+
+    BODY = ("#数学/实分析\n某概念\n\n要点：\n- 甲\n\n...[此处省略419字]...\n\n- 乙\n")
+    CLEAN = BODY.replace("\n\n...[此处省略419字]...\n\n", "\n\n- 甲补充\n\n")
+
+    class RecordingClient:
+        """记录全部 tool 调用；任何调用都不该发生（这里只测拒绝路径）。"""
+
+        def __init__(self, token=None):
+            self.calls = []
+
+        def init(self):
+            return None
+
+        def tool(self, name, arguments=None):
+            self.calls.append((name, arguments or {}))
+            raise AssertionError(f"被拒绝的写命令不应发出请求：{name}")
+
+    fake = RecordingClient()
+    orig_token, orig_client, orig_argv = FC.load_token, FC.FlomoClient, sys.argv
+    try:
+        FC.load_token = lambda: ("fake-token", "test")
+        FC.FlomoClient = lambda token: fake
+        sys.argv = ["flomo_client.py", "memo_create", json.dumps({"content": BODY})]
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            code = FC.main()
+        check("含截断占位符：退出码 4（内容受损）", code == 4, (code, buf.getvalue()[:160]))
+        check("含截断占位符：一个请求都没发（含写前查重）", fake.calls == [], fake.calls)
+        check("报错带出占位符原文，便于定位缺的是哪一段",
+              "此处省略419字" in buf.getvalue(), buf.getvalue()[:160])
+
+        # 差分：同一段正文去掉占位符后应越过本闸、止步于闸门凭证（无凭证 → 5）。
+        # 这条若也返回 4，说明拒绝与占位符无关，上面的通过是假阳性。
+        fake.calls.clear()
+        sys.argv = ["flomo_client.py", "memo_create", json.dumps({"content": CLEAN})]
+        buf2 = io.StringIO()
+        with contextlib.redirect_stderr(buf2):
+            code2 = FC.main()
+        check("无占位符的正文不被本闸拦截（走到闸门检查，退出码 5）",
+              code2 == 5 and fake.calls == [], (code2, fake.calls, buf2.getvalue()[:160]))
+    finally:
+        FC.load_token, FC.FlomoClient, sys.argv = orig_token, orig_client, orig_argv
 
 
 def run_gate_credential_cases():
@@ -357,8 +427,7 @@ def run_brief_cases():
     check("兼容 content[].text 回包形态", "M1" in (FC.brief_text("memo_search", alt) or ""))
 
     # 结构锁定：main 里 --brief 只影响打印，不得跳过后面的 id 校验与回读验收
-    src = (SCRIPT_DIR / "flomo_client.py").read_text(encoding="utf-8")
-    main_src = src[src.index("def main():"):]
+    main_src = _main_src()
     check("brief 不短路写后回读验收", "readback_check(client, created_id" in main_src)
     check("brief 通过剥离参数实现，不改工具名解析", 'a != "--brief"' in main_src)
 
@@ -554,7 +623,7 @@ def run_parse_options_cases():
     def bad(argv, want, **kw):
         try:
             CU.parse_options(argv, spec, **kw)
-            return f"未拦下"
+            return "未拦下"
         except CU.UsageError as e:
             return "ok" if want in str(e) else str(e)
 
@@ -640,7 +709,8 @@ def run_usage_cases():
             with contextlib.redirect_stderr(buf):
                 # 用 FC 自己那份 cli_entry：本套用例按文件路径各载一份 cli_util，
                 # CU 与 FC 眼里的 UsageError 是两个类，拿 CU 的入口接不住 FC 的异常。
-                code = FC.cli_entry(lambda: FC._load_arguments(argv), errors=(FC.FlomoError,))
+                code = FC.cli_entry(lambda a=argv: FC._load_arguments(a),
+                                     errors=(FC.FlomoError,))
             msg = buf.getvalue()
             check(f"参数写错（{label}）落成用法码 2", code == 2, code)
             # 提示必须指回参数：只要出现「云端/token/网络」就是又一次把人带偏
@@ -653,6 +723,7 @@ if __name__ == "__main__":
     run_norm_cases()
     run_readback_cases()
     run_write_path_cases()
+    run_truncation_reject_cases()
     run_gate_credential_cases()
     run_clear_exempt_cases()
     run_brief_cases()

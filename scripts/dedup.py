@@ -27,15 +27,14 @@
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options  # noqa: E402
 from flomo_client import FlomoClient, FlomoError, _result_memos, load_token  # noqa: E402
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 
 BATCH_LIMIT = 10  # 服务端 memo_batch_get 单次上限，超过即整批报错
 
@@ -64,7 +63,7 @@ def _resolve_anchor(raw: str) -> str:
         value = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise UsageError(f"读不到 {path}（{exc}）——先跑一次 publish.py 写卡，"
-                         f"或直接把 id 传给 --id")
+                         f"或直接把 id 传给 --id") from exc
     if not value:
         raise UsageError(f"{path} 是空的——先跑一次 publish.py 写卡")
     return value
@@ -147,9 +146,7 @@ def fetch_full(client: FlomoClient, ids: list[str], max_full: int) -> None:
 
 
 def main(argv: list[str] | None = None, client=None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__)

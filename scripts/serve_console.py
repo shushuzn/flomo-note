@@ -46,8 +46,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from console_cloud import CloudError, CloudReader, cloud_status  # noqa: E402
-from console_data import collect_all  # noqa: E402
+from contextlib import suppress
+
+from console_cloud import CloudError, CloudReader, cloud_status
+from console_data import collect_all
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = REPO_ROOT / "web"
@@ -120,7 +122,7 @@ def _reject_body(kind: str, value: str, allowed: set[str]) -> bytes:
         f"403：请求{kind}「{value}」不是本站地址，已拒绝。\n"
         f"本服务只接受本机访问：{' / '.join(sorted(allowed))}。\n"
         f"浏览器请用 http://127.0.0.1:<端口>/ 打开；命令行工具（无 Origin）不受影响。\n"
-    ).encode("utf-8")
+    ).encode()
 
 
 def _is_loopback_bind(host: str) -> bool:
@@ -173,10 +175,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return
         if length <= 0:
             return
-        try:
+        with suppress(OSError):
             self.rfile.read(min(length, limit))
-        except OSError:
-            pass
 
     def _reject_foreign(self) -> bool:
         """来源不合法就回 403 并返回 True（调用方直接 return）。
@@ -204,8 +204,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 "Host", self.headers.get("Host", "") or "（缺失）", allowed), "text/plain; charset=utf-8")
             return True
         origin = self.headers.get("Origin")
-        if origin is not None:
-            if _hostname_of(urlparse(origin).netloc or origin) not in allowed:
+        if origin is not None and _hostname_of(urlparse(origin).netloc or origin) not in allowed:
                 self._drain_body()
                 self._send(403, _reject_body("Origin", origin or "（空）", allowed),
                            "text/plain; charset=utf-8")
@@ -407,8 +406,8 @@ def main(argv=None):
     httpd = ThreadingHTTPServer((args.host, args.port), ConsoleHandler)
     url = f"http://{args.host}:{args.port}/"
     print(f"[console] flomo-note 控制台已启动：{url}")
-    print("[console] 本地服务 · 仓库根 %s" % REPO_ROOT)
-    print("[console] 只接受本机宿主名：%s" % " / ".join(sorted(ALLOWED_HOSTNAMES)))
+    print(f"[console] 本地服务 · 仓库根 {REPO_ROOT}")
+    print("[console] 只接受本机宿主名：" + " / ".join(sorted(ALLOWED_HOSTNAMES)))
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

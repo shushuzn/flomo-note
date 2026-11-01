@@ -29,11 +29,16 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import (  # noqa: E402
-    body_hash, find_truncation, memo_signature, signature_key, slice_qualifiers,
+from memo_util import (
+    body_hash,
+    find_truncation,
+    memo_signature,
+    signature_key,
+    slice_qualifiers,
 )
 
-ERR, WARN = [], []
+ERR: list[str] = []
+WARN: list[str] = []
 
 # 单卡正文（含标签段）字数上限，与 SKILL「卡片格式」承诺的硬限一致。
 MAX_MEMO_CHARS = 20000
@@ -134,6 +139,10 @@ _TOOL_ECHO_RES = (
 _BARE_EMAIL = re.compile(
     r"(?<![A-Za-z0-9.+_-])(?<!mailto:)[A-Za-z0-9.+_-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
+# 括号注释切分：载体检测（5.6）与概念名来源检测（5.8）共用这一份实现。
+# 两处各写一份正则，改一侧会让另一侧静默失配，故只此一处。
+BRACKET_RE = re.compile(r"[（(][^（()）]*[）)]")
+
 
 def _strip_bold(s):
     """剔除成对加粗 `**文字**`，只留单星号形态供斜体判定。
@@ -176,10 +185,10 @@ def _unsupported_tags_in(s):
         # 属于用改写素材换取过检，故按「真标签不含 CJK」放行。
         if _CJK_RE.search(m.group(0)):
             continue
-        if len(name) == 1 and m.group(2) != "/" and low not in _VOID_TAGS:
-            # 单字母、未自闭合、本行也无闭标签 → 判作数学记号（如 |x|<R），放行。
-            if f"</{low}>" not in s.lower():
-                continue
+        # 单字母、未自闭合、本行也无闭标签 → 判作数学记号（如 |x|<R），放行。
+        if (len(name) == 1 and m.group(2) != "/" and low not in _VOID_TAGS
+                and f"</{low}>" not in s.lower()):
+            continue
         if low not in found:
             found.append(low)
     return found
@@ -231,14 +240,8 @@ def _is_table_row(s):
             and core.count("|") + core.count("｜") >= 2)
 
 
-def check(content):
-    if not content or not content.strip():
-        err("正文为空，无法写入")
-        return
-    # CRLF / CR 归一化：不归一化时 \r 会留在行尾，影响行首行尾判定
-    content = content.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
-    lines = content.split("\n")
-
+def _check_truncation(content):
+    """0) 截断占位符（ERR）：草稿取自检索回包时中段已被挖成占位符，属内容已缺失而非格式问题，故排在最前。"""
     # 0) 截断占位符：草稿一旦取自检索回包（memo_search / memo_recommended），长正文的
     # 中段就已被挖成 `...[此处省略N字]...`。它不是格式问题而是**内容已缺失**：
     # 写进去即永久固化，且写后逐字对账会拿同一段坏文本比同一段坏文本、照判「一致」。
@@ -248,6 +251,9 @@ def check(content):
         err(f"正文含截断占位符 {mark}：内容已缺失，须用 memo_batch_get 现取全文重写成稿"
             "（检索回包 memo_search / memo_recommended 都会把长正文中段挖掉）")
 
+
+def _check_tool_echo(content):
+    """0b) 工具回包混入（ERR）：dedup / publish 的回显行只可能来自工具输出，卡片正文里不会合法出现。"""
     # 0b) 工具回包混入：与上一条同属「内容已被污染」，且同样对后续形态检查隐形
     # （汇总行落在正文末尾，不改首行、不改概念名、行数也正常）。放在同一位置，
     # 是让「内容坏了」先于「格式对不对」被报出来。
@@ -257,6 +263,9 @@ def check(content):
             err(f"正文混入工具回包（{what}）：{m.group(0)[:40]!r} —— "
                 "取全文请用 memo_batch_get 现取，不要把 dedup / publish 的输出当草稿中转")
 
+
+def _check_tag_line(lines):
+    """1) 首行标签段（ERR）：只允许两级 #顶层/二级，禁裸顶层、三级及以上与疑似裸子标签。"""
     # 1) 首行标签段
     first = lines[0].strip()
     if not first.startswith("#"):
@@ -288,6 +297,9 @@ def check(content):
             if has_slash and "/" not in name:
                 err(f"疑似裸子标签（无主标签前缀）：{t} —— 应写成 #主/子，否则会建出独立顶层标签")
 
+
+def _check_concept_layout(lines):
+    """2) 概念名结构（ERR/WARN）：第二行应为概念名，标题后必须空一行接正文，概念名行不得是标签。"""
     # 2) 标签段后第二行应为概念名称标题（非空），第三行空行接正文
     # 注意：标签段后空行（line 2 = 空）是已知误报（flomo 存储层自动插空行），只提示不阻断
     if len(lines) > 1 and lines[1].strip() == "":
@@ -305,6 +317,9 @@ def check(content):
                 f"（连带使写前幂等查重与 SOP 闸门校验同时失效）")
             break
 
+
+def _check_body_length(content, lines):
+    """3) 正文（ERR）：正文为空，或含标签段超过字数上限。"""
     # 3) 正文
     body = "\n".join(lines[1:]).strip()
     if not body:
@@ -317,6 +332,8 @@ def check(content):
             f"——超出须精简，或按 H7 拆分多事件")
 
 
+def _check_markup(lines):
+    """4) Markdown / HTML 残留（ERR/WARN）：本库禁一切强调语法，含加粗。"""
     # 4) Markdown / HTML 残留检测
     #
     # **本库禁止一切 markdown 强调语法，含加粗**（H14）。`get_format_guide` 确实
@@ -389,6 +406,9 @@ def check(content):
                 f"渲染层会把它当标签吞掉，实测 pair <origin> 写入后 <origin> 直接消失"
                 f"（写入成功、回读少字），命令占位符请写成 pair origin 或 [origin]")
 
+
+def _check_inline_hash(lines):
+    """4.5) 正文内 accidental #tag（ERR）：标签只写在首行，正文行内的 # 词一律判脏标签。"""
     # 4.5) 正文内 accidental #tag（flomo 会把任意 #xxx 当标签，造成脏标签）
     #      约定：标签只写在首行；正文行内的 #词 / #数字 / #( 等属意外，必须改。
     #      含 http 的行整行跳过（URL 里的 #fragment 不构成脏标签）。
@@ -407,11 +427,17 @@ def check(content):
             err(f"第 {i} 行正文含 '#{m.group(1)}'（flomo 会把它当标签，造成脏标签）；"
                 f"数学里的球面导数等一并写作 ♯（U+266F）或改写成文字，勿用 ASCII 的 #")
 
+
+def _check_placeholders(content):
+    """5) 占位 / 生造来源风险（ERR）：example / placeholder / TODO / lorem。"""
     # 5) 占位 / 生造来源风险
     # 用 \b 词边界，避免误伤含 todo/lorem 子串的正常词（如 Mastodon、loremipsum 等）
     if re.search(r"example\.(com|org)|待补|\bplaceholder\b|\bTODO\b|\blorem\b", content, re.I):
         err("正文含 example/placeholder/TODO/lorem 占位，疑似未完成或生造内容")
 
+
+def _check_status_line(lines):
+    """5.5) 旧格式状态行（WARN）：末两行 + 白名单修饰词 + 冒号式才提示，交人判断。"""
     # 5.5) 旧格式遗留检测：状态行 / 来源行（WARN 提示，不阻塞写云）
     # 卡片格式硬限：无状态行、无来源行。为避免误伤正文要点（如「电力来源：火电为主」这类
     # 主语+来源的正常论述句），仅在下列三个条件同时成立时才提示：
@@ -442,6 +468,9 @@ def check(content):
         warn(f"第 {i} 行疑似旧格式状态行（卡片格式硬限：无来源行、无状态行）——匹配到「{m.group(0).strip()}」；"
              f"若这是正文要点可忽略，若确为卡片级状态行请删除该行，把信息融入正文对应要点或直接省略")
 
+
+def _check_carrier(lines):
+    """5.6) 卡片载体元信息（ERR/WARN）：截图 / 讲义 / 页码 / UP主 等取材交代，含概念名行的载体词提示。"""
     # 5.6) 卡片载体元信息检测（ERR）
     # 把"B 站数学直播截图，UP 主…""某课程讲义，定义 3"这类
     # **卡片取自什么载体**的信息写进概念卡正文（含首段括号与要点句内），与概念无关。
@@ -496,7 +525,6 @@ def check(content):
         r"公众号|视频号|小程序|哔哩哔哩|抖音|快手|小红书|录播|讲座|订阅号|推文"
     )
     carrier_weak = re.compile(r"视频|音频|回放|演讲|发布会|访谈|播客|直播")
-    bracket_re = re.compile(r"[（(][^（()）]*[）)]")
 
     def _bracket_is_enum(grp):
         """括号内是不是**多项并列清单**（含顿号/分号）。
@@ -512,14 +540,14 @@ def check(content):
         hard, soft = [], []
         if not text.strip():
             return hard, soft
-        groups = bracket_re.findall(text)
+        groups = BRACKET_RE.findall(text)
         if not only_brackets:
             hard += [m.group(0).strip() for m in carrier_hard.finditer(text)]
             # 材料名只有在出处语境里才算「交代取材」；否则它是概念本身（截图压缩、字幕翻译）。
             # 出处语境 = 行内有出处引导词，**或这个词本身落在某个括号注释里**。
             # 不能写成「行内只要有任何括号」——能力描述句里的括号（`（需装 Chrome 或
             # Chromium）`）与该材料名无关，却把整行判成取材自述（实测真实误报）。
-            spans = [(m.span(), m.group(0)) for m in bracket_re.finditer(text)]
+            spans = [(m.span(), m.group(0)) for m in BRACKET_RE.finditer(text)]
             for m in carrier_material.finditer(text):
                 in_bracket = any(
                     s <= m.start() < e and not _bracket_is_enum(g)
@@ -559,6 +587,9 @@ def check(content):
         warn(f"第 2 行概念名称含载体词「{'、'.join(dict.fromkeys(name_hit))}」——概念名应只写概念本身，"
              f"不要用取材方式（截图 / 讲义 / 课件 等）命名")
 
+
+def _check_event_source(lines):
+    """5.8) 事件来源信息（ERR）：报道方 / 通报方 / 发布方一律不得写入正文，含概念名括号内的通报方。"""
     # 5.8) 事件来源信息检测（ERR，硬阻断）——对应 SKILL H15 / H16。
     # 背景：5.5) 只在「末两行 + 冒号式 + 200 字内」才 WARN，正文首句的
     # 「据沈阳市纪委监委消息，…」「据路透社报道，…」「中央纪委国家监委网站 9 月 18 日发布」
@@ -693,8 +724,6 @@ def check(content):
     law_exempt = re.compile(
         r"《[^》]{2,60}?(?:条例|法|规定|办法|准则|意见|决定|通知|规则|章程|司法解释)》"
     )
-    # 豁免：来源主体实为法规/文书名时的引导语（据《…条例》/ 根据《…法》）
-    law_lead_only = re.compile(r"^(?:据|根据|依据|按照)\s*《[^》]+》")
     source_act = re.compile(
         r"(?:通报|发文)\s*称"
         r"|(?:官方)?发布(?:渠道|平台)"
@@ -803,7 +832,7 @@ def check(content):
                 f"概念名要写概括主题的名词短语，删掉「要点：」这类小标题并按概念命名（H14）")
         nm = source_lead.search(name_line) or source_bare.search(name_line)
         if not nm:
-            for grp in bracket_re.findall(name_line):
+            for grp in BRACKET_RE.findall(name_line):
                 inner = grp.strip("（）()").strip()
                 if not inner:
                     continue
@@ -827,6 +856,9 @@ def check(content):
                 f"概念名只写概念或事件本身，禁止在括号或任何位置标注报道方 / 通报方（H16）。"
                 f"请删除括号内来源后只留概念名")
 
+
+def _check_template_echo(content, lines):
+    """5.7) 模板前缀回显（ERR）：「结论先行」等 SKILL 条目名不得回显进正文。"""
     # 5.7) 模板前缀回显检测（ERR）
     # 「结论先行：」是 SKILL H14 的条目名（写给执行者的格式指令），被原样回显即成为卡片内容；
     # 占位/载体/来源行检测无法覆盖这类「模板指令词回显」，故单列本项。
@@ -854,6 +886,9 @@ def check(content):
             err(f"第 {i} 行正文以模板前缀「{m.group(0).strip()}」开头——模板指令不得回显进卡片，"
                 f"结论直接写成正文第一句即可")
 
+
+def _check_concept_slice(lines):
+    """5.8) 概念名切片限定（ERR/WARN）：概念名须标识对象本身；谓语动作只提示不阻断。"""
     # 5.8) 概念名不得带**切片限定**（H6b）
     # 签名（首行标签 + 第二行概念名）是幂等查重与闸门凭证的共同依据。
     # 概念名须标识**对象本身**，不得标识对象的某个**切片**——时间、版本、阶段号、
@@ -905,6 +940,9 @@ def check(content):
                      f"`塔塔父子上市` 只在那一刻成立（事件）。是事件就取对象名作概念名、"
                      f"动作移入正文；是术语则按 H13 不得为过检改写，不改。")
 
+
+def _check_abstract_dep(lines):
+    """6) 预印本摘要依赖（WARN）：以摘要为唯一依据的措辞，提示回查是否漏抓正文。"""
     # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
     # 预印本卡须基于正文写作（SKILL 流程第 1 步「预印本正文优先」）：只抓 arXiv /abs/ 之类摘要页，
     # 要点会停留在摘要泛述。此处仅在正文出现"以摘要为唯一依据"的措辞时提示，回查是否漏抓正文；
@@ -923,6 +961,9 @@ def check(content):
                  f"（见 SKILL 流程第 1 步「预印本正文优先」），请回查是否漏抓 /html/ 或 PDF 正文；"
                  f"若该句确为正文级陈述可忽略")
 
+
+def _check_deixis(lines):
+    """7) 材料指示词（WARN）：本文 / 文中 / 作者指出 这类措辞让卡片脱离材料后无处可指。"""
     # 7) 材料指示词（WARN 提示，不阻塞写云）
     # 「本文主定理如下」「文中指出」「作者自陈的边界」这类措辞把「哪一篇 / 谁说的」当成信息，
     # 而卡片脱离材料后没有「本篇」可指——违反 H15（不署来源、不署作者）。上一张卡就是
@@ -947,6 +988,9 @@ def check(content):
                  f"「谁说的」也不构成信息（H15）。请改写成陈述本身（「定理给出…」「边界是…」）；"
                  f"若这里说的是文本对照关系（原文与译文）可忽略")
 
+
+def _check_bullet_label(lines):
+    """8) 要点标签不含对象（WARN）：剥掉承接词后不剩对象的空标签提示。"""
     # 8) 要点标签不含对象（WARN 提示，不阻塞写云）——对应 H14「要点标签」。
     # 由来（实测）：一张卡为躲开 5.8) 的行内「来源：」提示，把标签从「手机上的来源」
     # 改成「最早的样子」——检查过了，标签却不含任何对象，读者看不出这条要点讲什么。
@@ -996,6 +1040,38 @@ def check(content):
                  f"这条讲什么（H14）。这类空标签多半是为绕开某条提示而临时换上的："
                  f"改法是把标签写成能独立说明内容的名词短语（「起点是换掉刘海」「光路」"
                  f"「为什么消失」），而不是换一个同样空泛的词。用词不设禁用清单，写清是什么即可")
+
+
+def check(content):
+    """单卡静态自检入口：只做编排——按编号顺序调用各项检查。
+
+    顺序即报告顺序：各项直接向 ERR / WARN 追加，调用次序决定使用者看到的条目
+    次序（「内容坏了」先于「格式对不对」）。新增检查项在此登记调用，判据本体
+    与编号注释一起写在对应的 _check_* 函数里。
+    """
+    if not content or not content.strip():
+        err("正文为空，无法写入")
+        return
+    # CRLF / CR 归一化：不归一化时 \r 会留在行尾，影响行首行尾判定
+    content = content.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    lines = content.split("\n")
+
+    _check_truncation(content)            # 0) 截断占位符
+    _check_tool_echo(content)             # 0b) 工具回包混入
+    _check_tag_line(lines)                # 1) 首行标签段
+    _check_concept_layout(lines)          # 2) 概念名结构
+    _check_body_length(content, lines)    # 3) 正文与字数上限
+    _check_markup(lines)                  # 4) Markdown / HTML 残留
+    _check_inline_hash(lines)             # 4.5) 正文脏标签
+    _check_placeholders(content)          # 5) 占位词
+    _check_status_line(lines)             # 5.5) 旧格式状态行
+    _check_carrier(lines)                 # 5.6) 载体元信息
+    _check_event_source(lines)            # 5.8) 事件来源信息
+    _check_template_echo(content, lines)  # 5.7) 模板前缀回显
+    _check_concept_slice(lines)           # 5.8) 概念名切片限定
+    _check_abstract_dep(lines)            # 6) 摘要依赖
+    _check_deixis(lines)                  # 7) 材料指示词
+    _check_bullet_label(lines)            # 8) 空要点标签
 
 
 def _signature_of(content):
@@ -1173,7 +1249,8 @@ def main():
     # 授权标记才生效，否则照常判 ERR。避免"谁加个参数谁就绕过整套 SOP"。
     if no_gate and _no_gate_authorized(content):
         _gate_err, _gate_warn = ERR[:], WARN[:]
-        ERR.clear(); WARN.clear()
+        ERR.clear()
+        WARN.clear()
         check_gate(content)
         for m in ERR:
             warn(f"（闸门·未阻断）{m}")

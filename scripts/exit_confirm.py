@@ -18,10 +18,7 @@ import argparse
 import json
 import re
 import sys
-import urllib.request
-import urllib.error
 from pathlib import Path
-from urllib.parse import urlparse
 
 
 def fetch_page(url: str, timeout: int = 60) -> str:
@@ -42,7 +39,8 @@ def fetch_page(url: str, timeout: int = 60) -> str:
                 [sys.executable, str(script), url, "--out", str(out)],
                 capture_output=True, text=True, timeout=timeout,
                 encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001 — 取正文是尽力而为：任何失败都只该得到空文本，
+            # 由调用方按「对象名不在页内」报错，不该把取件失败伪装成别的问题
             return ""
         if proc.returncode != 0 or not out.exists():
             return ""
@@ -101,7 +99,7 @@ def main():
     else:
         try:
             data = json.loads(sp.read_text(encoding="utf-8"))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 记录文件损坏本身就是要在报告里说的一条错误
             errors.append(f"搜索记录解析失败: {e}")
             data = None
 
@@ -172,8 +170,8 @@ def main():
 
     if errors:
         print("[退出拦截] 不允许就这样退出：", file=sys.stderr)
-        for e in errors:
-            print(f"  - {e}", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
         print(file=sys.stderr)
         print("正确流程：", file=sys.stderr)
         print("  1. fetch_article 抓取并读回全文", file=sys.stderr)

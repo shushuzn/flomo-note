@@ -9,10 +9,14 @@
 
 诊断信息走 stderr（容器匹配情况、公式占位符数量）。
 """
-import re, sys, html, os
+import html
+import re
+import sys
+
 
 def extract(path, out):
-    s = open(path, encoding='utf-8', errors='replace').read()
+    with open(path, encoding='utf-8', errors='replace') as f:
+        s = f.read()
     # 1. protect MathML
     math_store = []
     def _m(m):
@@ -25,7 +29,7 @@ def extract(path, out):
             if a2:
                 tex = a2.group(1)
         math_store.append(tex.strip())
-        return ' \u3016M%d\u3017 ' % (len(math_store) - 1)
+        return f' \u3016M{len(math_store) - 1}\u3017 '
     s = re.sub(r'<math\b.*?</math>', _m, s, flags=re.S)
 
     # 2. extract article container
@@ -66,7 +70,8 @@ def extract(path, out):
     body = re.sub(r'\n{3,}', '\n\n', body)
     body = body.strip()
 
-    open(out, 'w', encoding='utf-8').write(body)
+    with open(out, 'w', encoding='utf-8') as f:
+        f.write(body)
     print('[out]', out, len(body), 'chars', file=sys.stderr)
     print('math_placeholders =', len(math_store), 'empty_math =', sum(1 for x in math_store if not x), file=sys.stderr)
 

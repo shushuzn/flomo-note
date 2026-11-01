@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """域名前置（domain fronting）取件器：SNI 与 Host 分离，绕过按 SNI 关键字的 TLS RST 阻断。
 
 背景（实测记录见 ENVIRONMENT.md）：
@@ -25,6 +24,7 @@ import socket
 import ssl
 import sys
 import zlib
+from contextlib import suppress
 from urllib.parse import urljoin, urlsplit
 
 DEFAULT_SNI = "www.bing.com"   # 不在阻断名单内、且与目标同为 Fastly 边缘
@@ -89,18 +89,14 @@ def fetch_once(url: str, ip: str, sni: str, timeout: int = 60):
         # 不在 finally 里关闭，重试多次会累积泄漏文件描述符。
         for s in (ss, raw):
             if s is not None:
-                try:
+                with suppress(OSError):
                     s.close()
-                except OSError:
-                    pass
     head, _, body = buf.partition(b"\r\n\r\n")
     head_txt = head.decode("latin-1")
     status = head_txt.split("\r\n")[0]
     code = 0
-    try:
+    with suppress(IndexError, ValueError):
         code = int(status.split()[1])
-    except (IndexError, ValueError):
-        pass
     if "transfer-encoding: chunked" in head_txt.lower():
         body = _dechunk(body)
     if "content-encoding: gzip" in head_txt.lower():

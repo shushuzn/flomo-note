@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "rss_batch.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import rss_store  # noqa: E402
+import rss_store
 
 
 def _load():
@@ -213,7 +213,7 @@ class BatchTest(unittest.TestCase):
         raised = False
         try:
             RB.main([])
-        except Exception:
+        except Exception:  # noqa: BLE001 — 用例只关心「抛没抛」，不关心类型
             raised = True
         check("缺子命令抛错", raised)
 

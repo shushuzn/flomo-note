@@ -233,6 +233,37 @@ def run_inventory_case():
         print(f"{'PASS' if bad_name else 'FAIL'}  tests/ 下不以 test_ 开头的用例判错")
         (root / "tests" / "smoke_publish.py").unlink()
 
+        # 反方向：清单点名一个已经不存在的脚本。① 只保证「有的都写了」，这一侧
+        # 保证「写了的都还在」——脚本删掉后陈旧行留在表里，读起来完全通顺。
+        (root / "README.md").write_text(
+            "# 项目\n\n| `gone.py` | 已删除的脚本 |\n| `publish.py` | 写云 |\n",
+            encoding="utf-8")
+        stale = CD.check_script_inventory(root)
+        hit = any("gone.py" in m and "不存在" in m for m in stale)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  README 清单点名已删脚本判错（{len(stale)} 条）")
+
+        # 边界：只核表格**首列**。说明列里提到不存在的名字是行文引用，不是清单项——
+        # 拿它当清单会把「提到」误判成「列入」。（真实 README 说明列提到 20 余处。）
+        (root / "README.md").write_text(
+            "# 项目\n\n| `publish.py` | 写云，另见 `ghost.py` |\n",
+            encoding="utf-8")
+        prose_only = CD.check_script_inventory(root)
+        ok &= "ghost.py" not in " ".join(prose_only)
+        print(f"{'PASS' if 'ghost.py' not in ' '.join(prose_only) else 'FAIL'}"
+              f"  说明列提到的名字不当清单项（{len(prose_only)} 条）")
+
+        # glob 行（tests/test_*.py）正则天然匹配不到，不应判错也不该有豁免分支。
+        # 注意夹具里 scripts/test_leak.py 仍要在榜——否则方向 ① 会报它漏列，
+        # 把这条用例的结论搅浑。
+        (root / "README.md").write_text(
+            "# 项目\n\n| `publish.py` | 写云 |\n| `test_leak.py` | 混进来的用例 |\n"
+            "| `tests/test_*.py` | 用例 |\n",
+            encoding="utf-8")
+        glob_row = CD.check_script_inventory(root)
+        ok &= glob_row == []
+        print(f"{'PASS' if glob_row == [] else 'FAIL'}  glob 清单行不判错（{len(glob_row)} 条）")
+
         # 退出码必须被结构问题拉红，否则这一项等于只打印
         rc = CD.main(["--root", str(root), "--quiet"])
         ok &= rc == 0
@@ -299,7 +330,7 @@ def run_cross_ref_case():
         hit = len(got) == want_err and (not needle or any(needle in m for m in got))
         ok &= hit
         print(f"{'PASS' if hit else 'FAIL'}  {name}: 得到 {len(got)} 错，"
-              f"期望 {want_err} 错{'（含 %s）' % needle if needle else ''}")
+              f"期望 {want_err} 错{f'（含 {needle}）' if needle else ''}")
         if not hit:
             for m in got:
                 print("      ERR :", m)
@@ -411,7 +442,7 @@ def run_cli_flags_case():
         hit = len(got) == want_err and (not needle or any(needle in m for m in got))
         ok &= hit
         print(f"{'PASS' if hit else 'FAIL'}  {name}: 得到 {len(got)} 错，"
-              f"期望 {want_err} 错{'（含 %s）' % needle if needle else ''}")
+              f"期望 {want_err} 错{f'（含 {needle}）' if needle else ''}")
         if not hit:
             for m in got:
                 print("      ERR :", m)

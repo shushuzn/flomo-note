@@ -22,9 +22,13 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-import net_util  # noqa: E402  出网通道与错误分类的唯一实现
-import rss_store  # noqa: E402  存储、读/未读状态与保留期清理的唯一实现
+# 自备兄弟模块导入路径：直接执行时 Python 会把脚本目录摆进 sys.path，
+# runpy / importlib 加载不会——不自备就只在调用方恰好摆好时才跑得住。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import net_util
+import rss_store
+from cli_util import Opt, UsageError, cli_entry, parse_options
 
 DEFAULT_OPML = "feeds.opml"
 
@@ -140,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 reply = net_util.request(feed, timeout=opts["timeout"])
                 items = parse_feed(reply.body)[: opts["limit"]]
-            except Exception as exc:  # 单源失败不阻塞其余源
+            except Exception as exc:  # noqa: BLE001 — 单源失败不阻塞其余源
                 failures.append(f"{feed}：{exc}")
                 continue
             added, dup = rss_store.add_items(conn, feed, items)

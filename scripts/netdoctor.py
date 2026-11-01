@@ -33,8 +33,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-import net_util  # noqa: E402  探测实现只有一份：通道判据在这里，不在本脚本
+import net_util
+from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options
 
 _OPTS = [
     Opt("--url", "urls", default=None, hint="可重复，或用逗号分隔"),
@@ -104,9 +104,7 @@ def _targets(ns) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
     # 与 fetch_article 不同：本脚本的目标**不是必需参数**，故无参数时直接跑基线体检
     # ——「一条命令就能得到结论」是它存在的理由；打帮助反而多一步。

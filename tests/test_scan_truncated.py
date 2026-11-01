@@ -183,7 +183,7 @@ def test_batching_and_dedup():
 def test_all_tags_path():
     client = FakeClient(search={"A/甲": [card("X", "概念X")]}, batch={"X": card("X", "概念X")},
                         tags=["A/甲", "B/乙"])
-    code, out = run([], client)
+    _code, _out = run([], client)
     names = [c[0] for c in client.calls]
     check("默认走 tag_tree 再逐标签检索",
           names == ["tag_tree", "memo_search", "memo_search", "memo_batch_get"], names)
@@ -206,7 +206,7 @@ def test_json_output():
         p = tmp / "hits.json"
         client = FakeClient(search={"A/甲": [card("A", "某概念")]},
                            batch={"A": card("A", "某概念", body="甲\n" + MARK + "\n乙")})
-        code, out = run(["--tags", "A/甲", "--json", str(p)], client)
+        code, _out = run(["--tags", "A/甲", "--json", str(p)], client)
         ok = p.exists()
         data = json.loads(p.read_text(encoding="utf-8")) if ok else {}
         check("--json 落盘", ok and data.get("candidates") == 1, (ok, data.get("candidates")))

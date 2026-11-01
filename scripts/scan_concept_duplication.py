@@ -21,10 +21,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, FlomoError  # noqa: E402
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-from scan_qualified_concepts import concept_of, resolve_tags, collect_memos  # noqa: E402
-from memo_util import slice_qualifiers  # noqa: E402  切片识别单一来源
+from cli_util import Opt, UsageError, cli_entry, parse_options
+from flomo_client import FlomoClient, FlomoError
+from memo_util import slice_qualifiers
+from scan_qualified_concepts import collect_memos, concept_of, resolve_tags
 
 _OPTS = [
     Opt("--tags", "tags_raw", default="",
@@ -64,7 +64,7 @@ def normalize(name):
     # 但 "(v1.2 RC2)" 这类需靠循环收敛）
     for _ in range(3):
         before = s
-        for lbl, matched in slice_qualifiers(s):
+        for _lbl, matched in slice_qualifiers(s):
             s = s.replace(matched, " ")
         if s == before:
             break

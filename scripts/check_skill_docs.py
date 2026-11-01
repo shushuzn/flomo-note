@@ -54,14 +54,13 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cleanup import SCAN as _CLEANUP_SCAN  # noqa: E402  素材口径同源，不另写一份
-import covers  # noqa: E402  COVERS 声明的唯一解析（控制台读同一份）
+import covers
+from cleanup import SCAN as _CLEANUP_SCAN
 
 # 日期形态。用 \d 书写，脚本自身不含真实日期字面量，故不会自命中。
 # 月 / 日分支一律「两位在前」（1[0-2] 先于 0?[1-9]、3[01]/[12]\d 先于 0?[1-9]），
@@ -112,6 +111,13 @@ CIRCLED_STEPS = {c: str(i) for i, c in enumerate("①②③④⑤⑥⑦⑧⑨", 
 # 只管 .md：脚本注释与回归夹具里的 `scripts/x.py` 是临时目录里的相对路径或占位名，
 # 按仓库文件核它们会成片误报（夹具写的本来就是不存在的样本）。
 SCRIPT_REF_RE = re.compile(r"(scripts|tests)/([A-Za-z0-9_]+\.(?:py|sh))")
+
+# README 表格首列（清单项本体）与其中的文件名。与 SCRIPT_REF_RE 的分工：那个管
+# 「带目录前缀的行文引用」，这两个管「清单表里点名的裸文件名」——README 的脚本表
+# 首列写的是 `git_tunnel.py` 而非 `scripts/git_tunnel.py`，故 SCRIPT_REF_RE 整表
+# 绕过去，删脚本留下的陈旧行得由这一对兜住（check_script_inventory ②）。
+README_ROW_RE = re.compile(r"^\|([^|\n]+)\|")
+README_ITEM_RE = re.compile(r"[A-Za-z0-9_]+\.(?:py|sh)")
 
 # ---- 文档里的命令行 ↔ 脚本真实认识的选项 ----
 # 只认**片段开头**的命令（`python scripts/x.py …` / `x.py …`）。
@@ -288,7 +294,9 @@ def iter_targets(root: Path):
 
 def scan_file(path: Path, root: Path):
     """扫描单个文件，返回 (errs, warns, exempts)。"""
-    errs, warns, exempts = [], [], []
+    errs: list[str] = []
+    warns: list[str] = []
+    exempts: list[str] = []
     try:
         relp = path.relative_to(root).as_posix()
     except ValueError:
@@ -332,7 +340,7 @@ def scan_file(path: Path, root: Path):
 
 
 def check_script_inventory(root: Path) -> list[str]:
-    """两层清单完整性：README 须列全 `scripts/`，`tests/` 下不得有跑不到的用例。
+    """三层清单完整性：README 与 `scripts/` 双向核对，`tests/` 下不得有跑不到的用例。
 
     ① `scripts/` 下每个 .py 都必须在 README 出现一次。判据取正面定义——**全部列出**，
     不设「工具类可以不写」的豁免。留一个口子，下一个脚本就会落在口子里；而缺项只
@@ -342,7 +350,12 @@ def check_script_inventory(root: Path) -> list[str]:
     用例已全部移入 `tests/`，故这里不再需要 `test_` 豁免——**不可达的分支要删掉**，
     留着它只是让下一个人以为测试还在 scripts/。
 
-    ② `tests/` 下的 .py 必须以 `test_` 开头。`run_tests.sh` 按 `tests/test_*.py`
+    ② 反方向：README 清单里点名的脚本必须真存在。① 只保证「有的都写了」，保证不了
+    「写了的都还在」——脚本删掉或改名后，那一行留在表里，读起来完全通顺，只是照着
+    一跑就「文件不存在」。这一侧此前没有任何检查覆盖：`check_cross_refs` 的
+    `SCRIPT_REF_RE` 要求带 `scripts/` 前缀，而清单表首列是裸文件名，故整表绕过了它。
+
+    ③ `tests/` 下的 .py 必须以 `test_` 开头。`run_tests.sh` 按 `tests/test_*.py`
     glob 收集，名字不符就不会被跑：用例写得再好，也只是一份没人执行的文件，
     而且不报任何错——静默失效比红更坏。
     """
@@ -360,6 +373,24 @@ def check_script_inventory(root: Path) -> list[str]:
             f"出现一次（清单缺项等于让人不知道有这一步）"
             for n in sorted(p.name for p in scripts.glob("*.py") if p.name not in text)
         ]
+        # 反方向：只核**表格首列**。说明列里出现的脚本名是行文引用（实测 20 余处），
+        # 拿它当清单项会把「提到」误判成「列入」；首列才是清单本身。
+        # glob 行（`tests/test_*.py`）正则天然匹配不到，故不需要额外的豁免分支。
+        have_all: set[str] = set()
+        for d in ("scripts", "tests"):
+            dirp = root / d
+            if dirp.is_dir():
+                have_all |= {p.name for p in dirp.glob("*") if p.is_file()}
+        for i, ln in enumerate(text.splitlines(), start=1):
+            cell = README_ROW_RE.match(ln)
+            if not cell:
+                continue
+            for name in README_ITEM_RE.findall(cell.group(1)):
+                if name not in have_all:
+                    errs.append(
+                        f"README.md:{i}: 清单点名「{name}」在 scripts/ 与 tests/ 下都"
+                        f"不存在——脚本已删或改名？行还留着，照着一跑就是「文件不存在」"
+                    )
     if tests.is_dir():
         errs += [
             f"tests/{p.name}: 不以 test_ 开头，`run_tests.sh` 不会执行它"
@@ -636,7 +667,8 @@ def check_skill_anchors(root: Path) -> list[str]:
     # 条目 -> 它的**标题句**（`**H1 · …**` 这一段，不含后面的正文）。
     # 写在标题句里的词不能当锚点：它随条目名一起被保留，永远命中，等于没查。
     # 粒度必须到标题句而不是整行——本文件的条目是整段成行，拿整行比等于什么都没比。
-    oneline, onestmt = {}, {}
+    oneline: dict[str, str] = {}
+    onestmt: dict[str, str] = {}
     for ln in lines:
         m = H_DEF_RE.search(ln)
         if not m:
@@ -663,7 +695,7 @@ def check_skill_anchors(root: Path) -> list[str]:
         errs += _anchor_misses(hid, tokens, onestmt[hid], text)
 
     # 流程步骤同理：第 8 步丢过 `sop_gate.py`，读起来仍是「闸门 + 质检全过才写云」
-    steps = {}
+    steps: dict[str, str] = {}
     for ln in lines:
         m = STEP_TITLE_RE.search(ln)
         if m:
@@ -720,10 +752,10 @@ def main(argv=None):
     errs, warns, exempts, n_files = [], [], [], 0
     for p in iter_targets(root):
         n_files += 1
-        e, w, x = scan_file(p, root)
-        errs += e
-        warns += w
-        exempts += x
+        f_err, f_warn, f_ex = scan_file(p, root)
+        errs += f_err
+        warns += f_warn
+        exempts += f_ex
 
     # 跨文件结构检查：单文件扫描看不到「README 漏了某个脚本」这类缺项
     errs += check_script_inventory(root)

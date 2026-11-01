@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import flomo_client as FC  # noqa: E402
-import verify_card as VC  # noqa: E402
+import flomo_client as FC
+import verify_card as VC
 
 _RESULTS = []
 
@@ -303,7 +303,7 @@ def run_cases():
     check("--show-body 不改变机械判定与退出码", rc4 == 0, str(rc4))
 
     # 15) 默认不打印全文：不加参数时输出保持简洁（全文只按需给）
-    rc5, text5, _ = _main_with(memo(GOOD), ["--id", "TESTID"])
+    _rc5, text5, _ = _main_with(memo(GOOD), ["--id", "TESTID"])
     check("默认不打印全文", "要点：" not in text5, text5[-200:])
     check("默认仍给首/次/末行落点",
           "首行" in text5 and "次行" in text5 and "末行" in text5, text5[-200:])

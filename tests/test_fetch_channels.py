@@ -42,7 +42,7 @@ def _load(name, filename):
 
 FA = _load("fetch_article", "fetch_article.py")
 ND = _load("netdoctor", "netdoctor.py")
-from cli_util import UsageError  # noqa: E402
+from cli_util import UsageError
 
 RESULTS = []
 
@@ -105,7 +105,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                + "本地服务返回的正文。" * 60
                + "</article></body></html>")
 
-    def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler 的约定命名
+    def do_GET(self):
         if self.path.startswith("/missing"):
             body = b"not found"
             self.send_response(404)
@@ -138,7 +138,7 @@ def _try_fetch(url, **kw):
     try:
         html, _, note = FA.fetch(url, **kw)
         return html, note, None
-    except Exception as exc:  # 用例层：任何异常都算「没取到」，由断言分档
+    except Exception as exc:  # noqa: BLE001 — 用例层：任何异常都算「没取到」，由断言分档
         return "", "", exc
 
 

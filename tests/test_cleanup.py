@@ -115,7 +115,7 @@ def run_scan_pattern_cases():
 
 
 def run_collect_cases():
-    base, keep = _fresh_sandbox()
+    base, _keep = _fresh_sandbox()
     C.SCAN = [(base, ["arxiv_*.html", "x1_body.txt", "x1_create.json",
                       "kilo_removed_archive", "flomo-*", "arxiv_test.xml"])]
     C.KEEP = {base: {"arxiv_test.xml", "flomo-push"}}
@@ -370,6 +370,31 @@ def run_verify_command_cases():
         check(f"--verify 命令：残留 0 且退出码 0（{code}）",
               code == 0 and "残留 = 0" in out)
         check("--verify 命令：打印所用基准", "沿用上次清理时刻" in out)
+
+        # 残留非 0 时必须**返回** 1，而不是抛 SystemExit：库函数结束进程会让
+        # 「import cleanup 后调 main()」的调用方被掀掉，拿不到可判断的返回值
+        # （__main__ 处的 sys.exit(main()) 才负责把它转成进程退出码）。
+        # mtime 取窗口外（早 25 小时）：窗口内的项会被当近轮素材保留，
+        # 那样 left 为空，这条用例会假通过。
+        residue = base / "d_residue.txt"
+        residue.write_text("x", encoding="utf-8")
+        old = t0 - 25 * 3600
+        os.utime(residue, (old, old))
+        C.SCAN = [(base, ["d_edge.txt", "d_residue.txt"])]
+        buf3 = io.StringIO()
+        sys.argv = ["cleanup.py", "--verify"]
+        try:
+            with contextlib.redirect_stdout(buf3):
+                code3 = C.main()
+            raised = False
+        except SystemExit:
+            code3, raised = None, True
+        finally:
+            sys.argv = old_argv
+        out3 = buf3.getvalue()
+        check(f"--verify 有残留：main() 返回 1 且不抛 SystemExit（得 {code3!r}，抛错 {raised}）",
+              code3 == 1 and not raised)
+        check("--verify 有残留：报出应清未清的清单", "d_residue.txt" in out3)
 
         # dry-run 没真清理，不能落基准（否则复核会拿一次没删过东西的时刻判窗口）
         C.STAMP_FILE.unlink()

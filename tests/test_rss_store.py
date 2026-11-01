@@ -10,12 +10,12 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import rss_store  # noqa: E402
+import rss_store
 
 COVERS = ("rss_store",)
 
@@ -39,7 +39,7 @@ class RssStoreTest(unittest.TestCase):
         os.rmdir(self.dir)
 
     def _age(self, link: str, *, fetched_days: float = 0, read_days: float | None = None) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if fetched_days:
             self.conn.execute(
                 "UPDATE items SET fetched_at=? WHERE link=?",
@@ -61,7 +61,7 @@ class RssStoreTest(unittest.TestCase):
         self.assertEqual(rss_store.last_fetch(self.conn), stamp)
 
     def test_fetch_age_hours(self) -> None:
-        past = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(timespec="seconds")
+        past = (datetime.now(UTC) - timedelta(hours=5)).isoformat(timespec="seconds")
         rss_store.record_fetch(self.conn, at=past)
         self.assertAlmostEqual(rss_store.fetch_age_hours(self.conn), 5.0, delta=0.05)
 
@@ -144,7 +144,7 @@ class RssStoreTest(unittest.TestCase):
     def test_gc_respects_injected_now(self) -> None:
         rss_store.add_items(self.conn, FEED, [_item("http://a/1")])
         self._age("http://a/1", fetched_days=8)
-        future = datetime.now(timezone.utc) + timedelta(days=365)
+        future = datetime.now(UTC) + timedelta(days=365)
         self.assertEqual(rss_store.gc(self.conn, now=future)["removed"], 1)
 
     # ---- 幂等 ----

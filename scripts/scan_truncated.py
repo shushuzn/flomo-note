@@ -37,9 +37,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options  # noqa: E402
 from flomo_client import (  # noqa: E402
-    FlomoClient, FlomoError, _result_memos, load_token, tool_data,
+    FlomoClient,
+    FlomoError,
+    _result_memos,
+    load_token,
+    tool_data,
 )
 from memo_util import find_truncation, memo_signature  # noqa: E402
 
@@ -205,9 +209,7 @@ def run(client, ids: list[str], tags: list[str], limit: int):
 
 
 def main(argv=None, client=None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
     # 无参数 = 全库扫描（默认行为），只有显式要帮助才打 usage——
     # 「不给参数就只打帮助」会让「默认全扫」这条写在文档里的用法变成空转。

@@ -154,7 +154,7 @@ def run_full_scan_cases():
         made.append({"id": f"d{i}", "created_at": f"{_DAY_PREFIX}{i + 1}T10:00:00",
                      "content": f"#AI/RAG\n概念{i}\n\n正文"})
     c = DatedClient(made)
-    seen, failed, truncated = Q.collect_memos(c, ["AI/RAG"], limit=3, full=True)
+    seen, _failed, truncated = Q.collect_memos(c, ["AI/RAG"], limit=3, full=True)
     check("--full：日期游标翻页取尽 7 张", sorted(seen) == [f"d{i}" for i in range(7)],
           sorted(seen))
     check("--full：取尽时不算截断", truncated == [], truncated)

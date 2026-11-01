@@ -24,10 +24,14 @@ import hashlib
 import json
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+# 自备兄弟模块导入路径：直接执行时 Python 会把脚本目录摆进 sys.path，
+# runpy / importlib 加载不会——不自备就只在调用方恰好摆好时才跑得住。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cli_util import Opt, UsageError, cli_entry, parse_options
 
 UNREAD_KEEP_DAYS = 7
 READ_KEEP_DAYS = 1
@@ -57,11 +61,11 @@ CREATE TABLE IF NOT EXISTS meta (
 
 def item_id(feed: str, link: str) -> str:
     """条目 id：源地址加链接取摘要。同一源同一条目重复拉取落到同一行。"""
-    return hashlib.sha1(f"{feed}\n{link}".encode("utf-8")).hexdigest()
+    return hashlib.sha1(f"{feed}\n{link}".encode()).hexdigest()
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _parse(ts: str) -> datetime | None:
@@ -72,7 +76,7 @@ def _parse(ts: str) -> datetime | None:
     except ValueError:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     return value
 
 
@@ -163,7 +167,7 @@ def gc(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict:
     未读按 `fetched_at` 判（「获取到的保留一周」从拿到它算起），已读按 `read_at`
     判。两个阈值都是常量而非参数：调用方不该各自解释「一周」是几天。
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     unread_cut = (now - timedelta(days=UNREAD_KEEP_DAYS)).isoformat(timespec="seconds")
     read_cut = (now - timedelta(days=READ_KEEP_DAYS)).isoformat(timespec="seconds")
     cur = conn.execute(
@@ -199,7 +203,7 @@ def fetch_age_hours(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     parsed = _parse(stamp)
     if parsed is None:
         return None
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return (now - parsed).total_seconds() / 3600.0
 
 

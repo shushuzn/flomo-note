@@ -34,6 +34,7 @@ import select
 import socket
 import sys
 import threading
+from contextlib import suppress
 
 HOST = "127.0.0.1"
 
@@ -59,8 +60,18 @@ DNS_TIMEOUT = 15
 HOSTS_PRIMARY = {h: ips[0] for h, ips in ROUTES.items()}
 
 
+# 默认值只在「被 import」时生效：命令行用法由 main() 解析 argv 后覆写。
+# 早先这里在模块级直接 `_parse_args(sys.argv[1:])`，等于解析**调用方的** argv——
+# 测试用 pytest -x 跑、别的脚本 import 它，都会被误判成「未知参数」而退出进程。
+PORT, VERBOSE, ACTION = 18123, True, None
+
+
 def _parse_args(argv):
-    """解析位置参数与开关，返回 (port, verbose, action)。"""
+    """解析位置参数与开关，返回 (port, verbose, action, error)。
+
+    未知参数走 error 返回而**不是** sys.exit：本函数同时被 main() 与测试调用，
+    库函数直接结束进程会让调用方（含带 -x / -q 的 pytest）莫名其妙地消失。
+    """
     port, verbose, action = 18123, True, None
     for a in argv:
         if a in ("--quiet", "-q"):
@@ -72,12 +83,9 @@ def _parse_args(argv):
         elif a.isdigit():
             port = int(a)
         elif a.startswith("-"):
-            sys.stderr.write(f"[tunnel] 未知参数 {a}（--quiet/--verbose/--print-hosts/<port>）\n")
-            sys.exit(2)
-    return port, verbose, action
-
-
-PORT, VERBOSE, ACTION = _parse_args(sys.argv[1:])
+            return (port, verbose, action,
+                    f"未知参数 {a}（--quiet/--verbose/--print-hosts/<port>）")
+    return port, verbose, action, None
 
 
 def print_hosts():
@@ -129,10 +137,8 @@ def relay(a, b):
         pass
     finally:
         for s in (a, b):
-            try:
+            with suppress(Exception):
                 s.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 def handle(client):
@@ -184,16 +190,26 @@ def handle(client):
         log(f"CLOSE   {host}:{port} via {ip}")
     except Exception as e:  # noqa: BLE001
         log(f"  处理连接异常: {type(e).__name__}: {e}")
-        try:
+        with suppress(Exception):
             client.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
-def main():
+def main(argv=None):
+    """启动隧道；argv 为 None 时取 sys.argv[1:]（命令行用法）。
+
+    显式收 argv 是为了让调用方能指定参数而不必改 sys.argv——顺带也修掉了
+    「import 时解析调用方 argv」那个坑（见模块级 PORT 处的注释）。
+    """
+    global PORT, VERBOSE, ACTION
+    argv = sys.argv[1:] if argv is None else argv
+    port, verbose, action, error = _parse_args(argv)
+    if error:
+        sys.stderr.write(f"[tunnel] {error}\n")
+        return 2
+    PORT, VERBOSE, ACTION = port, verbose, action
     if ACTION == "print-hosts":
         print_hosts()
-        return
+        return 0
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))
@@ -201,11 +217,12 @@ def main():
     log(f"listening on {HOST}:{PORT}  routes={sorted(ROUTES)}")
     while True:
         try:
-            client, addr = srv.accept()
+            client, _addr = srv.accept()
         except KeyboardInterrupt:
             break
         threading.Thread(target=handle, args=(client,), daemon=True).start()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

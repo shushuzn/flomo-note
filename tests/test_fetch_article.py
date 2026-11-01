@@ -28,7 +28,8 @@ def _load(name, filename):
 FA = _load("fetch_article", "fetch_article.py")
 # 取**同一份**模块（fetch_article 已导入过它，这里只是取回来）：另 `_load` 一份会
 # 得到另一个 `UsageError` 类对象，`except` 就接不住脚本真正抛的那个。
-from cli_util import UsageError  # noqa: E402
+from cli_util import UsageError
+
 RESULTS = []
 
 # 用例需要「日期形态」的输入，但 H28 禁止在技能文档里写具体日期（无例外）。
@@ -47,7 +48,7 @@ def test_decode():
     raw = "中文编码测试".encode("gb18030")
     out = FA.decode_html(raw, "")
     check("decode：无 charset 时回退 gb18030", out == "中文编码测试", repr(out))
-    out = FA.decode_html("<p>hello</p>".encode("utf-8"), "text/html; charset=utf-8")
+    out = FA.decode_html(b"<p>hello</p>", "text/html; charset=utf-8")
     check("decode：按 Content-Type 解 UTF-8", "hello" in out, repr(out))
 
 
@@ -129,7 +130,7 @@ def test_extract_site_pattern_comment_fallback():
         '<div id="comments">评论区内容</div>'
         '<div class="author-card">作者卡</div></div>'
     )
-    text, channel = FA.extract(html)
+    _text, channel = FA.extract(html)
     check("extract：吞进评论区时降级到兜底通道",
           channel != "站内专用选择器", channel)
 
@@ -329,7 +330,7 @@ def test_url_is_positional():
     ):
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = FA.cli_entry(lambda: FA.main(argv), errors=(), usage_code=1)
+            code = FA.cli_entry(lambda a=argv: FA.main(a), errors=(), usage_code=1)
         check(f"{label}：退出码 1", code == 1, code)
         check(f"{label}：提示含「{want}」", want in err.getvalue(), err.getvalue())
 

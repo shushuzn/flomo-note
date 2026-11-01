@@ -30,8 +30,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options  # noqa: E402
 from flomo_client import FlomoClient, FlomoError, load_token, tool_data  # noqa: E402
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
 from memo_util import tag_key  # noqa: E402
 
 DEFAULT_LIMIT = 2000
@@ -113,9 +113,7 @@ def inspect_tag(tag: str, tags: list[str]) -> dict:
 
 
 def main(argv: list[str] | None = None, client=None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__)

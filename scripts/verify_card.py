@@ -236,10 +236,14 @@ def _resolve_id(raw: str) -> str:
     try:
         value = LAST_ID_FILE.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise SystemExit(f"[失败] 读不到 {LAST_ID_FILE}（{exc}）——先跑一次 publish.py 写卡，"
-                         f"或直接把 id 传给 --id")
+        # 不用 SystemExit 表达调用失败（库层契约，见 flomo_client.FlomoError 文档）：
+        # SystemExit 继承 BaseException，`except Exception` 接不住，会把「没写过卡」
+        # 变成绕过统一出口的裸 traceback。用法错走 UsageError，出口与 dedup.py 同一路。
+        raise CLI.UsageError(
+            f"读不到 {LAST_ID_FILE}（{exc}）——先跑一次 publish.py 写卡，或直接把 id 传给 --id"
+        ) from exc
     if not value:
-        raise SystemExit(f"[失败] {LAST_ID_FILE} 是空的——先跑一次 publish.py 写卡")
+        raise CLI.UsageError(f"{LAST_ID_FILE} 是空的——先跑一次 publish.py 写卡")
     return value
 
 

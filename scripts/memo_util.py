@@ -19,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import re
 
-
 # 读接口把换行与标签行回成 `…<br>` 的形态（全库一致），是平台外层的渲染记号。
 # 只剥「行尾一串 `<br>`」；行中的 `<br>` 不碰——那是正文里人写的换行语义。
 # 签名、回读对账、形态检查三处共用这一个口径：各自写一份，迟早一边剥一边不剥，
@@ -27,12 +26,12 @@ import re
 _TRAILING_BR = re.compile(r"(?:<br\s*/?>)+[ \t\u3000]*$", re.I)
 
 
-def strip_trailing_br(line):
+def strip_trailing_br(line: str | None) -> str:
     """剥掉一行末尾的 `<br>` 串（平台渲染记号，不是正文内容）。"""
     return _TRAILING_BR.sub("", line or "")
 
 
-def memo_signature(content):
+def memo_signature(content: object) -> dict[str, str] | None:
     """返回 {"tagline","concept"} 或 None。
 
     content 为空 / None / 非字符串时返回 None，绝不抛异常
@@ -49,7 +48,7 @@ def memo_signature(content):
     return {"tagline": tagline, "concept": concept}
 
 
-def signature_key(sig):
+def signature_key(sig: dict[str, str] | None) -> str | None:
     """签名 → 稳定短键（用于凭证文件名等）。sig 为 None 时返回 None。"""
     if not sig:
         return None
@@ -57,28 +56,27 @@ def signature_key(sig):
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def normalize_concept(concept):
+def normalize_concept(concept: str | None) -> str:
     """概念名归一化：去空白、去标点、统一大小写，用于跨标签同名查重。"""
     if not concept:
         return ""
-    import re as _re
-    s = _re.sub(r"[\s\u3000]+", "", concept)  # 去所有空白
-    s = _re.sub(r"[^\w\u4e00-\u9fff]+", "", s)  # 去标点符号
+    s = re.sub(r"[\s\u3000]+", "", concept)  # 去所有空白
+    s = re.sub(r"[^\w\u4e00-\u9fff]+", "", s)  # 去标点符号
     return s.lower()
 
 
-def body_hash(content):
+def body_hash(content: object) -> str:
     """正文整体指纹（用于凭证，防"先跑闸门、后改正文"）。
 
     非字符串入参（None / 数字等）加类型前缀，使 `None` 与 `""` **不产生同指纹**——
     否则"取不到正文"与"正文恰好为空"在凭证层无法区分，会掩盖调用侧的空值缺陷。
     """
     if not isinstance(content, str):
-        return hashlib.sha256(f"<non-str:{type(content).__name__}>".encode("utf-8")).hexdigest()
+        return hashlib.sha256(f"<non-str:{type(content).__name__}>".encode()).hexdigest()
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def keywords_of_concept(concept, limit=2):
+def keywords_of_concept(concept: object, limit: int = 2) -> list[str]:
     """从**概念名本身**派生检索用短关键词（不经卡片结构解析）。
 
     背景：整行概念名含全角标点时 flomo 全文检索常返回 0，必须退到短核心词。
@@ -115,7 +113,7 @@ def keywords_of_concept(concept, limit=2):
     return out[:limit]
 
 
-def concept_keywords(content, limit=2):
+def concept_keywords(content: object, limit: int = 2) -> list[str]:
     """从卡片正文派生检索用短关键词（先取签名，再委托 keywords_of_concept）。
 
     content 不是合法卡片（签名取不到）时返回 []。
@@ -294,7 +292,7 @@ _MODIFIER = {
     "消费级", "企业级", "工业级", "开源", "闭门", "标准", "参考", "示例", "典型",
 }
 
-def _predicate_hits(head):
+def _predicate_hits(head: str) -> list[str]:
     """概念名标题部分出现的动作词（去重保序）——**只用于提示**，不判定合规。
 
     判据在 H6b：概念名回答「这是什么」，不回答「发生了什么」；自查方式是
@@ -325,7 +323,7 @@ def _predicate_hits(head):
     return out
 
 
-def concept_head(name):
+def concept_head(name: object) -> str:
     """取概念名的**标题部分**：遇「冒号 / 破折号 / 句号」即截断。
 
     背景：概念名写成长形态时是「标题：摘要」（这本身另由 H14「概念名不得写成整句」
@@ -339,7 +337,7 @@ def concept_head(name):
     return name[:m.start()] if m else name
 
 
-def slice_qualifiers(name):
+def slice_qualifiers(name: object) -> list[tuple[str, str]]:
     """返回概念名里命中的**切片限定 / 谓语动作**标签列表（去重保序）。
 
     概念名须是**名词短语**：标识对象本身、不含谓语（见 H6b 的两类错因）。
@@ -373,7 +371,7 @@ def slice_qualifiers(name):
 _BRACKET_RE = re.compile(r"（[^（）]*）|\([^()]*\)|【[^【】]*】|\[[^\[\]]*\]")
 
 
-def _strip_brackets(text):
+def _strip_brackets(text: str) -> str:
     """去掉成对括号及其内容（只用于谓语检测，不用于切片检测）。"""
     prev = None
     while prev != text:
@@ -417,7 +415,7 @@ def _strip_tail_punct(name: str) -> str:
 _TAG_WS_RE = re.compile(r"[\s\u3000]+")
 
 
-def tag_key(name):
+def tag_key(name: str | None) -> str:
     """标签比对键：折叠空白与全角空格、全角斜杠归一、统一小写。
 
     只用于识别「同一簇被写成两种」，**不用来判断存在性**——存在性必须逐字匹配，
@@ -430,7 +428,7 @@ def tag_key(name):
     return _TAG_WS_RE.sub("", (name or "").replace("／", "/")).lower()
 
 
-def tag_leaves(tagline):
+def tag_leaves(tagline: str | None) -> list[tuple[str, str]]:
     """取标签行里**合法两级**的 (顶层, 二级) 对。
 
     如 `#科技/机器人 #AI/物理AI` → [(科技,机器人),(AI,物理AI)]。
@@ -460,7 +458,7 @@ def tag_leaves(tagline):
 TRUNC_PLACEHOLDER = re.compile(r"[\[［【]\s*此处省略[^\]］】]{0,10}[\]］】]")
 
 
-def find_truncation(text):
+def find_truncation(text: str | None) -> list[str]:
     """返回正文里出现的截断占位符字面（无则空列表）。
 
     只认**带括号**的形态：`[此处省略419字]`。散文里的「此处省略若干字」、以及

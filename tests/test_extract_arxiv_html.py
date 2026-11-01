@@ -28,7 +28,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_HERE))
 
-import extract_arxiv_html as E  # noqa: E402
+import extract_arxiv_html as E
 
 RESULTS = []
 

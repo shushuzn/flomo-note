@@ -20,12 +20,15 @@ import json
 import re
 import subprocess
 import sys
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-import rss_store  # noqa: E402
+# 自备兄弟模块导入路径：直接执行时 Python 会把脚本目录摆进 sys.path，
+# runpy / importlib 加载不会——不自备就只在调用方恰好摆好时才跑得住。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import rss_store
+from cli_util import Opt, UsageError, cli_entry, parse_options
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -149,7 +152,7 @@ def prepare(opts: dict) -> int:
             print(f"[备料] {index}/{len(rows)} {flag} {entry['title'][:44]}"
                   + ("" if ok else f" —— {entry['error'][:40]}"))
         manifest = {
-            "prepared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "prepared_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "size": len(items),
             "items": items,
         }

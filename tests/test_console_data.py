@@ -120,18 +120,18 @@ def make_repo(tmp: Path, skill=SKILL_FIXTURE):
 
 def run_limits(tmp: Path):
     limits = C.load_limits(tmp)
-    ids = [l["id"] for l in limits]
+    ids = [lm["id"] for lm in limits]
     check("硬限 id 全数抽取", ids == ["H1", "H2", "H3", "H9"], f"实际 {ids}")
-    h2 = next(l for l in limits if l["id"] == "H2")
+    h2 = next(lm for lm in limits if lm["id"] == "H2")
     check("带括注的条目名正确剥离括注", h2["title"] == "乙条", h2["title"])
-    h1 = next(l for l in limits if l["id"] == "H1")
+    h1 = next(lm for lm in limits if lm["id"] == "H1")
     check("横向引用注记不并入上一条正文", "属治理" not in h1["body"], h1["body"])
     check("分隔线终止正文（不吞并下一条）", "H2" not in h1["body"] and "乙条正文" not in h1["body"], h1["body"])
     check("正文保留多行", "甲条正文第二行" in h1["body"])
     check("分组标记正确", h1["group"] == "A" and h1["group_name"] == "A. 分组甲",
           (h1["group"], h1["group_name"]))
     check("分组标题保留字母前缀供展示", h2["group_name"] == "A. 分组甲")
-    h9 = next(l for l in limits if l["id"] == "H9")
+    h9 = next(lm for lm in limits if lm["id"] == "H9")
     check("治理节归为治理", h9["governance"] is True and h9["group"] == "GOV")
 
 def run_pipeline(tmp: Path):

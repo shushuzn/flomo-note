@@ -198,7 +198,7 @@ def test_idempotent_reuse():
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
         draft, verify = with_draft(tmp)
-        exec_fn, calls = make_exec({
+        exec_fn, _calls = make_exec({
             "flomo_client.py": (0, '{"idempotent": true, "reused_id": "ABC"}',
                                 "[注意] memo_create 是写操作\n"),
         })
@@ -235,7 +235,7 @@ def test_dry_run():
 
 def test_missing_draft():
     exec_fn, calls = make_exec()
-    code, _out, err = run(["--draft", "不存在的草稿.txt"], exec_fn)
+    code, _out, _err = run(["--draft", "不存在的草稿.txt"], exec_fn)
     check("草稿不存在：退出码 1", code == 1, code)
     check("草稿不存在：不调用任何子脚本", calls == [], calls)
 
@@ -256,7 +256,7 @@ def test_option_syntax():
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             # 走真实入口：用法错由 cli_entry 渲染成一行，`main` 不再自己打印
-            code = PB.CLI.cli_entry(lambda: PB.main(argv, exec_fn=exec_fn),
+            code = PB.CLI.cli_entry(lambda a=argv, e=exec_fn: PB.main(a, exec_fn=e),
                                      errors=(PB.FC.FlomoError,), usage_code=1)
         msg = err.getvalue()
         check(f"参数错（{label}）：退出码 1", code == 1, code)
@@ -306,7 +306,7 @@ def test_update_rename_blocked():
         draft, verify = with_draft(tmp)
         exec_fn, calls = make_exec(
             {("flomo_client.py", "memo_batch_get"): (0, _other_card(), "")})
-        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
                               "--update-id", "ABC"], exec_fn)
         check("概念名不符：退出码 6（未写云）", code == 6, code)
         check("概念名不符：一个字节不发 update",
@@ -760,7 +760,7 @@ def test_update_content_loss_allowed():
         exec_fn, calls = make_exec(
             {("flomo_client.py", "memo_batch_get"):
              (0, _card("- 原读数：约 320 万人"), "")})
-        code, out, err = run(["--draft", str(draft), "--verify", str(verify),
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
                               "--update-id", "ABC", "--allow-content-loss"], exec_fn)
         check("放行：退出码 0", code == 0, code)
         check("放行：仍打印丢失的读数（stderr，与阻塞同一口径）",

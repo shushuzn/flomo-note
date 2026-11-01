@@ -29,7 +29,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 VIA_CHOICES = ("auto", "proxy", "direct")
 
@@ -50,14 +50,16 @@ class TransportError(RuntimeError):
     也不要在 True 时重发——那正是重复卡的来源。
     """
 
-    def __init__(self, message, *, request_sent):
+    def __init__(self, message: str, *, request_sent: bool) -> None:
         super().__init__(message)
         self.request_sent = bool(request_sent)
 
 
 class Reply(NamedTuple):
     body: bytes
-    headers: object
+    # urllib 回包是 email.message.Message：有 .get() 但不是 Mapping，
+    # 标 dict 是谎报，标 object 又让每个调用点都要先断言——按实际用途标 Any。
+    headers: Any
     status: int
     channel: str
 

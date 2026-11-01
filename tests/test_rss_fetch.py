@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import rss_fetch  # noqa: E402
+import rss_fetch
 
 COVERS = ("rss_fetch",)
 

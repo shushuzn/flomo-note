@@ -5,8 +5,8 @@ COVERS = ("tagcheck", "sop_gate",)
 
 import contextlib
 import importlib.util
-import json
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -23,7 +23,8 @@ def _load(name, filename):
 
 
 TC = _load("tagcheck", "tagcheck.py")
-from cli_util import cli_entry as CLI_ENTRY  # noqa: E402  （SCRIPT_DIR 已在 sys.path）
+from cli_util import cli_entry as CLI_ENTRY
+
 RESULTS = []
 
 

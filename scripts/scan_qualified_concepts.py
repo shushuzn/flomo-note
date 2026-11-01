@@ -23,9 +23,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flomo_client import FlomoClient, FlomoError, _result_memos  # noqa: E402
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-from memo_util import memo_signature, slice_qualifiers  # noqa: E402  单一来源
+from cli_util import Opt, UsageError, cli_entry, parse_options
+from flomo_client import FlomoClient, FlomoError, _result_memos
+from memo_util import memo_signature, slice_qualifiers
 
 # 切片识别**走 memo_util.slice_qualifiers**（与质检拦截 5.8 同源）：
 # 两侧各写一套正则时，改一侧会让另一侧静默失配——而失配只表现为「统计数字对不上」，
@@ -155,7 +155,7 @@ def collect_memos(c, tags, limit=50, full=False):
                     break
                 end_date = oldest
                 page = nxt
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 单标签失败只警告不中断，扫全量比单条可靠更重要
             print(f"[warn] 标签 {t!r} 失败：{e}", file=sys.stderr)
             failed.append(t)
     return seen, failed, truncated

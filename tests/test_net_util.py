@@ -150,10 +150,8 @@ def _blackhole():
             listener.close()
         finally:
             for conn in held:
-                try:
+                with contextlib.suppress(OSError):
                     conn.close()
-                except OSError:
-                    pass
 
     return listener.getsockname()[1], stop
 

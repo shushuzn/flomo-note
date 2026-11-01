@@ -15,6 +15,24 @@
 分流也会散落进每个 `main`。故收成一份，各脚本只写自己的 `Opt(...)` 声明表。
 """
 import sys
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar
+
+_NumT = TypeVar("_NumT", int, float)
+
+
+def force_utf8() -> None:
+    """把标准输出/错误切到 utf-8（已切过的不重复切）。
+
+    用例名与断言详情里有 GBK 编不出来的字符（如 "♯" U+266F、从服务回包解码出来的
+    替换符），打到 GBK 控制台会 UnicodeEncodeError——于是「用例跑挂了」其实只是
+    「打印挂了」。七个脚本各写一遍 `if hasattr(...)` 样板，收成一处；判据依旧只有
+    一份：先探 `reconfigure` 在不在（Python 3.7 以下没有），再切。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
 
 
 class UsageError(Exception):
@@ -31,7 +49,8 @@ class UsageError(Exception):
     """
 
 
-def _num_arg(raw, flag, cast, low=None, high=None):
+def _num_arg(raw: str | None, flag: str, cast: Callable[[str], _NumT],
+             low: _NumT | None = None, high: _NumT | None = None) -> _NumT:
     """把命令行里的数字参数转成 `cast`，并在越界/非数字时抛 `UsageError`。
 
     不做「宽松解析」——`int("2000条")` 会抛、`int("2_000")` 会过，都是意外的。
@@ -50,12 +69,14 @@ def _num_arg(raw, flag, cast, low=None, high=None):
     return value
 
 
-def int_arg(raw, flag, *, low=None, high=None):
+def int_arg(raw: str | None, flag: str, *, low: int | None = None,
+            high: int | None = None) -> int:
     """`--limit 2000` 这类整数参数：见 `_num_arg`。"""
     return _num_arg(raw, flag, int, low, high)
 
 
-def float_arg(raw, flag, *, low=None, high=None):
+def float_arg(raw: str | None, flag: str, *, low: float | None = None,
+              high: float | None = None) -> float:
     """`--timeout 30` 这类浮点参数：见 `_num_arg`。"""
     return _num_arg(raw, flag, float, low, high)
 
@@ -67,10 +88,19 @@ class Opt:
     「缺值」「重复」「未知」这三种错误只在一处判定（见 `parse_options`）。
     """
 
-    __slots__ = ("name", "dest", "kind", "low", "high", "default", "hint")
+    __slots__ = ("default", "dest", "high", "hint", "kind", "low", "name")
 
-    def __init__(self, name, dest, kind="str", *, low=None, high=None, default=None,
-                 hint=""):
+    default: Any
+    dest: str
+    high: float | None
+    hint: str
+    kind: str
+    low: float | None
+    name: str
+
+    def __init__(self, name: str, dest: str, kind: str = "str", *,
+                 low: float | None = None, high: float | None = None,
+                 default: Any = None, hint: str = "") -> None:
         if kind not in ("str", "int", "float", "flag"):
             raise ValueError(f"未知的选项类型：{kind}")
         if kind == "flag" and (low is not None or high is not None):
@@ -84,7 +114,8 @@ class Opt:
         self.hint = hint
 
 
-def parse_options(argv, spec, *, positional_ok=False):
+def parse_options(argv: Sequence[str], spec: Sequence[Opt], *,
+                  positional_ok: bool = False) -> tuple[dict[str, Any], list[str]]:
     """按声明表解析命令行选项，返回 `(字段字典, 位置参数列表)`；用法错抛 `UsageError`。
 
     收在一处，是因为此前四个脚本各写一遍 while 循环，带着两个一模一样的漏：
@@ -138,7 +169,9 @@ def parse_options(argv, spec, *, positional_ok=False):
     return values, positionals
 
 
-def cli_entry(main, *, errors, code=1, prefix="[失败]", usage_code=2):
+def cli_entry(main: Callable[[], Any], *,
+              errors: tuple[type[BaseException], ...], code: int = 1,
+              prefix: str = "[失败]", usage_code: int = 2) -> Any:
     """CLI 入口的统一出口：跑 `main`，把**预期内**的失败转成退出码。
 
     所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是可预期

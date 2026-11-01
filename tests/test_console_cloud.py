@@ -62,7 +62,9 @@ def load_module():
 
 C = load_module()
 # 客户端自己的异常类型（与 console_cloud 同源导入，避免两处各写一份）
-from flomo_client import FlomoError  # noqa: E402
+from contextlib import suppress
+
+from flomo_client import FlomoError
 
 # 时间戳由片段拼接构造，不在源码里写出完整日期字面量（技能文档内容自检对脚本同样生效）
 TS = "20" + "26" + "-09-29T18:20:34+08:00"
@@ -235,9 +237,9 @@ def run_whitelist():
     used_all = set(re.findall(r'self\.call\("(\w+)"', src))
     used_write = set(re.findall(r'self\.call\("(\w+)"[^)]*write=True\)', src))
     used_read = used_all - used_write
-    check("只读白名单恰好等于实际调用的读工具", C.READONLY_TOOLS == used_read,
+    check("只读白名单恰好等于实际调用的读工具", used_read == C.READONLY_TOOLS,
           f"permitted {sorted(C.READONLY_TOOLS)} / used {sorted(used_read)}")
-    check("写白名单恰好等于实际调用的写工具", C.WRITE_TOOLS == used_write,
+    check("写白名单恰好等于实际调用的写工具", used_write == C.WRITE_TOOLS,
           f"permitted {sorted(C.WRITE_TOOLS)} / used {sorted(used_write)}")
     check("读写调用点不混用", not (used_read & used_write), str(sorted(used_read & used_write)))
 
@@ -721,7 +723,7 @@ def run_write_paths():
     # 闸门拦下时：报出待修项，且一个字节都不发云端
     for cls, want in [(_FailCard, "格式闸门未过"), (_FailGate, "流程闸门未过")]:
         fake = FakeClient()
-        r = cls(factory=lambda: fake)
+        r = cls(factory=lambda f=fake: f)
         try:
             r.create_memo(CARD)
             got = "未拦下"
@@ -732,7 +734,7 @@ def run_write_paths():
 
         # 改卡按 H22 必须先回读原文——那次是只读，被拦的是写请求本身
         fake = FakeClient({"memo_batch_get": wrap([{"id": "M1", "content": OLD_CARD}])})
-        r = cls(factory=lambda: fake)
+        r = cls(factory=lambda f=fake: f)
         try:
             r.update_memo("M1", CARD)
             got = "未拦下"
@@ -830,10 +832,8 @@ def run_failure_and_secrecy():
 
     # CloudError 自身的传播不应触发重置
     before = made["n"]
-    try:
+    with suppress(C.CloudError):
         r.call("memo_create", {})
-    except C.CloudError:
-        pass
     check("越权调用不重建连接", made["n"] == before, str(made["n"]))
 
     # 可用性状态：只报事实，不含 token

@@ -1,0 +1,114 @@
+# pyproject.toml — 工程化配置（ ruff / pytest / coverage / mypy ）
+#
+# 为什么现在才有这个文件：仓库长期是「纯标准库 + run_tests.sh」的形状，没有
+# 项目级工具配置。引入 ruff / mypy 之类的开发期工具后，配置必须落成文件——
+# 否则每次调用都要在命令行上重复一遍规则集，而「两套判据必然分叉」正是本仓库
+# 一直在防的事：CI 一套、本地一套，久了没人知道哪个算过。
+#
+# **运行期零第三方依赖不变**：下面 [project].dependencies 为空，所有脚本仍只靠
+# 标准库运行；dev 依赖只装在开发机与 CI 里，不进入任何写卡流程。
+#
+# 版本下限写 3.11 的理由：代码里已经用上 3.11 才有的 `datetime.UTC`（rss_store /
+# rss_batch 的时间戳，ruff UP017 自动换旧），再低跑不了；往上不封顶，CI 矩阵
+# （3.11 / 3.12 / 3.13）即承诺范围。声称支持一个没人跑过的版本，等于把「能跑」
+# 当成事实——它只是没被证伪过。
+
+[project]
+name = "flomo-note"
+version = "0.1.0"
+description = "flomo 写卡 SOP 的脚本与用例：闸门、查重、发布、回读、退场"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# 仅开发期：装它们是 `pip install -e .[dev]` 或 CI 里 `pip install .[dev]`。
+# 写卡流程本身不 import 这里任何一项。
+dev = [
+    "ruff",
+    "pytest",
+    "mypy",
+    "coverage",
+]
+
+# ---------------------------------------------------------------- ruff ------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+# 不启用 ruff format：本仓库的注释是判据载体（大量「为什么」长注释），
+# 自动格式化会产生覆盖全部脚本的一次性大 diff，而 diff 越大越没人能逐行审。
+#  lint 管对错，排版靠人——这个取舍是刻意的，不是忘了配。
+src = ["scripts", "tests"]
+
+[tool.ruff.lint]
+# 整组忽略的规则及理由（每条都对应一类「在本仓库恒为误伤」的判定）：
+#   RUF001/002/003  中日韩全角字符「」、—— …… 被判成「易混 Unicode」。中文仓库里
+#                   它们是书写系统本身，不是把 ASCII 打错——扫一遍 10480 条命中
+#                   全是中文标点。按「高命中率先怀疑判据」处理：噪声比缺失更坏。
+ignore = ["RUF001", "RUF002", "RUF003"]
+# 规则集刻意收窄，每条都有理由：
+#   E4/E7/E9/F  pycodestyle 错误子集 + pyflakes：真错误与未用名，无审美成分
+#   W           废弃语法告警
+#   I           import 排序：一处定义，免各脚本各排各的
+#   UP          pyupgrade：target-version 之上的旧写法
+#   B           bugbear：循环变量延迟绑定等真陷阱（B023 每一条都要单独看）
+#   BLE001      宽 except——选它不是为了禁，而是为了「新写的宽 except 必须带理由」：
+#               仓库里现存的 6 处宽 except 全部带 `# noqa: BLE001` 标记（含说明），
+#               规则一开，这些标记从「给不存在的光杆 lint 看」变成真门禁；
+#               没标记的新宽 except 会直接红。不选它，这些标记就是死注释。
+#   SIM         可简化写法：只收不改变语义的
+#   C4          推导式写法
+#   RUF         Ruff 专属：RUF100（失效 noqa）等卫生项
+# 没收的及原因：
+#   E501 行宽——line-length 给排版类规则用，E501 未选：83 行超 100 字符的存量
+#               多为中文判据注释，为凑宽重排会伤注释可读性（且本仓库不跑 format）
+#   S（bandit）  try-except-pass / subprocess 无 check 等在本仓库是明确取舍，
+#               逐条 noqa 会把「取舍」淹进「忽略」里，故整组不选
+#   PLW1510     subprocess.run 无 check：见上
+#   ANN         注解覆盖由 mypy 侧渐进推进，不靠 lint 逼数量
+select = ["E4", "E7", "E9", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+# 用例文件把 `COVERS = (...)` 写在 docstring 之后、import 之前（check_skill_docs
+# 要求每个用例都声明覆盖对象，放在最顶上才看得见），于是 import 全部落在赋值语句
+# 之后——E402 对它是恒真命中。放行整组 E402 而不是把 COVERS 搬到 import 之后：
+# 「声明覆盖」是用例的第一句话，不该给一条审美规则让位。
+# （scripts/ 不需要这条：ruff 的 E402 明确放行 sys.path.insert 之后的 import，
+#  最小复现验证过。）
+"tests/*" = ["E402"]
+
+# ---------------------------------------------------------------- pytest ----
+[tool.pytest.ini_options]
+# 收集入口：tests/ 下的 test_*.py。每个文件由仓库根的 conftest.py 以
+# runpy 按「python tests/test_x.py」的原语义整体执行——判据仍只有一份
+# （run_tests.sh 跑的是同一批文件），pytest 只是第二个入口，不是第二套判据。
+testpaths = ["tests"]
+# 关掉默认的模块收集（import 每个 test_*.py）：本仓库有的用例文件把逻辑写在
+# 模块级、末尾直接 sys.exit，import 它们会在收集阶段炸出 INTERNALERROR。
+# 收集统一走 conftest.py 的 pytest_collect_file。详见 conftest.py 文档字符串。
+python_files = []
+
+# ---------------------------------------------------------------- coverage --
+[tool.coverage.run]
+source = ["scripts"]
+# runpy 在进程内执行测试脚本，scripts/ 的import 会被计入；branch 覆盖先不开，
+# 行覆盖先建立基线，避免一上来就把「没测到的分支」当成失败。
+branch = false
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+# ---------------------------------------------------------------- mypy -------
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "scripts"
+# 脚本之间靠 sys.path 引导 + importlib 装载互相引用（见各脚本头部的
+# sys.path.insert），静态分析看不到这层，缺失 import 一律按「已处理」放过，
+# 否则满屏是 ModuleNotFound 的噪声，真错误被淹掉。
+ignore_missing_imports = true
+# 不检查未注解函数体：仓库 41% 函数没有返回注解，开这个等于一次性全红，
+# 而全红的门禁等于没门禁。推进方式见 CONTRIBUTING.md：新代码必须带注解，
+# 老代码按改动范围渐进补。
+check_untyped_defs = false
+warn_unused_ignores = true
+warn_redundant_casts = true

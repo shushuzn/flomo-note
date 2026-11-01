@@ -50,8 +50,10 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
-import net_util  # noqa: E402  出网通道与错误分类的唯一实现（抓取 / 写云 / 体检共用）
+from contextlib import suppress
+
+import net_util
+from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MIN_CHARS = 300
@@ -228,10 +230,8 @@ def decode_html(body: bytes, content_type: str = "") -> str:
     （cnBeta 一类老站常见），整页中文变乱码，且乱码文本还能"抽得出"正文。
     """
     if body[:2] == b"\x1f\x8b":  # 少数服务器无视 Accept-Encoding: identity
-        try:
+        with suppress(OSError):
             body = gzip.decompress(body)
-        except OSError:
-            pass
     m = re.search(r"charset=([\w-]+)", content_type or "", re.I)
     if m:
         try:
@@ -387,8 +387,10 @@ def heading_gap(page: str, text: str) -> dict:
     last = max(i for i, ok in enumerate(marks) if ok)
     return {
         "last_seen": headings[last],
-        "missing_tail": [h for h, ok in zip(headings[last + 1:], marks[last + 1:]) if not ok],
-        "missing_before": [h for h, ok in zip(headings[:last], marks[:last]) if not ok],
+        "missing_tail": [h for h, ok in
+                        zip(headings[last + 1:], marks[last + 1:], strict=True) if not ok],
+        "missing_before": [h for h, ok in
+                         zip(headings[:last], marks[:last], strict=True) if not ok],
     }
 
 
@@ -493,9 +495,7 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__)

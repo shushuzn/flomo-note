@@ -40,8 +40,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import net_util  # noqa: E402  出网通道与错误分类的唯一实现（抓取 / 写云 / 体检共用）
-from cli_util import Opt, UsageError, cli_entry, parse_options  # noqa: E402
+import net_util
+from cli_util import Opt, UsageError, cli_entry, parse_options
 
 DEFAULT_ENGINES = ("sogou", "bing", "baidu")
 DEFAULT_TIMEOUT = 25.0

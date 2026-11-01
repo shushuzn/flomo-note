@@ -675,6 +675,7 @@ def run_no_gate_auth_cases():
     import json as _json
     import tempfile
     from pathlib import Path
+
     from memo_util import body_hash, signature_key
 
     BODY = "#数学/泛函方程\n某概念\n\n正文结论句。\n"
@@ -729,6 +730,7 @@ def run_gate_expiry_cases():
     import json as _json
     import tempfile
     from pathlib import Path
+
     from memo_util import body_hash, signature_key
 
     BODY = "#数学/泛函方程\n某概念\n\n正文结论句。\n"
@@ -771,6 +773,71 @@ def run_gate_expiry_cases():
     return ok
 
 
+def run_cluster_binding_cases():
+    """check() 拆分后的两条结构契约（静态检查，不跑语料）。
+
+    契约一：每个 `_check_*` 函数引用的全局名都能在模块级或内建名里解析。
+    拆分时真踩过这个坑：模板前缀那一簇引用了 `content`，函数签名却只收
+    `lines`——拆完不报错，直到某条语料跑到那一段才 NameError。判据取
+    symtable 的精确作用域（含嵌套函数），不用 ast 近似：ast 分不清推导式
+    变量与函数局部变量，会把「其实没传进来」的名字算成已绑定而漏报。
+
+    契约二：check() 对每个 `_check_*` 恰好调用一次。定义了她却忘了在
+    check() 里登记调用，那条检查就静静消失——与写错代码一样坏，且无声。
+    """
+    import ast
+    import builtins
+    import symtable
+
+    src = Path(VM.__file__).read_text(encoding="utf-8")
+    top = symtable.symtable(src, "validate_memo.py", "exec")
+    module_bound = {s.get_name() for s in top.get_symbols()
+                    if s.is_assigned() or s.is_imported()}
+    builtin_names = set(dir(builtins))
+
+    unresolved = []
+
+    def scan(block):
+        # 嵌套函数（_carrier_scan 等）也要扫：它的全局名同样要能解析
+        for s in block.get_symbols():
+            if (s.is_global() and s.get_name() not in module_bound
+                    and s.get_name() not in builtin_names):
+                unresolved.append((block.get_name(), s.get_name()))
+        for child in block.get_children():
+            scan(child)
+
+    defined = []
+    for child in top.get_children():
+        if child.get_type() == "function" and child.get_name().startswith("_check_"):
+            defined.append(child.get_name())
+            scan(child)
+
+    ok = not unresolved
+    print(f"{'PASS' if ok else 'FAIL'}  _check_* 引用的全局名全部可解析"
+          f"（共 {len(defined)} 个函数）")
+    for where, name in unresolved:
+        print(f"      {where}: 未解析的名字 {name!r}（须改成参数传入，或在模块级定义）")
+
+    tree = ast.parse(src)
+    check_fn = next(n for n in tree.body
+                    if isinstance(n, ast.FunctionDef) and n.name == "check")
+    calls = [n.func.id for n in ast.walk(check_fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id.startswith("_check_")]
+    dup = sorted({c for c in calls if calls.count(c) > 1})
+    missing = sorted(set(defined) - set(calls))
+    extra = sorted(set(calls) - set(defined))
+    same = not dup and not missing and not extra and len(calls) == len(defined)
+    ok &= same
+    print(f"{'PASS' if same else 'FAIL'}  check() 恰好调用每个 _check_* 一次"
+          f"（定义 {len(defined)} 个 / 调用 {len(calls)} 次）")
+    for label, items in (("重复调用", dup), ("定义了但没调用", missing),
+                         ("调用了但没定义", extra)):
+        for it in items:
+            print(f"      {label}: {it}")
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_loader_cases())
@@ -779,6 +846,7 @@ if __name__ == "__main__":
     results.append(run_gate_cases())
     results.append(run_no_gate_auth_cases())
     results.append(run_gate_expiry_cases())
+    results.append(run_cluster_binding_cases())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

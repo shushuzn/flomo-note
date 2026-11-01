@@ -22,6 +22,10 @@ import re
 import sys
 from pathlib import Path
 
+# 自备兄弟模块导入路径：直接执行时 Python 会把脚本目录摆进 sys.path，
+# runpy / importlib 加载不会——不自备就只在调用方恰好摆好时才跑得住。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import covers  # 配套关系判据的唯一实现：闸门与控制台读同一份声明
 
 # 控制台展示的技能文档（存在才收）
@@ -66,8 +70,8 @@ def load_limits(root: Path):
 
     返回 [{id, title, group, group_name, body, governance}]，顺序即文档顺序。
     """
-    limits = []
-    cur = None
+    limits: list[dict] = []
+    cur: dict | None = None
     group_name = ""
 
     def flush():
@@ -125,7 +129,7 @@ def load_pipeline(root: Path):
     """
     lines = _skill_lines(root)
     start = next(
-        (i for i, l in enumerate(lines) if l.startswith("## 三、")), None
+        (i for i, ln in enumerate(lines) if ln.startswith("## 三、")), None
     )
     if start is None:
         return []
@@ -134,7 +138,8 @@ def load_pipeline(root: Path):
         len(lines),
     )
 
-    steps, cur = [], None
+    steps: list[dict] = []
+    cur: dict | None = None
     for ln in lines[start + 1:end]:
         m = _STEP_RE.match(ln)
         if m:
@@ -153,7 +158,7 @@ def load_pipeline(root: Path):
         steps.append(cur)
 
     for s in steps:
-        s["blocking"] = s["blocking"] or any("阻塞" in l for l in s["lines"])
+        s["blocking"] = s["blocking"] or any("阻塞" in ln for ln in s["lines"])
         s["body"] = "\n".join(s["lines"])
         s.pop("lines", None)
     return steps
@@ -265,7 +270,7 @@ def collect_all(root) -> dict:
             "steps": len(steps),
             "steps_blocking": sum(1 for s in steps if s["blocking"]),
             "limits": len(limits),
-            "limits_core": sum(1 for l in limits if not l["governance"]),
+            "limits_core": sum(1 for lm in limits if not lm["governance"]),
             "tools": sum(1 for s in scripts if s["kind"] == "tool"),
             "tests": sum(1 for s in scripts if s["kind"] == "test"),
         },

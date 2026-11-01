@@ -164,7 +164,7 @@ def test_dedup_across_keywords():
         search_map={"甲": [same], "乙": [same]},
         batch={"SAME": same},
     )
-    code, out, _err = run(["--keywords", "甲,乙"], client)
+    _code, out, _err = run(["--keywords", "甲,乙"], client)
     batches = [c for c in client.calls if c[0] == "memo_batch_get"]
     check("跨关键词同 id 只取一次全文",
           sum(len(b[1]["ids"]) for b in batches) == 1, batches)
@@ -173,7 +173,7 @@ def test_dedup_across_keywords():
 
 def test_no_full():
     client = FakeClient(search_map={"甲": [card("A", "概念甲")]})
-    code, out, _err = run(["--keywords", "甲", "--no-full"], client)
+    _code, out, _err = run(["--keywords", "甲", "--no-full"], client)
     check("--no-full 不调 batch_get",
           all(c[0] != "memo_batch_get" for c in client.calls), client.calls)
     check("--no-full 显式声明未取正文", "未取正文" in out, out[-120:])
@@ -213,7 +213,7 @@ def test_bad_numeric_args():
         client = FakeClient()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = DD.cli_entry(lambda: DD.main(argv, client=client),
+            code = DD.cli_entry(lambda a=argv, c=client: DD.main(a, client=c),
                                 errors=(FC.FlomoError,), usage_code=1)
         label = f"{argv[2]} {argv[3]}"
         check(f"{label}：退出码 1", code == 1, code)
@@ -240,7 +240,7 @@ def test_bad_option_syntax():
         client = FakeClient()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = DD.cli_entry(lambda: DD.main(argv, client=client),
+            code = DD.cli_entry(lambda a=argv, c=client: DD.main(a, client=c),
                                 errors=(FC.FlomoError,), usage_code=1)
         msg = err.getvalue()
         check(f"{label}：退出码 1", code == 1, code)

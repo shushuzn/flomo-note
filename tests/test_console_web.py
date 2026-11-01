@@ -68,7 +68,7 @@ def main() -> int:
     check("视图都有元信息（标题/副标题）", set(views) <= metas, f"缺元信息 {sorted(set(views) - metas)}")
 
     # 视图函数必须真实存在（VIEWS 里写错函数名会静默变成点击无反应）
-    for name, fn in views.items():
+    for _name, fn in views.items():
         check(f"视图函数存在：{fn}", re.search(rf"function {re.escape(fn)}\s*\(", js) is not None)
 
     # ---- 2. 默认视图一致 -------------------------------------------------- #

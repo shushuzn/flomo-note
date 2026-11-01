@@ -103,7 +103,8 @@ def main():
     check("骨架首行是待清理标签", skeleton.splitlines()[0] == "#待清理")
     check("骨架保留概念名", skeleton.splitlines()[1] == "周永富案")
     check("骨架记原标签与原字数", "原标签：时政/反腐、政策/生态" in skeleton and "原字数：500" in skeleton)
-    check("骨架里除首行外不含 #", not any(l.startswith("#") for l in skeleton.splitlines()[1:]))
+    check("骨架里除首行外不含 #",
+          not any(ln.startswith("#") for ln in skeleton.splitlines()[1:]))
 
     dirty = R.build_skeleton("#伪标签 概念", [], 0)
     check("概念名里的 # 被剥掉", "#伪标签" not in dirty, dirty)

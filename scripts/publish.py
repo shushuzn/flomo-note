@@ -78,6 +78,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -93,7 +94,11 @@ PY = sys.executable
 # 正文归一化必须与回读对账同源：那是「平台渲染差异不参与比对」的唯一口径
 # （丢空行 / 还原 `_` `|` `[` 转义 / 去行内水平空白）。自己再写一份，两处迟早
 # 不同步，diff 会把渲染层补的空行当成「新增了一行」——噪声会训练出跳过习惯。
+
+# 自备兄弟模块导入路径：直接执行时 Python 会把脚本目录摆进 sys.path，
+# runpy / importlib 加载不会——不自备就只在调用方恰好摆好时才跑得住。
 sys.path.insert(0, str(SCRIPT_DIR))
+
 import cli_util as CLI  # noqa: E402
 import flomo_client as FC  # noqa: E402
 
@@ -872,8 +877,8 @@ def _echo_concept(draft: str) -> None:
         lines = Path(draft).read_text(encoding="utf-8").splitlines()
     except OSError:
         return
-    tag = next((l.strip() for l in lines if l.strip().startswith("#")), "")
-    body = [l.strip() for l in lines if l.strip()]
+    tag = next((ln.strip() for ln in lines if ln.strip().startswith("#")), "")
+    body = [ln.strip() for ln in lines if ln.strip()]
     name = body[1] if len(body) > 1 else ""
     print(f"[人判] 概念名：{name}")
     if tag:
@@ -892,7 +897,7 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
     期间草稿被改动，闸门凭证里的正文指纹已经对不上——此处重跑一次质检让它自己报出来，
     而不是拿旧凭证去写一份没被核过的正文。单卡路径不传该参数（预检紧接写入，无窗口）。
     """
-    res = {"code": 0, "id": "", "reused": False, "diff": None,
+    res: dict[str, Any] = {"code": 0, "id": "", "reused": False, "diff": None,
            "word_count": None, "tags": [], "checks": 0, "human": []}
     if expect_digest and _digest(Path(draft)) != expect_digest:
         print("[告警] 草稿在预检之后被改动过，重跑质检确认凭证仍覆盖这份正文")
@@ -1047,7 +1052,7 @@ def parse_manifest(path: Path) -> list[dict]:
         try:
             digest = hashlib.sha256(Path(draft).read_bytes()).hexdigest()
         except OSError as exc:
-            raise CLI.UsageError(f"清单第 {lineno} 行的草稿读不出来：{exc}")
+            raise CLI.UsageError(f"清单第 {lineno} 行的草稿读不出来：{exc}") from exc
         if digest in seen_content:
             other_line, other_draft = seen_content[digest]
             raise CLI.UsageError(
@@ -1087,7 +1092,7 @@ def _print_batch_summary(rows: list[tuple], *, items: list[dict], failed: int) -
             diff = res.get("diff") or {}
             tag_note = ""
             tb, ta = diff.get("tags_before"), diff.get("tags_after")
-            if tb is not None and set(tb) != set(ta):
+            if tb is not None and ta is not None and set(tb) != set(ta):
                 tag_note = f"（标签 {(' '.join(tb) or '-' )} → {(' '.join(ta) or '-')}）"
             print(f"  {i} {mark} id={res['id']} {wc_txt}"
                   f"{' '.join(res.get('tags') or []) or '-'} {_concept(it['draft'])}{tag_note}")
@@ -1191,9 +1196,7 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
 
 
 def main(argv: list[str] | None = None, exec_fn=None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+    CLI.force_utf8()
     run = exec_fn or _exec
 
     args = list(sys.argv[1:] if argv is None else argv)

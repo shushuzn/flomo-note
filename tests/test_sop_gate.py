@@ -131,47 +131,54 @@ def run_gate_check_cases():
 
     # 1) 凭证缺失 → ERR
     VM.GATE_DIR = Path(tempfile.mkdtemp())
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("无凭证判 ERR", len(VM.ERR) == 1 and "缺少 SOP 流程闸门凭证" in VM.ERR[0])
 
     # 2) 凭证正常 → 无错
     _write_gate(sig, hashlib.sha256(BODY.encode()).hexdigest())
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("凭证齐备不报错", len(VM.ERR) == 0)
 
     # 3) 正文指纹不符 → ERR（防"先跑闸门后改正文"）
     _write_gate(sig, hashlib.sha256(("别的正文" + BODY).encode()).hexdigest())
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("正文指纹不符判 ERR",
           len(VM.ERR) == 1 and "正文指纹" in VM.ERR[0])
 
     # 4) 凭证过期 → ERR
     _write_gate(sig, hashlib.sha256(BODY.encode()).hexdigest(), expires_delta=-10)
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("凭证过期判 ERR", any("已过期" in m for m in VM.ERR))
 
     # 5) 签名不符 → ERR（文件名对得上，但凭证内 signature 是另一张卡）
     other = {"tagline": "#时政/反腐", "concept": "另一张卡的概念名"}
     _write_gate(other, hashlib.sha256(BODY.encode()).hexdigest(), key_sig=sig)
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("签名不符判 ERR", any("签名与当前卡片不符" in m for m in VM.ERR))
 
     # 6) 验证未做（web 无 searched 且未 skip）→ ERR
     _write_gate(sig, hashlib.sha256(BODY.encode()).hexdigest(),
                 web={"searched": False, "term_count": 0})
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("验证未执行判 ERR", any("验证（网络搜索）未执行" in m for m in VM.ERR))
 
     # 7) 显式 skip-web → 不报验证错
     _write_gate(sig, hashlib.sha256(BODY.encode()).hexdigest(),
                 web={"web_skipped": True})
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("显式跳过网络验证不报错", len(VM.ERR) == 0)
 
@@ -183,7 +190,8 @@ def run_no_gate_cases():
     def _run():
         # main() 不做跨轮清理，ERR/WARN 是模块级列表；连着调必须手动清，
         # 否则上一轮的判错会污染下一轮退出码。
-        VM.ERR.clear(); VM.WARN.clear()
+        VM.ERR.clear()
+        VM.WARN.clear()
         sys.argv = ["validate_memo.py", "--no-gate", _p]
         try:
             return VM.main()
@@ -241,7 +249,8 @@ def run_symbolic_term_cases():
     check("正文无 M+ 时判未命中", miss == [], miss)
 
     # 4) 端到端：这个术语的验证条目不再被闸门拦下
-    import json as _json, tempfile as _tf
+    import json as _json
+    import tempfile as _tf
     tmp = Path(_tf.mkdtemp()) / "v.json"
     tmp.write_text(_json.dumps({"searched": True, "terms": [
         {"term": "M+", "query": "q",
@@ -474,7 +483,8 @@ def run_assemble_gate_cases():
     live = GATE.assemble_gate(BODY, sig, web, {"keyword_hits": {}}, {"anchor": "x"})
     (tmp / f"{GATE.signature_key(sig)}.json").write_text(
         json.dumps(live, ensure_ascii=False), encoding="utf-8")
-    VM.ERR.clear(); VM.WARN.clear()
+    VM.ERR.clear()
+    VM.WARN.clear()
     VM.check_gate(BODY)
     check("validate_memo 对带 human_judgment 的凭证不报错", VM.ERR == [], str(VM.ERR))
 
@@ -673,7 +683,7 @@ def run_tag_check_cases():
           got["tags"][0].get("near") and "云原生" in got["tags"][0]["near"], got)
 
     # 3) 只差全角斜杠 / 大小写 → 阻塞（云端会是同一簇的两种写法）
-    tree_case = tree + ["AI/Agent"]
+    tree_case = [*tree, "AI/Agent"]
     for bad in ("#科技／云原生", "#ai/agent"):
         b, n = [], []
         GATE._check_tags(tree_case, bad, b, n)
@@ -816,7 +826,7 @@ def run_usage_consistency_cases():
     real = {"--" + x for x in re.findall(
         r"add_argument\(\s*[\"']--([a-z0-9\-]+)", Path(GATE.__file__).read_text(encoding="utf-8"))}
 
-    check("usage 段解析出声明", bool(declared), f"解析结果为空，用例本身失效")
+    check("usage 段解析出声明", bool(declared), "解析结果为空，用例本身失效")
 
     ghost = sorted(declared - real)
     check("usage 无幽灵参数（声明了但 argparse 没有）", not ghost, f"幽灵参数：{ghost}")

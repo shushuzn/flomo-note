@@ -42,16 +42,17 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memo_util import (  # noqa: E402
+import net_util
+from cli_util import UsageError, cli_entry, force_utf8
+from memo_util import (
     concept_keywords,
     find_truncation,
     memo_signature,
     strip_trailing_br,
 )
-from cli_util import UsageError, cli_entry  # noqa: E402  命令行契约在叶子层，本模块只负责云端通道
-import net_util  # noqa: E402  出网通道与「请求是否已发出」的唯一实现
 
 ENDPOINT = "https://flomoapp.com/mcp"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -76,7 +77,7 @@ class FlomoError(RuntimeError):
     """
 
 
-def load_token():
+def load_token() -> tuple[str, str]:
     """返回 (token, 来源) 元组。
 
     优先级：项目 .mcp.json（配置事实源）优先，环境变量 FLOMO_TOKEN 仅在不存 .mcp.json 时作后备。
@@ -113,13 +114,17 @@ class CloudUnreachable(FlomoError):
               `memo_create` 重发就是第二张卡。此时只能报「需人工核对」。
     """
 
-    def __init__(self, message, *, request_sent):
+    def __init__(self, message: str, *, request_sent: bool) -> None:
         super().__init__(message)
         self.request_sent = bool(request_sent)
 
 
 class FlomoClient:
-    def __init__(self, token, timeout=30.0):
+    _headers: dict[str, str]
+    _session: str | None
+    _timeout: float
+
+    def __init__(self, token: str, timeout: float = 30.0) -> None:
         self._headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -128,7 +133,8 @@ class FlomoClient:
         self._session = None
         self._timeout = timeout
 
-    def _post(self, payload, with_session=True, idempotent=True):
+    def _post(self, payload: dict[str, Any], with_session: bool = True,
+             idempotent: bool = True) -> Any:
         headers = dict(self._headers)
         if with_session and self._session:
             headers["Mcp-Session-Id"] = self._session
@@ -158,7 +164,7 @@ class FlomoClient:
         return self._parse_sse(body, payload.get("id"))
 
     @staticmethod
-    def _parse_sse(body, want_id=None):
+    def _parse_sse(body: str, want_id: Any = None) -> Any:
         """解析 SSE，返回匹配 want_id 的 result；遇 error 直接抛错。
 
         want_id 由调用方显式传入（即本次请求的 JSON-RPC id）。**不能退化为
@@ -190,7 +196,7 @@ class FlomoClient:
         # JSON-RPC 通知（如 notifications/initialized）无 result/error，属正常空响应
         return None
 
-    def init(self):
+    def init(self) -> None:
         self._post(
             {
                 "jsonrpc": "2.0",
@@ -209,7 +215,7 @@ class FlomoClient:
             with_session=True,
         )
 
-    def tool(self, name, arguments=None):
+    def tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         payload = {
             "jsonrpc": "2.0",
             "id": next(_IDS),
@@ -220,7 +226,7 @@ class FlomoClient:
         # （判定与「不幂等」同源，见 WRITE_TOOLS 的注释）。
         return self._post(payload, idempotent=name not in WRITE_TOOLS)
 
-    def tools_list(self):
+    def tools_list(self) -> Any:
         """列出云端 MCP 暴露的全部工具（协议层元信息，不读任何卡片数据）。
 
         与 `tool()` 的区别：这是 JSON-RPC 的发现方法，不是工具调用，故不列入
@@ -230,12 +236,12 @@ class FlomoClient:
         return self._post(payload)
 
 
-def usage():
+def usage() -> int:
     print(__doc__)
     return 2
 
 
-def _extract_data(result):
+def _extract_data(result: object) -> tuple[dict[str, Any] | None, str]:
     """从一次 tools/call 回包取出结构化数据，返回 `(数据字典, 取不到的原因)`。
 
     MCP 的回包形态是 `{"content":[{"type":"text","text":"<内层JSON>"}], "structuredContent":{...}}`：
@@ -272,7 +278,7 @@ def _extract_data(result):
     return None, "既没有 structuredContent，也没有可解析的 content[].text 内层 JSON"
 
 
-def tool_data(result):
+def tool_data(result: object) -> dict[str, Any]:
     """结构化数据；取不到即抛 `FlomoError`（读路径出口：读不到必须当场知道）。"""
     data, why = _extract_data(result)
     if data is None:
@@ -280,12 +286,12 @@ def tool_data(result):
     return data
 
 
-def tool_data_or_none(result):
+def tool_data_or_none(result: object) -> dict[str, Any] | None:
     """结构化数据；取不到返回 None（写后回读出口：只许标未知，不许抛）。"""
     return _extract_data(result)[0]
 
 
-def brief_text(name, payload):
+def brief_text(name: str, payload: object) -> str | None:
     """把一次工具返回压成可核对的短表（供 `--brief`）。
 
     用途只有一个：查重/复盘时「发现有哪些卡」。故只给 id、字数、标签与前两行签名，
@@ -341,7 +347,7 @@ def brief_text(name, payload):
     return None
 
 
-def _result_memos(result):
+def _result_memos(result: object) -> list[Any]:
     """从 flomo 工具返回中提取 memos 列表。
 
     回包解析走 `tool_data`（唯一实现）；取不到结构化数据即抛错——不返回空列表。
@@ -353,7 +359,7 @@ def _result_memos(result):
     return memos if isinstance(memos, list) else []
 
 
-def _exact_content_dup(client, content):
+def _exact_content_dup(client: FlomoClient, content: str) -> str | None:
     """幂等保护：写前查重，返回与 content 同签名（标签行+概念名行）的既有 memo id，否则 None。
 
     用多个候选关键词（概念名核心段 / 标签二级词）逐次检索命中候选，
@@ -377,7 +383,8 @@ def _exact_content_dup(client, content):
     return None
 
 
-def find_gate_credential(sig, gate_dir=None):
+def find_gate_credential(sig: dict[str, str] | None,
+                        gate_dir: Path | str | None = None) -> tuple[Path | None, Any]:
     """在全部闸门凭证里按签名查找，返回 `(命中的路径或 None, 最新凭证签名)`。
 
     不能只看最新一份：批次发布一次给 N 张卡各留一份凭证，按 mtime 只取最新会让
@@ -416,12 +423,12 @@ _AUTO_MAILTO = re.compile(r"\[([^\[\]\n]+)\]\(mailto:\1\)")
 
 # 读接口把换行与标签行回成 `…<br>` 的形态，全库一致，属平台外层的渲染记号。
 # 剥离口径收敛在 `memo_util.strip_trailing_br`（签名、形态检查共用同一份实现）。
-def _strip_trailing_br(line):
+def _strip_trailing_br(line: str | None) -> str:
     """剥掉一行末尾的 `<br>` 串；写侧与读侧共用同一口径。"""
     return strip_trailing_br(line)
 
 
-def _norm_body(text):
+def _norm_body(text: str | None) -> str:
     """回读比对用归一化：**平台自有的渲染差异一律不参与比对**。
 
     差异分两类，都不由写入方决定，因此不该让回读判失败：
@@ -471,7 +478,7 @@ def _norm_body(text):
     )
 
 
-def readback_check(client, memo_id, written):
+def readback_check(client: FlomoClient, memo_id: str, written: str) -> tuple[bool, str]:
     """写云后按 id 回读全文，与写入正文逐字比对（H11 的回读验收）。
 
     返回 `(ok, detail)`。这件事必须机械做：写操作返回 id 只证明「请求被受理」，
@@ -540,7 +547,7 @@ def _load_arguments(argv: list[str]) -> dict:
 RETIRE_TAG = "#待清理"
 
 
-def is_retire_skeleton(content):
+def is_retire_skeleton(content: str | None) -> bool:
     """H23 退场骨架的**唯一合法形态**：`#待清理` + 概念名 + 「原标签/原字数」一行。
     判得死一点：首行必须是退场标签；其余非空行 ≤2 且不得以 `#` 开头；全文 ≤300 字符。
     任何一条不满足就落回签名闸门——骨架是容器，不许当正文通道。"""
@@ -555,10 +562,8 @@ def is_retire_skeleton(content):
     return not any(ln.startswith("#") for ln in rest)
 
 
-def main():
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+def main() -> int:
+    force_utf8()
     raw_argv = sys.argv[1:]
     brief = "--brief" in raw_argv
     argv = [a for a in raw_argv if a != "--brief"]
@@ -567,15 +572,24 @@ def main():
     name = argv[0]
     # 先判用法、再连云端：参数写错时不发握手请求，错误也更早落地
     arguments = _load_arguments(argv)
-    token, src = load_token()
+    token, _src = load_token()
     client = FlomoClient(token)
     client.init()
     if name in WRITE_TOOLS:
         sys.stderr.write(f"[注意] {name} 是写操作，调用前应已征得用户明确授权。\n")
-    # 写前最后一道闸：正文里若含截断占位符（`...[此处省略N字]...`），发出去就是把
+    # 写前第一道闸：正文里若含截断占位符（`...[此处省略N字]...`），发出去就是把
     # 「内容缺失」永久固化，而且写后回读逐字对账**发现不了**——它比的是同一段坏文本。
-    # 故拦在发请求之前，退出码 4（内容受损，与网络失败、参数错、闸门不过都区分开）。
+    # 故拦在发请求之前，也排在闸门凭证之前：内容本身受损时，「缺哪份凭证」不是首要
+    # 诊断。退出码 4（内容受损，与网络失败、参数错、闸门不过都区分开）。
     if name in ("memo_create", "memo_update"):
+        marks = find_truncation(arguments.get("content") or "")
+        if marks:
+            sys.stderr.write(
+                f"[失败] 正文含截断占位符 {marks[0]}，拒绝写入（退出码 4）。\n"
+                "  检索类回包（memo_search / memo_recommended）会把长正文中段挖掉，\n"
+                "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
+            )
+            return 4
         # 强制闸门凭证：没有过sop_gate的卡片一律拒绝写云
         # 防止绕过publish.py直接写云导致跳过查重/搜索/质检
         gate_dir = Path(__file__).parent.parent / ".sop_gate"
@@ -623,14 +637,6 @@ def main():
                     f"  禁止用旧凭证写新卡。\n"
                 )
                 return 5
-            marks = find_truncation(arguments.get("content") or "")
-            if marks:
-                sys.stderr.write(
-                    f"[失败] 正文含截断占位符 {marks[0]}，拒绝写入（退出码 4）。\n"
-                    "  检索类回包（memo_search / memo_recommended）会把长正文中段挖掉，\n"
-                    "  只应拿来挑 id。请用 memo_batch_get 现取全文后重新成稿。\n"
-                )
-                return 4
             # 自动还原 batch_get 读回时 flomo 存储层插入的 <br>：
             # 读回的 content 里换行已被转成 <br>，若直接拼接写回会再叠一层，
             # 变成 <br><br>（多余空行）。写前统一还原成换行，调用方无需手动清洗。
@@ -647,7 +653,7 @@ def main():
     # 正文逐字相同的卡片则直接复用其 id、不再新建。无论 create 被触发几次，
     # 第二次起都会命中既有卡，杜绝重复建卡。
     if name == "memo_create":
-        dup = _exact_content_dup(client, arguments.get("content"))
+        dup = _exact_content_dup(client, arguments.get("content") or "")
         if dup:
             sys.stderr.write(f"[幂等] 已存在正文相同的 memo id={dup}，复用不新建\n")
             print(json.dumps({"idempotent": True, "reused_id": dup}, ensure_ascii=False))
