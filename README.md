@@ -136,6 +136,7 @@ flomo-note/
 | `push_skill.sh` | 文档改动强制推送（提交 + 推送 + 远端 HEAD 回读核对） |
 | `sync_skill.sh` | 把仓库 `SKILL.md` 同步到实际被加载的技能目录；`--check` 只比对（审计用），不一致即非 0 |
 | `rss_store.py` | RSS 条目的本地存储与状态：读/未读、按 id 或链接标记已读、保留期清理。**未读满 7 天删、已读满 1 天删**（`gc()` 是唯一实现）。「读过」只认显式 `mark_read`——不推断处理痕迹，判据是「按 SOP 处理过了」。子命令 `list` / `mark-read` / `gc` / `counts` |
+| `rss_batch.py` | 批次备料与收口：`prepare` 先拉取再取 N 条未读、逐条抓正文并写 manifest；`done` 按 manifest 标记已读。只备料不判断价值，抓取失败记 `fetched=false` 且退出码非 0 |
 | `rss_fetch.py` | 从 `feeds.opml`（阅读器导出的订阅清单）拉取 RSS 2.0 / Atom，归一后写入 `rss_store`，末尾自动跑保留期清理。单源失败只记账继续跑（汇总后退出码 2），一个源挂了不拖垮其余源 |
 
 ### 取件与通道
@@ -339,6 +340,25 @@ python3 scripts/rss_store.py mark-read "https://example.com/article"
 |------|------|------|
 | 未读 | `read_at IS NULL` | 入库满 7 天删除 |
 | 已读 | 标记过 `mark-read` | 标记满 1 天删除 |
+
+### 批次处理
+
+素材多的时候不要一条条人肉挑，用批次机制把机械部分串起来：
+
+```bash
+# 备料：先拉取 → 取 10 条未读 → 逐条抓正文落 _tmp/ → 写 manifest
+python3 scripts/rss_batch.py prepare
+
+# 按 manifest 逐条走 SOP（哪条建卡、哪条退出留痕由你判，脚本不判断价值）
+
+# 收口：把处理过的标记已读（all = 整批，或给编号/链接挑）
+python3 scripts/rss_batch.py done all
+python3 scripts/rss_batch.py done 3 7
+```
+
+manifest 落在 `_tmp/rss_batch.json`，每条带标题、链接、本地正文路径与抓取是否成功。**抓取失败的条目 `fetched=false` 且 prepare 退出码非 0**——那种条目判不了，不要标记已读，下次会重新进批。
+
+`--size` 改一批几条（默认 10），`--feed` 只取某个源，`--no-fetch` 跳过拉取（仅调试用）。
 
 **没有自动拉取**：本环境的 cron 未运行（proot 下无 init 拉起），项目内不含任何定时设施，拉取靠调用方触发。`rss_fetch.py` 会在每次运行时报告距上次拉取多久，超过 7 天（未读保留期）会提示「未读条目可能正在过期」；`--if-older-than N` 可让它在不足 N 小时时直接跳过，便于被高频调用而不重复劳动。
 
