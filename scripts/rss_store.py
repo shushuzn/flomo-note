@@ -135,13 +135,22 @@ def mark_read(conn: sqlite3.Connection, keys: list[str]) -> tuple[list[str], lis
 
 
 def list_items(conn: sqlite3.Connection, *, unread_only: bool = False,
-               limit: int = 50) -> list[dict]:
-    """按抓取时间倒序列条目（新的在前）。"""
+               feed: str = "", limit: int = 50) -> list[dict]:
+    """按抓取时间倒序列条目（新的在前）。`feed` 按源地址子串过滤。"""
     sql = "SELECT id, feed, title, link, author, published, fetched_at, read_at FROM items"
+    where: list[str] = []
+    args: list[object] = []
     if unread_only:
-        sql += " WHERE read_at IS NULL"
+        where.append("read_at IS NULL")
+    if feed:
+        # 子串而非全等：源地址带查询参数时（?format=rss 之类）全等很难打中
+        where.append("instr(feed, ?) > 0")
+        args.append(feed)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY fetched_at DESC, id LIMIT ?"
-    return [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
+    args.append(limit)
+    return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
 
 
 def gc(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict:
@@ -177,6 +186,8 @@ def counts(conn: sqlite3.Connection) -> dict:
 SPEC = [
     Opt("--db", "db", default=DEFAULT_DB, hint="（可用 --db 指定别的库文件）"),
     Opt("--unread", "unread", "flag"),
+    Opt("--feed", "feed", default="",
+        hint="（源地址子串，多源时只看其中一个）"),
     Opt("--limit", "limit", "int", low=1, high=1000, default=50),
 ]
 
@@ -196,10 +207,13 @@ def main(argv: list[str] | None = None) -> int:
                   f"（未读早于 {result['unread_cut'][:10]}、"
                   f"已读早于 {result['read_cut'][:10]}）")
         elif cmd == "list":
-            rows = list_items(conn, unread_only=opts["unread"], limit=opts["limit"])
+            rows = list_items(conn, unread_only=opts["unread"], feed=opts["feed"],
+                              limit=opts["limit"])
             for row in rows:
                 flag = "未读" if row["read_at"] is None else f"已读 {row['read_at'][:10]}"
-                print(f"{row['id'][:8]} {flag} | {row['title'][:60]} | {row['link']}")
+                # 带上来源：多源时「这条是谁给的」决定了值不值得信，省不掉
+                print(f"{row['id'][:8]} {flag} | {row['title'][:44]}"
+                      f" | {row['feed'][:38]} | {row['link']}")
             print(f"[清单] {len(rows)} 条（库内共 {counts(conn)['total']} 条）")
         elif cmd == "mark-read":
             if not keys:

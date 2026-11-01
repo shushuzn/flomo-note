@@ -157,6 +157,25 @@ try:
                        "--dedup-log", good_dedup(tmp), "--reason", "不建卡"])
     check("拦截文案附正确流程指引", "fetch_article" in err, f"err={err[:200]!r}")
 
+    # ⑧ 术语与页面用词不一致时，报错要能指出页面上该取哪个词
+    #    （此前只报「疑似编造」，术语是自己组织的语言时指不到改正方向）
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("_ec", SCRIPT)
+    _ec = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_ec)
+
+    _page = ("IT之家 10 月 31 日消息，开着电动汽车到公共快充站补电，却发现充电位都被"
+             " Waymo 的无人驾驶出租车给占了。Waymo 拥有专门的车辆维护和充电基地，"
+             "然而部分无人驾驶出租车仍会使用公共快充站。")
+    _near = _ec._nearby_runs(_page, "Waymo 车辆占用公共充电桩")
+    check("术语与页面用词不一致时给出可改的候选词", _near and "公共快充站" in _near[0],
+          f"near={_near}")
+    check("候选词不含术语本身已命中的整段", "车辆占用公共充电桩" not in _near,
+          f"near={_near}")
+    check("无字符重合时返回空建议", _ec._nearby_runs(_page, "完全不相关的词") == [],
+          f"near={_ec._nearby_runs(_page, '完全不相关的词')}")
+    check("候选词数量受限", len(_ec._nearby_runs(_page, "Waymo 充电桩 无人驾驶出租车")) <= 3)
+
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

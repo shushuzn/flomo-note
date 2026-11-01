@@ -71,6 +71,25 @@ class RssStoreTest(unittest.TestCase):
         self.assertEqual(hit, [])
         self.assertEqual(miss, ["http://nope"])
 
+    def test_list_shows_feed_origin(self) -> None:
+        rss_store.add_items(self.conn, FEED, [_item("http://a/1")])
+        rss_store.add_items(self.conn, "http://other/feed", [_item("http://a/2")])
+        rows = rss_store.list_items(self.conn)
+        self.assertEqual({r["feed"] for r in rows}, {FEED, "http://other/feed"})
+
+    def test_list_filters_by_feed_substring(self) -> None:
+        rss_store.add_items(self.conn, FEED, [_item("http://a/1")])
+        rss_store.add_items(self.conn, "http://other/feed", [_item("http://a/2")])
+        rows = rss_store.list_items(self.conn, feed="other")
+        self.assertEqual([r["link"] for r in rows], ["http://a/2"])
+
+    def test_list_feed_filter_combined_with_unread(self) -> None:
+        rss_store.add_items(self.conn, FEED, [_item("http://a/1")])
+        rss_store.add_items(self.conn, "http://other/feed", [_item("http://a/2")])
+        rss_store.mark_read(self.conn, ["http://a/2"])
+        rows = rss_store.list_items(self.conn, unread_only=True, feed="other")
+        self.assertEqual(rows, [])
+
     def test_list_unread_only(self) -> None:
         rss_store.add_items(self.conn, FEED, [_item("http://a/1"), _item("http://a/2")])
         rss_store.mark_read(self.conn, ["http://a/1"])

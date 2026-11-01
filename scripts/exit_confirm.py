@@ -34,6 +34,31 @@ def fetch_page(url: str, timeout: int = 8) -> str:
         return ""
 
 
+def _nearby_runs(page_text: str, term: str, limit: int = 3) -> list[str]:
+    """从页面里挑出与术语有字符交集的连续中文串，按重合度降序，供报错时建议。
+
+    只做「提示该取哪个词」，不参与放行判定——判据仍是 chunks 必须整段命中。
+    重合度用字符交集大小衡量：交得越多越可能是页面上对应的那个词。
+    """
+    term_chars = set(re.sub(r"[\s\W_]+", "", term))
+    if not term_chars:
+        return []
+    runs = re.findall(r"[\u4e00-\u9fa5]{2,}", page_text[:20000])
+    scored = []
+    for run in runs:
+        overlap = len(set(run) & term_chars)
+        if overlap >= 2:
+            scored.append((overlap, run))
+    scored.sort(key=lambda pair: (-pair[0], len(pair[1])))
+    out: list[str] = []
+    for _, run in scored:
+        if run not in out:
+            out.append(run)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--objects", required=True, help="逗号分隔的对象清单")
@@ -104,9 +129,15 @@ def main():
                     hit = True
                     break
             if not hit and chunks:
+                # 报错要能直接改：给出页面里与术语有字符交集的连续中文串，让人一眼
+                # 看出该取哪一个。此前只报 chunks[0] 并说「疑似编造」——术语是自己
+                # 组织的语言时（如「车辆占用公共充电桩」对页面的「充电位都被无人驾驶
+                # 出租车占了」），那条提示既吓人又指不到改正方向，只能靠反复试。
+                near = _nearby_runs(page_text, term)
+                hint = ("；页面里相关的词有：" + "、".join(near)) if near else ""
                 errors.append(
-                    f"术语 {term} 的关键词「{chunks[0]}」在URL页面里找不到——"
-                    f"search_url指向的页面和这个对象无关，疑似编造"
+                    f"术语 {term} 在 search_url 页面里找不到对应的中文词——"
+                    f"术语要取页面原词的连续片段，不能自己组织语言{hint}"
                 )
 
     # 3. dedup
