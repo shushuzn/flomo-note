@@ -9,6 +9,7 @@
   python scripts/scan_concept_duplication.py                    # 默认标签簇抽样
   python scripts/scan_concept_duplication.py --tags "AI/RAG,科技/开源"
   python scripts/scan_concept_duplication.py --tags @tags.txt   # 标签多到超命令行长度
+  python scripts/scan_concept_duplication.py --tags "商业/企业" --full    # 翻页取尽，大簇不缩水
   python scripts/scan_concept_duplication.py --limit 30 --json _tmp/dupes.json
 
 退出码：
@@ -31,6 +32,8 @@ _OPTS = [
         hint="；逗号分隔的标签路径；标签多到超命令行长度时用 @文件"),
     Opt("--limit", "limit", "int", low=1, high=50, default=50,
         hint="；每个标签簇取多少条（服务端单次上限 50）"),
+    Opt("--full", "full", "flag",
+        hint="；按日期游标把簇取尽（默认只取最新一页，大簇的「0 组」只覆盖这批卡）"),
     Opt("--json", "json_out", default=""),
 ]
 
@@ -91,11 +94,11 @@ def main(argv=None, client=None):
     else:
         c = client
     # 标签解析与取卡逻辑同源（scan_qualified_concepts），不另写第二份实现。
-    seen, failed, truncated = collect_memos(c, tags, ns["limit"])
+    seen, failed, truncated = collect_memos(c, tags, ns["limit"], full=ns["full"])
     if truncated:
         print(f"[warn] {len(truncated)} 个标签簇只取到最新 {ns['limit']} 张"
-              f"（{', '.join(truncated)}）——同名簇的结论只覆盖这批卡，要全量请改用"
-              "scan_qualified_concepts.py --full", file=sys.stderr)
+              f"（{', '.join(truncated)}）——同名簇的结论只覆盖这批卡，"
+              "要全量请加 --full", file=sys.stderr)
     if failed:
         print(f"[warn] {len(failed)} 个标签簇取数失败：{', '.join(failed)}——"
               f"下面的同名簇只在已取到的卡里成立，不代表其余簇没有问题", file=sys.stderr)
