@@ -305,6 +305,46 @@ def run_client_cases():
         stop()
 
 
+class _UaEcho(http.server.BaseHTTPRequestHandler):
+    """把收到的 User-Agent 回显出来，用来验证默认头真的发出去了。"""
+    seen = ""
+
+    def _handle(self):
+        _UaEcho.seen = self.headers.get("User-Agent") or ""
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = _handle
+
+    def log_message(self, *args):
+        pass
+
+
+def _ua_cases():
+    url, stop = _serve(_UaEcho)
+    try:
+        # ① 不传 headers 也必须带浏览器 UA：否则 probe 用浏览器 UA 探通、
+        #    request 用 Python 默认 UA 抓取被 403，「探测通过、抓取被拦」
+        #    这种假象没人能发现（实测 dev.to/feed 就是这样被拦的）。
+        NU.request(url, timeout=10)
+        check("不传 headers 也带默认 UA", _UaEcho.seen == NU.user_agent(),
+              f"seen={_UaEcho.seen!r}")
+        # ② 调用方显式指定时以调用方为准，默认头只垫不抢
+        _UaEcho.seen = ""
+        NU.request(url, timeout=10, headers={"User-Agent": "my-agent/1.0"})
+        check("显式 UA 覆盖默认值", _UaEcho.seen == "my-agent/1.0",
+              f"seen={_UaEcho.seen!r}")
+        # ③ 探测与抓取同源：probe 发的 UA 必须和 request 的一样
+        NU.probe(url, timeout=10)
+        check("probe 与 request 用同一个 UA", _UaEcho.seen == NU.user_agent(),
+              f"seen={_UaEcho.seen!r}")
+    finally:
+        stop()
+
+
 def main():
     base, stop = _serve(_Echo)
     try:
@@ -313,6 +353,7 @@ def main():
     finally:
         stop()
     run_client_cases()
+    _ua_cases()
     print("---")
     ok = all(RESULTS)
     print(f"{'全部通过' if ok else '存在失败用例'}（{len(RESULTS)} 项）")

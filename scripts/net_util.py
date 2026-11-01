@@ -91,6 +91,22 @@ def _channel(direct: bool) -> str:
     return "直连" if direct else f"环境代理（{proxy_label()}）"
 
 
+def _default_headers() -> dict[str, str]:
+    """抓取与探测共用的默认请求头。
+
+    两者必须同源：`probe` 拿浏览器 UA 探通道、`request` 拿 Python 默认 UA 抓内容时，
+    会出现「探测通过、抓取被拦」的假象——人以为通道没问题，转而去查别的原因，而
+    真实原因只是 UA 被站点拒了。此前 `user_agent()` 的文档写着要避免这种假象，
+    但 `request()` 从没把它加进去，等于那句承诺没有实现。
+    """
+    return {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "identity",
+    }
+
+
 def request(
     url: str,
     *,
@@ -122,10 +138,12 @@ def request(
     sent_last = False
     for index, direct in enumerate(plan):
         label = _channel(direct)
+        # 默认头先垫上、调用方的再盖：既让不传 headers 的抓取也带浏览器 UA，又不
+        # 挡住调用方显式指定（如 flomo 写云要的 Content-Type、部分站点要换 UA）。
         req = urllib.request.Request(
             url,
             data=data,
-            headers=headers or {},
+            headers={**_default_headers(), **(headers or {})},
             method="POST" if data is not None else "GET",
         )
         try:
@@ -156,15 +174,7 @@ def probe(url: str, *, timeout: float = 15.0, direct: bool = True) -> dict:
     只有连接被拒 / 超时 / DNS 失败才算不通。
     """
     label = "直连" if direct else "环境代理"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": _USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "identity",
-        },
-    )
+    req = urllib.request.Request(url, headers=_default_headers())
     started = time.monotonic()
     try:
         with _opener(direct).open(req, timeout=timeout) as resp:
