@@ -6,6 +6,13 @@
   2. 页面内容里确实包含该对象关键词
   3. 页面标题/内容里确实出现我写的title片段
 这样手写假URL直接被拦。
+
+**抓取必须走 fetch_article.py**：本脚本早期自带一份裸 urllib 抓取，UA 与请求头
+都很单薄，遇到微信文章页这类反爬会被挡在「环境异常」验证页外——而
+fetch_article.py 走 net_util（完整浏览器头、多通道回落、站点专用选择器）能正常
+拿到全文。两套实现的后果是：**同一篇文章，写卡时抓得到、退出留痕时抓不到**，
+于是每条微信公众号来源都无法通过退出闸门，报错还指向「术语取错词」，与真实
+原因完全无关。故此处改为调用 fetch_article.py 取正文，不再自带抓取。
 """
 import argparse
 import json
@@ -17,21 +24,32 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-def fetch_page(url: str, timeout: int = 8) -> str:
-    """抓取页面文本，失败返回空串。"""
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read(500000).decode("utf-8", errors="replace")
-            # 剥HTML标签粗提取文本
-            text = re.sub(r"<script[^>]*>.*?</script>", " ", raw, flags=re.S | re.I)
-            text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.S | re.I)
-            text = re.sub(r"<[^>]+>", " ", text)
-            return text
-    except Exception:
-        return ""
+def fetch_page(url: str, timeout: int = 60) -> str:
+    """抓取页面正文，失败返回空串。
+
+    复用 fetch_article.py：它自带站点选择器、出网通道回落与完整请求头，是仓库
+    里唯一「能稳定抓到正文」的实现。自带一份裸抓取会与它得出不同结果——典型
+    如微信文章页，fetch_article 抓得到全文，裸抓取只拿到「环境异常」验证页。
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path as _Path
+    script = _Path(__file__).resolve().parent / "fetch_article.py"
+    with tempfile.TemporaryDirectory() as tmp:
+        out = _Path(tmp) / "page.txt"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(script), url, "--out", str(out)],
+                capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+        if proc.returncode != 0 or not out.exists():
+            return ""
+        try:
+            return out.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
 
 
 def _nearby_runs(page_text: str, term: str, limit: int = 3) -> list[str]:
