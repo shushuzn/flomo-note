@@ -102,6 +102,40 @@ class BatchTest(unittest.TestCase):
             code = RB.main(argv)
         return code, out.getvalue(), err.getvalue()
 
+    def _fetch_out(self, added):
+        return f"[入库] 合计新增 {added}、重复 0；库内 {added} 条（未读 {added}）\n[清理] 删除 0 条\n"
+
+    def test_newly_added_parses_count(self):
+        self.assertEqual(RB._newly_added(self._fetch_out(36)), 36)
+        self.assertEqual(RB._newly_added(self._fetch_out(0)), 0)
+
+    def test_newly_added_unparsable_is_none(self):
+        # 取不到不能当成 0：那会让「输出格式变了」和「本轮真没新货」表现一致
+        self.assertIsNone(RB._newly_added("没有这一行"))
+
+    def test_batch_size_follows_fresh(self):
+        opts = {"size": None, "max_size": 100}
+        self.assertEqual(RB._batch_size(opts, 36), 36)
+
+    def test_batch_size_capped_at_max(self):
+        opts = {"size": None, "max_size": 100}
+        self.assertEqual(RB._batch_size(opts, 260), 100)
+        opts2 = {"size": None, "max_size": 20}
+        self.assertEqual(RB._batch_size(opts2, 36), 20)
+
+    def test_batch_size_explicit_size_wins(self):
+        opts = {"size": 7, "max_size": 100}
+        self.assertEqual(RB._batch_size(opts, 36), 7)
+
+    def test_batch_size_unparsable_falls_back_to_max(self):
+        opts = {"size": None, "max_size": 100}
+        self.assertEqual(RB._batch_size(opts, None), 100)
+
+    def test_zero_fresh_prepares_nothing(self):
+        self._add("http://a/1")
+        code, _out, _err = self._prepare("--size", "5", "--no-fetch")
+        self.assertEqual(code, 0)
+
     def test_prepare_writes_manifest(self):
         for i in range(3):
             self._add(f"http://a/{i}", f"条目{i}")

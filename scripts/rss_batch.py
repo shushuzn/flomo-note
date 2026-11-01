@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -31,8 +32,13 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_MANIFEST = PROJECT_ROOT / "_tmp" / "rss_batch.json"
 
 SPEC = [
-    Opt("--size", "size", "int", low=1, high=50, default=10,
-        hint="（一批几条，默认 10）"),
+    # 不给 --size 时按「本次拉取新增了几条」定批次大小：隔多久拉一次、每轮进多少
+    # 新货本就不固定，写死个数要么剩一堆不处理、要么为凑数去翻旧未读。上限由
+    # --max-size 控制，防止某轮源集体爆发把批次撑到无法收尾。
+    Opt("--size", "size", "int", low=1, high=1000, default=None,
+        hint="（固定一批几条；不给则按本次拉取新增数自动定）"),
+    Opt("--max-size", "max_size", "int", low=1, high=100, default=100,
+        hint="（自动模式下的批次上限，默认 100）"),
     Opt("--feed", "feed", default="", hint="（源地址子串，只取某个源的未读）"),
     Opt("--manifest", "manifest", default=str(DEFAULT_MANIFEST)),
     Opt("--db", "db", default=rss_store.DEFAULT_DB),
@@ -67,8 +73,36 @@ def _fetch_once(url: str) -> tuple[bool, str, str]:
     return True, local, title
 
 
+_NEWLY_ADDED_RE = re.compile(r"\[入库\] 合计新增 (\d+)")
+
+
+def _newly_added(fetch_out: str) -> int | None:
+    """从 rss_fetch 的输出里取本次新增条数；取不到返回 None。
+
+    取不到时不能当成 0：那会让「拉取输出格式变了」和「本轮真的没新货」表现一致，
+    后者应当跳过备料，前者应当暴露出来。"""
+    m = _NEWLY_ADDED_RE.search(fetch_out or "")
+    return int(m.group(1)) if m else None
+
+
+def _batch_size(opts: dict, fresh: int | None) -> int:
+    """定本批取多少条。
+
+    默认按本次新增数：隔多久拉一次、每轮进多少新货本就不固定，写死个数要么剩一堆
+    不处理、要么为凑数去翻旧未读。上限由 --max-size 兜住，防止某轮源集体爆发把
+    批次撑到收不了尾。"""
+    if opts.get("size") is not None:
+        return opts["size"]
+    if fresh is None:
+        # 拉取输出解析不出新增数：不猜，退回上限并把情况说清
+        print("[告警] 解析不到本次新增条数，按上限取", file=sys.stderr)
+        return opts["max_size"]
+    return min(fresh, opts["max_size"])
+
+
 def prepare(opts: dict) -> int:
     """拉取 → 取 N 条未读 → 抓正文 → 预查重 → 写 manifest。"""
+    fresh: int | None = None
     if not opts["no_fetch"]:
         cmd = [sys.executable, str(SCRIPT_DIR / "rss_fetch.py")]
         if opts["if_older_than"] is not None:
@@ -83,11 +117,16 @@ def prepare(opts: dict) -> int:
                   f"{(err.strip() or out.strip()).splitlines()[0] if (err.strip() or out.strip()) else ''}",
                   file=sys.stderr)
             return 1
+        fresh = _newly_added(out)
 
     conn = rss_store.connect(opts["db"])
     try:
+        size = _batch_size(opts, fresh)
+        if size == 0:
+            print("[批次] 本轮无新增，未读队列维持原样（要处理积压请显式给 --size）")
+            return 0
         rows = rss_store.list_items(conn, unread_only=True, feed=opts["feed"],
-                                    limit=opts["size"])
+                                    limit=size)
         if not rows:
             print("[批次] 没有未读条目可处理")
             return 0
