@@ -223,9 +223,30 @@ def run(memo_id: str, client=None, draft_path=None):
     return checks, info
 
 
+LAST_ID_FILE = Path(__file__).resolve().parent.parent / ".sop_gate" / "last_memo_id"
+
+
+def _resolve_id(raw: str) -> str:
+    """`--id -` 读 publish.py 落盘的那份，免得从输出里手抄一长串 base64。
+
+    抄错一位的现象是「memo not found」，而那个报分不清是抄错了还是卡真没写进去——
+    每次复核都要重抄一遍，是纯损耗。"""
+    if raw.strip() != "-":
+        return raw.strip()
+    try:
+        value = LAST_ID_FILE.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise SystemExit(f"[失败] 读不到 {LAST_ID_FILE}（{exc}）——先跑一次 publish.py 写卡，"
+                         f"或直接把 id 传给 --id")
+    if not value:
+        raise SystemExit(f"[失败] {LAST_ID_FILE} 是空的——先跑一次 publish.py 写卡")
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="写云后回读全文，做 H11 可机械判定的自查")
-    ap.add_argument("--id", required=True, help="卡片 id（写云回包里的 id）")
+    ap.add_argument("--id", required=True,
+                    help="卡片 id（写云回包里的 id）；给 - 表示读 publish.py 落盘的那份")
     ap.add_argument("--draft", help="本地草稿路径；给了就追加与草稿的逐字比对（同写路径口径）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（供自动化消费）")
     ap.add_argument("--show-body", action="store_true",
@@ -234,7 +255,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     try:
-        checks, info = run(args.id, draft_path=args.draft)
+        checks, info = run(_resolve_id(args.id), draft_path=args.draft)
     except Exception as e:  # noqa: BLE001 — 回读失败只影响本次自查，转成退出码
         print(f"[verify] 回读失败：{type(e).__name__}: {e}", file=sys.stderr)
         return 1

@@ -136,6 +136,29 @@ def test_success_chain():
         check("成功链：列出须人读项", "须人读" in out, out[-300:])
 
 
+def test_records_last_id():
+    """建卡与更新成功后都要把 id 落盘，供 verify_card / dedup 用 `--id -` 读。
+
+    不落盘就得从 stdout 手抄一长串 base64：抄错一位只表现为「memo not found」，
+    而那个报错分不清是抄错了还是卡真没写进去。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        PB.LAST_ID_FILE = Path(tmp) / ".sop_gate" / "last_memo_id"
+        draft, verify = with_draft(tmp)
+        exec_fn, _calls = make_exec()
+        run(["--draft", str(draft), "--verify", str(verify)], exec_fn)
+        check("建卡后落盘 id", PB.LAST_ID_FILE.exists()
+              and PB.LAST_ID_FILE.read_text(encoding="utf-8").strip() == "ABC",
+              PB.LAST_ID_FILE.read_text(encoding="utf-8") if PB.LAST_ID_FILE.exists() else "文件不存在")
+
+        # 更新路径同样要落盘：它的 id 来自 --update-id，不是回包，最容易漏
+        PB.LAST_ID_FILE.unlink()
+        run(["--draft", str(draft), "--verify", str(verify), "--update-id", "XYZ"], exec_fn)
+        check("更新后落盘 id", PB.LAST_ID_FILE.exists()
+              and PB.LAST_ID_FILE.read_text(encoding="utf-8").strip() == "XYZ",
+              PB.LAST_ID_FILE.read_text(encoding="utf-8") if PB.LAST_ID_FILE.exists() else "文件不存在")
+
+
 def test_gate_blocks():
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
@@ -1238,7 +1261,8 @@ if __name__ == "__main__":
                test_batch_next_steps, test_precheck_echoes_concept,
                test_batch_shared_line_blocks,
                test_batch_shared_line_ignores_short_and_tag_lines,
-               test_batch_overlap_note):
+               test_batch_overlap_note,
+               test_records_last_id):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

@@ -81,6 +81,10 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+# 最近一次写云成功的卡片 id：写在这里，供 verify_card / dedup 用 `--id -` 读，
+# 免得每次从输出里手抄一长串 base64——抄错一位就是「memo not found」，
+# 而报错看不出是抄错还是卡没写进去。目录与闸门凭证同源，已被 .gitignore 忽略。
+LAST_ID_FILE = PROJECT_ROOT / ".sop_gate" / "last_memo_id"
 PAYLOAD = PROJECT_ROOT / "_tmp" / "publish_payload.json"
 PY = sys.executable
 # 快照目录随 PAYLOAD 走（不预先绑定 `PAYLOAD.parent`：那样用例替换 PAYLOAD 后
@@ -732,6 +736,16 @@ def _precheck_target(run, memo_id: str, body: str, allow_rename: bool,
     return _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename)
 
 
+def _record_last_id(memo_id: str) -> None:
+    """把刚写成功的 id 落盘，供后续 verify_card / dedup 用 `--id -` 读。"""
+    try:
+        LAST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LAST_ID_FILE.write_text(memo_id.strip() + "\n", encoding="utf-8")
+    except OSError:
+        # 落盘失败不影响写云结果：调用方仍能从 stdout 读到 id
+        pass
+
+
 def _create_card(run, body: str, prefix: str = "") -> tuple[int, str, bool]:
     """建卡：只发一次。返回 (退出码, id, 是否幂等复用)。"""
     _step(prefix + "③ 建卡 memo_create（只发一次，失败不重发）")
@@ -755,6 +769,7 @@ def _create_card(run, body: str, prefix: str = "") -> tuple[int, str, bool]:
     m = _SUCCESS_RE.search(err)
     if m:
         print(f"[成功] id={m.group(1)}（{elapsed:.1f}s）")
+        _record_last_id(m.group(1))
         return 0, m.group(1), False
     # 幂等复用分支：stdout 是 {"idempotent": true, "reused_id": "..."}
     data = _cloud_json(out)
@@ -762,6 +777,7 @@ def _create_card(run, body: str, prefix: str = "") -> tuple[int, str, bool]:
     reused = bool(data.get("idempotent"))
     if memo_id:
         print(f"[幂等] 云端已有同签名卡，复用 id={memo_id}（未新建）")
+        _record_last_id(memo_id)
         return 0, memo_id, reused
     print("[失败] 回包里既无成功 id 也无幂等复用 id——按失败处理，禁止重发",
           file=sys.stderr)
@@ -787,6 +803,7 @@ def _update_card(run, memo_id: str, body: str, prefix: str = "") -> tuple[int, s
               "别人刚改的东西）", file=sys.stderr)
         return 4, "", False
     print(f"[成功] 已覆盖更新 id={memo_id}（{elapsed:.1f}s）")
+    _record_last_id(memo_id)
     return 0, memo_id, False
 
 

@@ -52,6 +52,24 @@ _OPTS = [
 ]
 
 
+def _resolve_anchor(raw: str) -> str:
+    """`--id -` 读 publish.py 落盘的那份。
+
+    与 verify_card 同一个理由：从输出里手抄一长串 base64，抄错一位只表现为
+    「memo not found」，分不清是抄错还是卡没写进去。"""
+    if raw.strip() != "-":
+        return raw.strip()
+    path = Path(__file__).resolve().parent.parent / ".sop_gate" / "last_memo_id"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise UsageError(f"读不到 {path}（{exc}）——先跑一次 publish.py 写卡，"
+                         f"或直接把 id 传给 --id")
+    if not value:
+        raise UsageError(f"{path} 是空的——先跑一次 publish.py 写卡")
+    return value
+
+
 def split_keywords(raw: str) -> list[str]:
     """拆关键词：半角/全角逗号、顿号、分号、换行都认；去空去重保序。"""
     out: list[str] = []
@@ -140,7 +158,7 @@ def main(argv: list[str] | None = None, client=None) -> int:
     ns, _pos = parse_options(args, _OPTS)
     keywords_raw = ns["keywords_raw"]
     tag = ns["tag"]
-    anchor = ns["anchor"]
+    anchor = _resolve_anchor(ns["anchor"])
     ids_raw = ns["ids_raw"]
     limit = ns["limit"]
     full = not ns["no_full"]
