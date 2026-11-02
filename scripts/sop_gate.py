@@ -447,9 +447,11 @@ def _concept_relation(cur, other):
     if a2 and a2 == b2:
         return "same"
     for x, y in ((a2, b2), (b2, a2)):
-        if x and y and x != y and len(x) >= 4 and x in y:
-            if len(y.replace(x, "", 1)) <= NEAR_EXTRA_MAX:
-                return "near"
+        # 两个条件必须同时成立才算 near：前者判「一个是另一个的子串」（对象名被加长），
+        # 后者判加长的部分够短（`某甲批评 Anthropic：…` 是句子，不算同一个对象）。
+        if (x and y and x != y and len(x) >= 4 and x in y
+                and len(y.replace(x, "", 1)) <= NEAR_EXTRA_MAX):
+            return "near"
     return ""
 
 

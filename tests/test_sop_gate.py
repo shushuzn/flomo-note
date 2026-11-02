@@ -555,8 +555,8 @@ class _PagedClient(FakeClient):
 
 
 # 日期按格式串拼，避免在技能文档里写出具体日期（H28 的日期扫描对 tests 同样生效）。
-_DAY_NEW = "%04d-%02d-%02d" % (2026, 10, 30)
-_DAY_OLD = "%04d-%02d-%02d" % (2026, 9, 1)
+_DAY_NEW = f"{2026}-{10:02d}-{30:02d}"
+_DAY_OLD = f"{2026}-{9:02d}-{1:02d}"
 
 
 def _memo(mid, concept, tagline="#AI/公司", day=_DAY_NEW):
