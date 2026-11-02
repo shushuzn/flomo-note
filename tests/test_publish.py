@@ -319,14 +319,40 @@ def test_update_rename_blocked():
 def test_update_rename_allowed():
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
-        draft, verify = with_draft(tmp)
+        draft, verify = with_draft(tmp, "#AI/测试\n概念名称说明\n\n正文")
         exec_fn, calls = make_exec(
-            {("flomo_client.py", "memo_batch_get"): (0, _other_card(), "")})
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card("概念名称"), "")})
         code, out, _err = run(["--draft", str(draft), "--verify", str(verify),
                                "--update-id", "ABC", "--allow-rename"], exec_fn)
         check("显式改名：退出码 0", code == 0, code)
         check("显式改名：确实发了 update", "memo_update" in tools(calls), tools(calls))
         check("显式改名：打印改名放行", "[放行] 概念名改名" in out, out[-400:])
+        check("显式改名：说明新正文留住了旧指称",
+              "保留了旧指称" in out, out[-400:])
+
+
+def test_update_object_replace_blocked():
+    """改名授权只管「同一对象换叫法」，不管「换了对象」。
+
+    真事故：一张「社区模型速递」（周报汇编）先落了卡，随后想用 --allow-rename +
+    --allow-content-loss 原地改成其中一个模型——旧卡整篇消失，只剩快照可考。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        draft, verify = with_draft(tmp, "#AI/大模型\nMistral Large 4\n\n总参数约 1 万亿")
+        exec_fn, calls = make_exec(
+            {("flomo_client.py", "memo_batch_get"):
+                 (0, _other_card("魔搭社区模型速递"), "")})
+        code, _out, err = run(["--draft", str(draft), "--verify", str(verify),
+                               "--update-id", "ABC", "--allow-rename",
+                               "--allow-content-loss"], exec_fn)
+        check("跨对象覆盖：退出码 6（未写云）", code == 6, code)
+        check("跨对象覆盖：一个字节不发 update",
+              "memo_update" not in tools(calls), tools(calls))
+        check("跨对象覆盖：说清这是顶替另一个对象",
+              "顶替另一个对象" in err, err)
+        check("跨对象覆盖：给出正确做法（另建卡 + 旧卡退场）",
+              "退场" in err and "另建" in err, err)
 
 
 def test_update_target_missing():
@@ -1109,9 +1135,10 @@ def test_batch_rename_column():
     with tempfile.TemporaryDirectory() as tmp:
         PB.PAYLOAD = Path(tmp) / "payload.json"
         rows = _drafts(tmp, 1)
+        rows[0][0].write_text("#AI/测试\n概念1模型\n\n正文1", encoding="utf-8")
         man = _manifest(tmp, [f"{rows[0][0]} | {rows[0][1]} | ABC | rename"])
         exec_fn, calls = make_exec(
-            {("flomo_client.py", "memo_batch_get"): (0, _other_card("旧概念"), "")})
+            {("flomo_client.py", "memo_batch_get"): (0, _other_card("概念1"), "")})
         code, out, _err = run(["--batch", str(man)], exec_fn)
         check("批次改名：退出码 0", code == 0, code)
         check("批次改名：打印改名放行", "概念名改名" in out, out[-600:])

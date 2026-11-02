@@ -667,7 +667,47 @@ def _read_target(run, memo_id: str, step_title: str, prefix: str = "") -> tuple[
     return 0, (memos[0].get("content", "") or ""), bool(memos[0].get("content_truncated"))
 
 
-def _check_identity(cloud_head: list[str], local_head: list[str], allow_rename: bool) -> int:
+def _object_continuity(old_concept: str, before: str, new_concept: str,
+                       body: str, min_len: int = 4) -> str:
+    """改名时判断是不是**同一个对象**：返回两边共有的指称片段，无则空串。
+
+    只判「旧对象在新卡里还认得出来吗」，不判新卡写得好不好。三种命中都算留住：
+    新概念名出现在旧正文里、旧概念名出现在新正文里、两边有长度 ≥4 的公共片段
+    （归并式改名常是截短：`签证代办服务纠纷` → `签证代办`）。
+    空白与全角空格先归一，否则跨行的同一个词会被判成两个。
+    """
+    def norm(text: str) -> str:
+        return re.sub(r"[\s\u3000]+", "", text or "")
+
+    oc, nc = norm(old_concept), norm(new_concept)
+    ob, nb = norm(before), norm(body)
+    if nc and nc in ob:
+        return nc
+    if oc and oc in nb:
+        return oc
+    return _longest_common(oc, nb, min_len) or _longest_common(nc, ob, min_len)
+
+
+def _longest_common(a: str, b: str, min_len: int = 4) -> str:
+    """两个串的最长公共连续子串（短于 min_len 视为没有）。"""
+    if not a or not b:
+        return ""
+    best_len, best_end = 0, 0
+    prev = [0] * (len(b) + 1)
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        ai = a[i - 1]
+        for j in range(1, len(b) + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best_len:
+                    best_len, best_end = cur[j], i
+        prev = cur
+    return a[best_end - best_len:best_end] if best_len >= min_len else ""
+
+
+def _check_identity(cloud_head: list[str], local_head: list[str], allow_rename: bool,
+                   before: str = "", body: str = "") -> int:
     """比对目标卡与草稿的概念名，返回 0 放行 / 6 阻塞。**判据只写这一处。**
 
     覆盖的错法是「把 A 的正文盖到 B 上」，B 的原文即刻消失、只能凭记忆重建；而 id 是人工
@@ -698,7 +738,21 @@ def _check_identity(cloud_head: list[str], local_head: list[str], allow_rename: 
                   f"自行确认后带开关重跑，不必停下来等授权",
                   file=sys.stderr)
             return 6
-        print(f"[放行] 概念名改名：「{cloud_head[1]}」→「{local_head[1]}」（改名授权）")
+        # 改名授权只管「同一个对象换了个叫法」，不管「换了个对象」：后者是把 A 卡
+        # 的正文整篇换成 B 对象，A 就此消失、只能凭快照重建（H9 要的是并入主卡＋
+        # 源卡退场，不是原地顶替）。判据是两边留得下可辨认的指称——旧概念名出现在
+        # 新正文里，或新旧名字与对方正文有 ≥4 字的公共片段（`签证代办服务纠纷` →
+        # `签证代办` 这类归并留得下，`模型速递` → `Mistral Large 4` 留不下）。
+        span = _object_continuity(cloud_head[1], before, local_head[1], body)
+        if not span:
+            print(f"[阻塞] 概念名从「{cloud_head[1]}」改成「{local_head[1]}」，但新正文里"
+                  f"找不到旧对象的任何指称——这不是改名，是拿这张卡顶替另一个对象，"
+                  f"旧卡的内容会整篇消失。跨对象应另建卡，旧卡按 H9/H23 并入后退场；"
+                  f"确属同一对象的改名，请让新正文保留旧名或其主体词",
+                  file=sys.stderr)
+            return 6
+        print(f"[放行] 概念名改名：「{cloud_head[1]}」→「{local_head[1]}」"
+              f"（改名授权，新正文保留了旧指称「{span}」）")
         return 0
     print(f"[通过] 目标卡概念名「{cloud_head[1]}」")
     return 0
@@ -713,7 +767,8 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool,
     code, before, truncated = _read_target(run, memo_id, "③ 目标卡确认 memo_batch_get", prefix)
     if code:
         return code, ""
-    if _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename):
+    if _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename,
+                       before, body):
         return 6, ""
     # 回读被截断时，快照只是原文的前半截：拿它做 diff 会把「没取到的后半段」
     # 整片报成删除，比不报更坏（人会以为真的误删了）。故宁可显式放弃这一项。
@@ -740,7 +795,8 @@ def _precheck_target(run, memo_id: str, body: str, allow_rename: bool,
         run, memo_id, "③ 覆盖对象预检 memo_batch_get", prefix)
     if code:
         return code
-    return _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename)
+    return _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename,
+                           before, body)
 
 
 def _record_last_id(memo_id: str) -> None:

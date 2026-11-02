@@ -33,6 +33,7 @@ from memo_util import (
     body_hash,
     find_truncation,
     memo_signature,
+    roundup_hits,
     signature_key,
     slice_qualifiers,
 )
@@ -941,6 +942,30 @@ def _check_concept_slice(lines):
                      f"动作移入正文；是术语则按 H13 不得为过检改写，不改。")
 
 
+def _check_concept_roundup(lines):
+    """5.9) 概念名是清单 / 汇总口径（ERR）：一张卡只装一个对象（H7）。
+
+    周报、速递、盘点这类材料的正文天然是多条目并列，整体写成一张卡就退化成清单：
+    它回答不了「这是什么」，检索不到其中任何一个对象，日后再也无法合并——只能退场
+    重来。此前一张「社区模型速递」就是这样落的卡，落完还想原地改写成其中一个模型，
+    等于拿一张卡顶替另一个对象（H9）。
+    判据只看**概念名**（`memo_util.roundup_hits`，与切片检测分开）：正文里出现多款
+    产品属常态（对比、竞品、配套数据集），按条目数判会把合规卡整片误拦，误拦比漏检
+    更危险（SKILL 附录「概念名的机械检查」）。
+    """
+    cname_idx = concept_name_index(lines)
+    if cname_idx is None:
+        return
+    hits = roundup_hits(lines[cname_idx].strip())
+    if not hits:
+        return
+    detail = "、".join(f"{k}「{v}」" for k, v in hits)
+    err(f"第 {cname_idx + 1} 行概念名是清单 / 汇总口径（{detail}）——"
+        f"这类材料的主体是「一批对象」，不是某一个对象，写成一张卡就成了汇编卡（H7）。"
+        f"按 H6c 把文中有名字的对象逐个列出、各自建卡，汇总卡不建；"
+        f"概念名取其中某个对象的稳定指称")
+
+
 def _check_abstract_dep(lines):
     """6) 预印本摘要依赖（WARN）：以摘要为唯一依据的措辞，提示回查是否漏抓正文。"""
     # 6) 预印本摘要依赖（WARN 提示，不阻塞写云）
@@ -1069,6 +1094,7 @@ def check(content):
     _check_event_source(lines)            # 5.8) 事件来源信息
     _check_template_echo(content, lines)  # 5.7) 模板前缀回显
     _check_concept_slice(lines)           # 5.8) 概念名切片限定
+    _check_concept_roundup(lines)         # 5.9) 清单 / 汇总口径的概念名
     _check_abstract_dep(lines)            # 6) 摘要依赖
     _check_deixis(lines)                  # 7) 材料指示词
     _check_bullet_label(lines)            # 8) 空要点标签
