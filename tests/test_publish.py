@@ -1214,13 +1214,28 @@ def test_manifest_per_line_flags():
 
         PB.PAYLOAD = Path(tmp) / "payload.json"
         exec_fn, calls = make_exec()
-        code, _out, _err = run(["--batch", str(man)], exec_fn)
+        # 闸门对 --skip-web 强制要求理由，命令行给一次、整批共用：逐行开关说的是
+        # 「这一行是不是术语卡」，理由说的是「凭什么整批都不检索」，两者粒度不同。
+        reason = "混批用例：两张都是非术语卡"
+        code, _out, _err = run(["--batch", str(man), "--skip-reason", reason], exec_fn)
         gates = [c for c in calls if len(c) > 1 and Path(c[1]).name == "sop_gate.py"]
         check("混批：退出码 0", code == 0, code)
         check("混批：第 1 行闸门带 --skip-web",
               "--skip-web" in gates[0], gates[0])
+        # 只带 --skip-web 不带理由，闸门必然阻塞——这条断言锁的是「开关与理由成对透传」
+        check("混批：第 1 行闸门同时带 --skip-reason 与理由",
+              "--skip-reason" in gates[0] and reason in gates[0], gates[0])
         check("混批：第 2 行闸门不带 --skip-web",
               "--skip-web" not in gates[1], gates[1])
+
+        # 缺理由必须在本地就拦：拖到闸门那侧报，读起来像「这张卡有问题」而不是
+        # 「命令少了一段」——而闸门那侧的退出码 1 与「闸门未过」同形，更难分辨。
+        exec_fn2, calls2 = make_exec()
+        code2, _o2, err2 = run(["--batch", str(man)], exec_fn2)
+        check("清单 skipweb 但没给 --skip-reason：退出码 2", code2 == 2, code2)
+        check("清单 skipweb 但没给 --skip-reason：一条子命令都不发", not calls2, calls2)
+        check("清单 skipweb 但没给 --skip-reason：说清缺的是理由",
+              "--skip-reason" in err2, err2)
         check("混批：第 2 行仍带留痕",
               any("--verify" in c for c in gates[1]), gates[1])
 
@@ -1273,7 +1288,10 @@ if __name__ == "__main__":
                test_update_truncated_read_no_diff,
                test_update_target_without_concept,
                test_update_target_without_concept_allowed,
+               test_update_object_replace_blocked,
+               test_diff_reports_tag_change,
                test_readings_ignore_spaces_not_dates,
+               test_readings_scale_equivalence,
                test_lost_readings_counts_multiplicity,
                test_misaligned_deletions,
                test_update_content_loss_blocks,
@@ -1287,6 +1305,7 @@ if __name__ == "__main__":
                test_batch_update_id_mismatch_blocks_all, test_batch_rename_column,
                test_batch_next_steps, test_precheck_echoes_concept,
                test_batch_shared_line_blocks,
+               test_manifest_per_line_flags,
                test_batch_shared_line_ignores_short_and_tag_lines,
                test_batch_overlap_note,
                test_records_last_id):

@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
+TESTS_DIR = Path(__file__).resolve().parent
 RESULTS = []
 
 
@@ -442,6 +443,45 @@ def _wrapped_in_exit(stmt):
             and isinstance(fn.value, ast.Name) and fn.value.id == "sys")
 
 
+def run_test_cases_invoked():
+    """10) 用例文件里定义的每个 `test_*` 都必须在 `__main__` 块里被调用。
+
+    事故形态：函数写好了、没登记进 `__main__` 的调用列表——那几条断言**从来没跑过**，
+    而文件照样打印「全部通过」，因为它压根没执行到。`test_manifest_per_line_flags`
+    就是这样躺着的：它覆盖的正是 `--skip-web` 与理由的成对透传，而 `publish.py`
+    那个开关当时必然被闸门阻塞，改坏也没有任何东西会红。
+
+    为什么 `COVERS` 拦不住：那套声明只核「哪个脚本被这个文件指名认领」，粒度是文件；
+    「文件认领了脚本」不等于「文件里的每条用例都执行了」。两层判据缺一不可。
+
+    判据取**可达性**而不是「直列在 __main__ 块里」：用例既可以直接写成块内的调用，
+    也可以包在被块调用的 `main()` 里（scan_truncated / search_web 就是后者）。只认
+    前者会把一整批正常执行的用例误报成没跑——而误报比漏报更坏，它教人把这条检查忽略。
+    """
+    missing = []
+    files = sorted(TESTS_DIR.glob("test_*.py"))
+    for path in files:
+        tree = _tree(path)
+        defined = [n.name for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+        refs = {}
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                refs[node.name] = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        reach, queue = set(), []
+        for block in _main_blocks(tree):
+            queue += [n.id for n in ast.walk(block) if isinstance(n, ast.Name)]
+        while queue:
+            name = queue.pop()
+            if name in reach:
+                continue
+            reach.add(name)
+            queue += [r for r in refs.get(name, ()) if r not in reach]
+        missing += [f"{path.name}.{name}" for name in defined if name not in reach]
+    check(f"tests/ 里的 test_* 全部从 __main__ 可达（{len(files)} 个文件）",
+          not missing, "；".join(missing) + "（定义了却没跑，全绿是空的）")
+
+
 def main():
     run_leaf_layer()
     run_no_cycle()
@@ -452,6 +492,7 @@ def main():
     run_shared_layer_annotated()
     run_no_library_exit()
     run_main_exit_propagated()
+    run_test_cases_invoked()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     return 0 if all(RESULTS) else 1

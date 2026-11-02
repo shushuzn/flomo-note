@@ -27,7 +27,7 @@
   python scripts/publish.py --draft ... --verify ... --update-id MjYxODU0MzI5   # 覆盖既有卡
   python scripts/publish.py --draft ... --verify ... --update-id ... --allow-rename  # 连概念名一起改
   python scripts/publish.py --draft ... --verify ... --dry-run      # 只跑到质检
-  python scripts/publish.py --draft ... --verify ... --skip-web     # 透传闸门的 --skip-web
+  python scripts/publish.py --draft ... --verify ... --skip-web --skip-reason "…"  # 非术语卡
   python scripts/publish.py --draft ... --verify ... --no-verify-card
   python scripts/publish.py --draft ... --update-id ... --allow-content-loss   # 有意重写时放行
   python scripts/publish.py --batch _tmp/batch.txt                  # 多张卡：预检全过才写
@@ -118,6 +118,8 @@ _OPTS = [
             hint="概念名疑似重复（包含关系）时写明理由放行，随闸门凭证留痕"),
     CLI.Opt("--dry-run", "dry_run", "flag"),
     CLI.Opt("--skip-web", "skip_web", "flag"),
+    CLI.Opt("--skip-reason", "skip_reason", default="",
+            hint="--skip-web 的理由（闸门强制要求；只有确认非术语卡才可跳过检索）"),
     CLI.Opt("--no-verify-card", "no_verify_card", "flag"),
 ]
 
@@ -892,14 +894,21 @@ def _concept(draft: str) -> str:
 
 
 def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "",
-             prefix: str = "", allow_near: str = "") -> int:
+             prefix: str = "", allow_near: str = "", skip_reason: str = "") -> int:
     """① 闸门 → ② 质检。返回 0 通过 / 2 闸门未过 / 3 质检 ERR。**不写云。**"""
     _step(prefix + "① 流程闸门 sop_gate")
     gate_cmd = [PY, str(SCRIPT_DIR / "sop_gate.py"), "--memo", draft]
     if verify:
         gate_cmd += ["--verify", verify]
     if skip_web:
-        gate_cmd.append("--skip-web")
+        # 闸门对 --skip-web 强制要求理由（「跳过检索」必须说清凭什么跳）。此前这里
+        # 只拼 --skip-web 不拼理由，于是这个开关**必然被闸门阻塞**——开关看着存在、
+        # 实际从未可用，报错还落在闸门那一侧，读起来像「卡有问题」而不是「命令少一段」。
+        if not skip_reason.strip():
+            print("[失败] --skip-web 必须同时给 --skip-reason 写明跳过理由"
+                  "（闸门强制；只有确认非术语卡才可跳过检索）", file=sys.stderr)
+            return 2
+        gate_cmd += ["--skip-web", "--skip-reason", skip_reason]
     if update_id:
         gate_cmd += ["--anchor-id", update_id]
     if allow_near.strip():
@@ -1181,7 +1190,8 @@ def _print_batch_next(ids: list[str], do_verify: bool) -> None:
 
 
 def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
-              allow_content_loss: bool, do_verify: bool, allow_near: str = "") -> int:
+              allow_content_loss: bool, do_verify: bool, allow_near: str = "",
+              skip_reason: str = "") -> int:
     n = len(items)
     print(f"[批次] 共 {n} 张：先全部过预检（闸门 + 质检"
           f"{' + 覆盖对象' if any(it['update_id'] for it in items) else ''}），"
@@ -1211,7 +1221,7 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
         line_skip_web = skip_web or it.get("skip_web", False)
         code = precheck(run, it["draft"], it["verify"], line_skip_web,
                         update_id=it["update_id"], prefix=prefix,
-                        allow_near=allow_near)
+                        allow_near=allow_near, skip_reason=skip_reason)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
@@ -1277,6 +1287,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
     allow_near = ns["allow_near_concept"]
     dry_run = ns["dry_run"]
     skip_web = ns["skip_web"]
+    skip_reason = ns["skip_reason"]
     verify_card = not ns["no_verify_card"]
 
     if batch:
@@ -1290,7 +1301,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
                     f"--batch 与 {flag} 不能同时给：批量的草稿、留痕与覆盖对象一律逐条写在清单里")
         return run_batch(run, parse_manifest(Path(batch)), skip_web=skip_web,
                          dry_run=dry_run, allow_content_loss=allow_content_loss,
-                         do_verify=verify_card)
+                         do_verify=verify_card, skip_reason=skip_reason)
 
     if allow_rename and not update_id:
         print("[失败] --allow-rename 只对 --update-id 有意义（建卡没有既有概念名可比）",
@@ -1314,7 +1325,7 @@ def main(argv: list[str] | None = None, exec_fn=None) -> int:
         return 1
 
     code = precheck(run, draft, verify, skip_web, update_id=update_id,
-                    allow_near=allow_near)
+                    allow_near=allow_near, skip_reason=skip_reason)
     if code:
         return code
 
