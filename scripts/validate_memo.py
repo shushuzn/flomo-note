@@ -319,6 +319,34 @@ def _check_concept_layout(lines):
             break
 
 
+_HEADING_RE = re.compile(r"^\s*要点\s*[:：]\s*$")
+
+
+def _check_heading_block(lines):
+    """2b) 缺「要点：」引导行（ERR）：H14 的正文骨架，没有它就不是卡片格式。
+
+    为什么单列一项：此前格式组检查了标签行、概念名、加粗、要点里的小标签，
+    却没有一项要求「要点：」这一行本身存在。结果是只有段落、一条要点都没有的卡
+    照样 0 错放行——用户看到的就是「有些卡片连『要点』两个字都没有」。
+    判据只认独立成行的「要点：」（半角冒号、两侧空格都放行）；句中出现不算。
+    """
+    filled = [i for i, ln in enumerate(lines) if ln.strip()]
+    if len(filled) < 3:
+        # 连正文都没有的情况由 _check_body_length 报，这里不重复。
+        return
+    concept_at = filled[1]          # 第一非空行是标签段，第二非空行是概念名
+    if _HEADING_RE.match(lines[concept_at]):
+        # 概念名位被「要点：」占了：这是概念名缺失，由 _check_concept_layout 报，
+        # 这里再报一次只是同一个毛病数两遍。
+        return
+    body = lines[concept_at + 1:]
+    if any(_HEADING_RE.match(ln) for ln in body):
+        return
+    err("正文缺少「要点：」引导行——H14 的卡片骨架是「标签行 → 概念名 → 空行 → "
+        "结论句 → 空行 → 要点： → 列表」。只有段落、没有要点的卡不是卡片格式；"
+        "把结论之后的内容整理成「- 对象标签：内容」的列表，并在列表前单独一行写「要点：」")
+
+
 def _check_body_length(content, lines):
     """3) 正文（ERR）：正文为空，或含标签段超过字数上限。"""
     # 3) 正文
@@ -1085,6 +1113,7 @@ def check(content):
     _check_tool_echo(content)             # 0b) 工具回包混入
     _check_tag_line(lines)                # 1) 首行标签段
     _check_concept_layout(lines)          # 2) 概念名结构
+    _check_heading_block(lines)           # 2b) 缺「要点：」引导行
     _check_body_length(content, lines)    # 3) 正文与字数上限
     _check_markup(lines)                  # 4) Markdown / HTML 残留
     _check_inline_hash(lines)             # 4.5) 正文脏标签
