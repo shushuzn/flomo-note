@@ -55,6 +55,26 @@ check("拦截文案含关账命令", "exit_confirm.py" in msg, msg)
 RL.close_round("https://example.com/b", "exit", "2 个对象")
 check("全部关账后无拦截文案", RL.pending_block_message() == "", RL.pending_block_message())
 
+# ⑦ 账本被倒序写入时，裁剪必须保留最新：旧实现直接切「最后 KEEP_CLOSED 条」，
+#    行序一反就会把刚关账的那一轮切掉，report_check 随后报「账本里没有这条素材」。
+import json
+
+_ledger = Path(os.environ["FLOMO_ROUND_LEDGER"])
+_rows = [
+    {"url": f"https://example.com/old{i}", "article": "",
+     "opened_at": f"t{i:03d}",
+     "closed_at": f"c{i:03d}",
+     "outcome": "exit", "detail": ""}
+    for i in range(RL.KEEP_CLOSED + 2)
+]
+_rows.reverse()  # 倒序：最新在最前
+_ledger.write_text(json.dumps({"rounds": _rows}, ensure_ascii=False), encoding="utf-8")
+RL.open_round("https://example.com/newest", "")
+_kept = [r["url"] for r in RL._load(_ledger)["rounds"]]
+check("倒序账本裁剪后仍留着刚开的那一轮", "https://example.com/newest" in _kept, _kept)
+check("倒序账本裁剪后留下的是最新几条", "https://example.com/old0" not in _kept, _kept)
+check("关账条数不超过上限", len([u for u in _kept if "old" in u]) <= RL.KEEP_CLOSED, len(_kept))
+
 print("---")
 print("全部通过" if all(RESULTS) else "存在失败用例")
 sys.exit(0 if all(RESULTS) else 1)

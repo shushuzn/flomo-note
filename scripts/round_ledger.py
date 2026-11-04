@@ -48,6 +48,11 @@ def _save(path: Path, data: dict) -> None:
     rounds = data["rounds"]
     closed = [r for r in rounds if r.get("closed_at")]
     opened = [r for r in rounds if not r.get("closed_at")]
+    # 先按时间排序再截断：账本一旦被倒序写入，`closed[-KEEP_CLOSED:]` 切掉的就是
+    # 「最后几条」＝最新几条，刚关账的那一轮当场消失（report_check 随后报「没有这条素材」）。
+    # 排序让截断只依赖 closed_at，不依赖文件里行序是正是反。
+    closed.sort(key=lambda r: r.get("closed_at") or "")
+    opened.sort(key=lambda r: r.get("opened_at") or "")
     data["rounds"] = opened + closed[-KEEP_CLOSED:]
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".rounds.", suffix=".json")
