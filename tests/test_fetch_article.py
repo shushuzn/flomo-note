@@ -366,7 +366,7 @@ if __name__ == "__main__":
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
                test_published_from_text, test_heading_gap, test_bad_numeric_args,
-               test_url_is_positional):
+               test_url_is_positional, test_ledger_guard):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")
