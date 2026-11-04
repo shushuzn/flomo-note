@@ -61,7 +61,7 @@ def _fetch_once(url: str) -> tuple[bool, str, str]:
 
     失败不抛：一个源挂掉不该让整批备料停下来，manifest 里记为失败即可。
     """
-    code, out, err = _run([sys.executable, str(SCRIPT_DIR / "fetch_article.py"), url],
+    code, out, err = _run([sys.executable, str(SCRIPT_DIR / "fetch_article.py"), url, "--no-ledger"],
                           timeout=180)
     title = ""
     local = ""

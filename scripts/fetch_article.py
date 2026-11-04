@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from contextlib import suppress
 
 import net_util
+import round_ledger
 from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +65,8 @@ _OPTS = [
     Opt("--timeout", "timeout", "float", low=1, default=30.0),
     Opt("--via", "via", default="auto"),
     Opt("--print", "echo", "flag"),
+    Opt("--batch", "batch", "flag"),
+    Opt("--no-ledger", "no_ledger", "flag"),
 ]
 
 # 站内专用抽取器。
@@ -517,6 +520,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[失败] 不是 http(s) 链接：{url}", file=sys.stderr)
         return 1
 
+    # 开账纪律：上一轮若「抓了没关」（既没建卡，也没跑 exit_confirm），
+    # 先关掉再抓新的。同一批多链接由用户一次给出时用 --batch 显式放行。
+    ledger_on = not ns["no_ledger"]
+    blocked = "" if (ns["batch"] or not ledger_on) else round_ledger.pending_block_message()
+    if blocked:
+        print(f"[拦截] {blocked}", file=sys.stderr)
+        return 3
+
     try:
         page, content_type, net_channel = fetch(url, timeout, via)
     except FetchError as exc:
@@ -578,6 +589,9 @@ def main(argv: list[str] | None = None) -> int:
     for line in gap_warnings(gap):
         print(line)
     print(f"[文件] {out}")
+    if ledger_on:
+        round_ledger.open_round(url, str(out))
+        print("[关账] 本轮已开账：建卡或退出后跑 exit_confirm.py --url 关闭，否则下次抓取被拦")
     print(f"[下一步] 读回全文：Read {out}（流程第 1 步纪律，未读回不得提炼）")
     if echo:
         print("--- 正文 ---")

@@ -20,6 +20,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import round_ledger
+
 
 def fetch_page(url: str, timeout: int = 60) -> str:
     """抓取页面正文，失败返回空串。
@@ -36,7 +39,7 @@ def fetch_page(url: str, timeout: int = 60) -> str:
         out = _Path(tmp) / "page.txt"
         try:
             proc = subprocess.run(
-                [sys.executable, str(script), url, "--out", str(out)],
+                [sys.executable, str(script), url, "--out", str(out), "--no-ledger"],
                 capture_output=True, text=True, timeout=timeout,
                 encoding="utf-8", errors="replace")
         except Exception:  # noqa: BLE001 — 取正文是尽力而为：任何失败都只该得到空文本，
@@ -77,12 +80,44 @@ def _nearby_runs(page_text: str, term: str, limit: int = 3) -> list[str]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--objects", required=True, help="逗号分隔的对象清单")
-    ap.add_argument("--search-log", required=True, help="搜索记录JSON路径")
-    ap.add_argument("--dedup-log", required=True, help="dedup输出文件路径")
-    ap.add_argument("--reason", required=True, help="退出理由")
+    ap.add_argument("--objects", default="", help="逗号分隔的对象清单（退出模式必填）")
+    ap.add_argument("--url", required=True,
+                    help="本轮素材链接（逗号分隔可多条）；关账凭它对应到抓取时开的轮次")
+    ap.add_argument("--published", default="",
+                    help="已建卡的 memo id（逗号分隔）；给了即表示本轮以建卡关账，跳过退出三项核验")
+    ap.add_argument("--search-log", default="", help="搜索记录JSON路径（退出模式必填）")
+    ap.add_argument("--dedup-log", default="", help="dedup输出文件路径（退出模式必填）")
+    ap.add_argument("--reason", default="", help="退出理由（退出模式必填）")
     ap.add_argument("--skip-fetch", action="store_true", help="跳过HTTP校验（仅离线调试用）")
     args = ap.parse_args()
+
+    urls = [u.strip() for u in args.url.split(",") if u.strip()]
+    published = [x.strip() for x in args.published.split(",") if x.strip()]
+    if not urls:
+        print("[退出拦截] --url 为空——关账必须落到具体素材链接", file=sys.stderr)
+        return 1
+
+    # 建卡关账：本轮已经产出卡片，三项退出核验不适用；只核 id 形态并关账。
+    if published:
+        bad = [x for x in published if not re.fullmatch(r"[A-Za-z0-9]{8,}", x)]
+        if bad:
+            print(f"[退出拦截] --published 里有不像 memo id 的值：{', '.join(bad)}",
+                  file=sys.stderr)
+            return 1
+        missed = [u for u in urls
+                  if round_ledger.close_round(u, "published", ",".join(published)) is None]
+        print(f"[关账] 建卡 {len(published)} 张，素材 {len(urls)} 条已关闭")
+        if missed:
+            print(f"[提示] 账上本来没有这些链接（早于记账上线或已关过）：{'、'.join(missed)}")
+        return 0
+
+    missing = [n for n, v in (("--objects", args.objects),
+                              ("--search-log", args.search_log),
+                              ("--dedup-log", args.dedup_log),
+                              ("--reason", args.reason)) if not v]
+    if missing:
+        print(f"[退出拦截] 退出模式缺参数：{'、'.join(missing)}", file=sys.stderr)
+        return 1
 
     errors = []
 
@@ -181,7 +216,11 @@ def main():
         print("  5. 确认确实无建卡价值，再跑本脚本留痕", file=sys.stderr)
         return 1
 
-    print(f"[退出留痕] 已记录：{len(objs)}个对象审视完毕，HTTP校验通过")
+    missed = [u for u in urls
+              if round_ledger.close_round(u, "exit", f"{len(objs)} 个对象") is None]
+    print(f"[退出留痕] 已记录：{len(objs)}个对象审视完毕，HTTP校验通过；素材 {len(urls)} 条已关账")
+    if missed:
+        print(f"[提示] 账上本来没有这些链接（早于记账上线或已关过）：{'、'.join(missed)}")
     return 0
 
 

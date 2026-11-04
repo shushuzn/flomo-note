@@ -10,6 +10,7 @@ exit_confirm 是「不建卡也必须留痕」的唯一机械闸门：对象清�
 COVERS = ("exit_confirm",)
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -50,8 +51,9 @@ def _decode(raw):
 
 
 def run(args):
+    env = {**os.environ, "FLOMO_ROUND_LEDGER": str(LEDGER)}
     p = subprocess.run([sys.executable, str(SCRIPT), "--skip-fetch", *args],
-                       cwd=ROOT, capture_output=True, timeout=60)
+                       cwd=ROOT, capture_output=True, timeout=60, env=env)
     return p.returncode, _decode(p.stdout), _decode(p.stderr)
 
 
@@ -75,6 +77,8 @@ def good_dedup(tmp):
 REASON = "对象清单已逐个审视，均为纯事件或查无此概念，不建卡"
 
 tmp = Path(tempfile.mkdtemp(prefix="exit_confirm_"))
+LEDGER = tmp / "rounds.json"
+URL = "https://example.com/article"
 try:
     # ① 四个必填参数一个都不能省
     rc, out, err = run([])
@@ -92,7 +96,7 @@ try:
             "--reason", REASON]
 
     # ② 对象清单为空 → 拦
-    rc, out, err = run(["--objects", " , , ", *base])
+    rc, out, err = run(["--url", URL, "--objects", " , , ", *base])
     check("空对象清单被拦", rc == 1 and "对象清单为空" in err, f"rc={rc}, err={err[:160]!r}")
 
     # ③ 搜索记录的四条判据
@@ -100,13 +104,13 @@ try:
     bad.write_text(json.dumps({"searched": False,
                                "terms": [{"term": "x", "search_url": "u"}]}),
                    encoding="utf-8")
-    rc, out, err = run(["--objects", "某对象", "--search-log", str(bad),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", str(bad),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("searched 不为 true 被拦", rc == 1 and "searched" in err, f"rc={rc}, err={err[:160]!r}")
 
     empty_terms = tmp / "empty_terms.json"
     empty_terms.write_text(json.dumps({"searched": True, "terms": []}), encoding="utf-8")
-    rc, out, err = run(["--objects", "某对象", "--search-log", str(empty_terms),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", str(empty_terms),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("terms 为空被拦", rc == 1 and "terms 为空" in err, f"rc={rc}, err={err[:160]!r}")
 
@@ -115,45 +119,45 @@ try:
                                   "terms": [{"term": "某对象", "query": "q",
                                              "conclusion": "无"}]},
                                  ensure_ascii=False), encoding="utf-8")
-    rc, out, err = run(["--objects", "某对象", "--search-log", str(no_url),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", str(no_url),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("缺 search_url 被拦", rc == 1 and "search_url" in err, f"rc={rc}, err={err[:160]!r}")
 
     broken = tmp / "broken.json"
     broken.write_text("{not json", encoding="utf-8")
-    rc, out, err = run(["--objects", "某对象", "--search-log", str(broken),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", str(broken),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("搜索记录解析失败被拦", rc == 1 and "解析失败" in err, f"rc={rc}, err={err[:160]!r}")
 
-    rc, out, err = run(["--objects", "某对象", "--search-log", str(tmp / "none.json"),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", str(tmp / "none.json"),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("搜索记录文件不存在被拦", rc == 1 and "不存在" in err, f"rc={rc}, err={err[:160]!r}")
 
     # ④ 查重输出：必须真的跑过 dedup
     fake = tmp / "fake_dedup.txt"
     fake.write_text("随便一段与查重无关的文字\n", encoding="utf-8")
-    rc, out, err = run(["--objects", "某对象", "--search-log", good_search(tmp),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", good_search(tmp),
                        "--dedup-log", str(fake), "--reason", REASON])
     check("查重输出无「关键词」段被拦", rc == 1 and "关键词" in err, f"rc={rc}, err={err[:160]!r}")
 
-    rc, out, err = run(["--objects", "某对象", "--search-log", good_search(tmp),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", good_search(tmp),
                        "--dedup-log", str(tmp / "none.txt"), "--reason", REASON])
     check("查重记录文件不存在被拦", rc == 1 and "dedup记录不存在" in err,
           f"rc={rc}, err={err[:160]!r}")
 
     # ⑤ 理由太短 → 拦
-    rc, out, err = run(["--objects", "某对象", "--search-log", good_search(tmp),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", good_search(tmp),
                        "--dedup-log", good_dedup(tmp), "--reason", "不建卡"])
     check("退出理由太短被拦", rc == 1 and "太短" in err, f"rc={rc}, err={err[:160]!r}")
 
     # ⑥ 四项齐备 → 放行，并回显对象数
-    rc, out, err = run(["--objects", "对象甲, 对象乙 ,对象丙", "--search-log", good_search(tmp),
+    rc, out, err = run(["--url", URL, "--objects", "对象甲, 对象乙 ,对象丙", "--search-log", good_search(tmp),
                        "--dedup-log", good_dedup(tmp), "--reason", REASON])
     check("四项齐备：放行", rc == 0 and "退出留痕" in out, f"rc={rc}, out={out[:160]!r}")
     check("放行时按去空白后的对象计数", "3个对象" in out, f"out={out[:160]!r}")
 
     # ⑦ 拦截时把正确流程一并打出来（口头退出要能被机器驳回）
-    rc, out, err = run(["--objects", "某对象", "--search-log", good_search(tmp),
+    rc, out, err = run(["--url", URL, "--objects", "某对象", "--search-log", good_search(tmp),
                        "--dedup-log", good_dedup(tmp), "--reason", "不建卡"])
     check("拦截文案附正确流程指引", "fetch_article" in err, f"err={err[:200]!r}")
 
@@ -175,6 +179,31 @@ try:
     check("无字符重合时返回空建议", _ec._nearby_runs(_page, "完全不相关的词") == [],
           f"near={_ec._nearby_runs(_page, '完全不相关的词')}")
     check("候选词数量受限", len(_ec._nearby_runs(_page, "Waymo 充电桩 无人驾驶出租车")) <= 3)
+
+    # ⑨ 关账：--url 必填，退出与建卡两条路都能关账
+    rc, out, err = run(["--objects", "某对象"])
+    check("缺 --url：拒绝执行", rc != 0 and "--url" in (err + out), f"rc={rc}, err={err[:160]!r}")
+
+    import importlib.util as _iu
+    _ls = _iu.spec_from_file_location("_ledger", ROOT / "scripts" / "round_ledger.py")
+    _lm = _iu.module_from_spec(_ls)
+    _ls.loader.exec_module(_lm)
+    os.environ["FLOMO_ROUND_LEDGER"] = str(LEDGER)
+    _lm.open_round(URL, "/tmp/x.txt")
+    open_rc, open_out, open_err = run(["--url", URL, "--objects", "对象甲",
+                                       "--search-log", good_search(tmp),
+                                       "--dedup-log", good_dedup(tmp), "--reason", REASON])
+    check("退出留痕后账上不再挂着该素材", open_rc == 0 and not _lm.pending(),
+          f"rc={open_rc}, pending={_lm.pending()}")
+
+    _lm.open_round(URL, "/tmp/x.txt")
+    pub_rc, pub_out, pub_err = run(["--url", URL, "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy"])
+    check("建卡关账：带 --published 直接关闭",
+          pub_rc == 0 and "建卡 2 张" in pub_out and not _lm.pending(),
+          f"rc={pub_rc}, out={pub_out[:160]!r}, err={pub_err[:160]!r}")
+    bad_rc, _, bad_err = run(["--url", URL, "--published", "not-an-id!"])
+    check("--published 里不像 id 的值被拦", bad_rc == 1 and "不像" in bad_err,
+          f"rc={bad_rc}, err={bad_err[:160]!r}")
 
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")

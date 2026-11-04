@@ -5,7 +5,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 # flomo 卡片笔记（云端）
 
-> **本文件是唯一细则源**，全文须在 10000 字以内（`check_skill_docs.py` 硬拦）。环境（路径、代理、端口）见 `ENVIRONMENT.md`，顶层约定见 `AGENTS.md`。
+> **唯一细则源**，须在 10000 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
 
 **读法**：硬限只在第二节定义一次，他处只写编号；判据在这里，机制在脚本里。
 
@@ -45,7 +45,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **H6d · 有动词不等于错，看它是构词还是谓语。** 动词在词首且后接名词（发布会、开源模型、手机拆解指南）是构词成分；动词前有实义成分（GPT-6 发布、蔚来ET9 上市）是谓语。正则只能**提示**（`memo_util._predicate_hits`），判定按 H6b 四条自己来。
 
-**H6c · 列对象清单，逐个建卡。** 读完全文把所有有名字的对象写下，每个对象分别建卡或更新，不挑最显眼的一个。对象能独立回答「这是什么」就建卡；纯事件（谁打谁、谁谈了什么）跳过。退出前必须查重。
+**H6c · 列对象清单，逐个建卡。** 读完全文把所有有名字的对象写下，每个对象分别建卡或更新，不挑最显眼的一个。对象能独立回答「这是什么」就建卡（统计快报的指标与机构同属对象）；纯事件跳过。退出前必须查重。
 
 **H6e · 同名按对象查，不按批次查。** 每个对象各自比对概念名；一批多条链接也逐条查，禁以「本批查过一次」代替。闸门按标签簇整簇翻页比对，同名即阻塞，须 `--update-id` 合并。
 - **信息不足先补事实层**：材料只给名字时，先联网补定义、公开参数、法规条款与生效状态、可核沿革；不补分析结论与归因（H13）。补齐仍不成立（查无此对象或仅一方判断）才可退出，并点名查了什么。
@@ -134,7 +134,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **本节管**顺序与每步完成判据；**不管**规则本身（细则查第二节）。标「阻塞」的步骤未完成不得进下一步。
 
 ### 1. 抓取
-`python scripts/fetch_article.py <url>`，抓完读回全文。
+`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。
 
 ### 2. 验证
 专业术语须真搜索标准名称与定义：**环境搜索优先，不可用时用 `search_web.py` 兜底**（词块不相关即换引擎）；留痕 verify.json 写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。
@@ -149,12 +149,12 @@ description: Use when the user sends a link, asks to save an article, clip a web
 `dedup.py --keywords "词1,词2"` 两路并查；命中后必须 `--ids` 回读全文，不凭标签名判断「不是同一个」。闸门另按整簇翻页比对概念名（H6e）。
 
 ### 6. 判断
-三选一：无命中→新建；完全重复→更新；同事件→合并（H8–H10）。
+四选一：无命中→新建；完全重复→更新；同事件→合并（H8–H10）；确实都不成立→退出（条件见 H6c）。
 
-**退出也必须留痕（阻塞）**：不建卡须先列清单、逐对象搜索、跑查重，再跑 `exit_confirm.py --objects "…" --search-log <json> --dedup-log <txt> --reason "…"`；退出码非 0 即拦截。
+**关账（阻塞）**：建卡与退出都须跑 `exit_confirm.py --url <链接>`——退出再附 `--objects/--search-log/--dedup-log/--reason` 四样，建卡用 `--published "id,…"`。未关账会拦住下次抓取。
 
 ### 7. 写作
-按 H14 写：标签行→概念名→空行→正文。
+按 H14。
 
 ### 8. 自检
 `publish.py --draft <草稿> --verify <留痕>`，闸门（`sop_gate.py`）+ 质检全过才写云。
@@ -175,7 +175,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 用**自然语言**报，全文上限 150 字（每多一张卡加 60 字）；不出现字段表、管道符串、工具名、失败码。
 
-- 开头一句「建了 N 张卡」（有更新或退出各用半句说明）。
+- 开头一句「建了 N 张卡」（有更新或退出各用半句说明；退出另附关账对象清单）。
 - 每张卡一句：概念名 + 一句读者能懂的话（它是什么、这轮记的是哪一面），不堆缩写、不复述原文。
 - 末尾数据行：`<概念名>：id，标签，实测 N 字`。
 - 异常（有才写）：只写本轮动用闸门开关的记录与逐条认领，以及确实只能由用户决定的事项；能自修的不得写成待办（H22b）。
@@ -187,7 +187,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **本节管**参考信息与文档治理；**不管**写卡动作。
 
 ### 写成功判定与防重复
-- 判定唯一依据：退出码 0 且 stderr 有 `[成功] 已写入 memo id=`；取不到 id 即失败且退出码非 0，**绝不重发**。
+- 判定唯一依据：退出码 0 且 stderr 有 `[成功] 已写入 memo id=`；取不到 id 即失败，**绝不重发**。
 - 写前幂等：`memo_create` 按签名（H6）查重，云端已有同签名卡即复用其 id。
 
 ### 工具与调用
@@ -219,5 +219,5 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **H25 · 文档改动走独立流程。** 修订一律等用户指令；**commit 与 push 用同一次 `scripts/push_skill.sh "msg"` 完成，禁裸 `git commit`**（只提交不推送等于没交付），随后 `git ls-remote` 核对；禁手搓 git 命令。复盘建议的落点只能是云端卡片。
 **H26 · 笔记只在云端。** 本地不落盘任何卡片正文；`.mcp.json`（含 token）不提交。
-**H27 · 收尾强制清理（不等确认）。** 列名 → 打包 `.workbuddy/trash/` → 断言完整 → 删除 → 复核为 0，一律走 `scripts/cleanup.py`。`--verify` 与清理共用同一基准（`.workbuddy/.cleanup_run`）——看到残留先看基准来源那一行。不得删当轮素材（H24）。
+**H27 · 收尾强制清理（不等确认）。** 列名 → 打包 `.workbuddy/trash/` → 断言完整 → 删除 → 复核为 0，一律走 `scripts/cleanup.py`。`--verify` 与清理共用同一基准（`.workbuddy/.cleanup_run`）。不得删当轮素材（H24）。
 **H28 · 文档禁写日期与事件。** 理由只作抽象陈述；`ENVIRONMENT.md` 只写「是什么」。已落到 `check_skill_docs.py`（日期 ERR、叙事词 WARN，全文档受扫；唯一豁免是协议 / 版本常量行，逐条打印 SKIP 保持可见）。

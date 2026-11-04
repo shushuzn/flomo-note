@@ -10,11 +10,17 @@ COVERS = ("fetch_article",)
 import contextlib
 import importlib.util
 import io
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
+
+# 轮次账本隔离：main() 成功时会开账，指到临时文件，避免污染真实 .workbuddy。
+_LEDGER_DIR = tempfile.mkdtemp(prefix="fetch_ledger_")
+os.environ["FLOMO_ROUND_LEDGER"] = str(Path(_LEDGER_DIR) / "rounds.json")
 
 
 def _load(name, filename):
@@ -333,6 +339,24 @@ def test_url_is_positional():
             code = FA.cli_entry(lambda a=argv: FA.main(a), errors=(), usage_code=1)
         check(f"{label}：退出码 1", code == 1, code)
         check(f"{label}：提示含「{want}」", want in err.getvalue(), err.getvalue())
+
+
+def test_ledger_guard():
+    """上一轮抓了没关账 → 新抓取在发起网络请求之前就被拦下。
+
+    这是「口头退出」唯一的机械出口：没了产物，至少还有开着的账。
+    """
+    import round_ledger
+    round_ledger.open_round("https://example.com/prev")
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        code = FA.main(["https://example.com/next"])
+    check("有未关账素材：新抓取退出码 3", code == 3, code)
+    check("拦截文案点名未关的链接", "example.com/prev" in err.getvalue(), err.getvalue())
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        round_ledger.close_round("https://example.com/prev", "exit", "测试")
+    check("关账后账上不再挂该素材", round_ledger.pending() == [], round_ledger.pending())
 
 
 if __name__ == "__main__":
