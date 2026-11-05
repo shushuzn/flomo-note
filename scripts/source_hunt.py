@@ -100,7 +100,7 @@ def hunt(term: str, query: str, min_chars: int, max_try: int,
             row["reason"] = f"抽取异常：{type(exc).__name__}: {exc}"
             tried.append(row)
             continue
-        hits, total = _relevance(body, chunks)
+        hits, _total = _relevance(body, chunks)
         row["chars"] = len(body)
         row["hits"] = hits
         if len(body) < min_chars:

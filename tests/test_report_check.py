@@ -79,7 +79,6 @@ def _run(text):
 
 def main() -> int:
     global _LEDGER_ENV
-    import verify_card
     _LEDGER_ENV = os.environ.get("FLOMO_ROUND_LEDGER")
     _install_fake_fetch()
     try:
