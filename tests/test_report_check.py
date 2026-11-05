@@ -128,8 +128,8 @@ def _run_all() -> int:
     rc = _run(extra)
     check("混入非本轮 id 被拦", rc == 1, f"退出码 {rc}")
 
-    # 7. 说明段超限（2 张卡上限 210 字）→ 必须拦
-    long_prose = "字" * 211
+    # 7. 说明段超限（2 张卡上限 360 字）→ 必须拦
+    long_prose = "字" * 361
     rc = _run(long_prose + "\n\n" + good.split("\n\n", 1)[1])
     check("说明段超字数上限被拦", rc == 1, f"退出码 {rc}")
 

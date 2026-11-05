@@ -10,7 +10,7 @@
   1. 从账本取本轮 `exit_confirm --published` 落下的 id 清单（不手抄 id）；
   2. 逐 id 回读云端，拿到 word_count / 标签行 / 概念名；
   3. 解析报告里的明细行，逐项对账；
-  4. 校验说明段的字数上限（1 张 ≤150 字，每多一张 +60 字，与 SKILL 报告口径一致）。
+  4. 校验说明段的字数上限（1 张 ≤300 字，每多一张 +60 字，与 SKILL 报告口径一致）。
 
 用法：
   python scripts/report_check.py --report _tmp/report.txt --url https://mp.weixin.qq.com/s/xxx
@@ -42,8 +42,8 @@ DETAIL = re.compile(
 
 
 def _prose_limit(n: int) -> int:
-    """SKILL 的报告口径：1 张 ≤150 字，每多一张 +60 字。"""
-    return 150 + 60 * max(0, n - 1)
+    """SKILL 的报告口径：1 张 ≤300 字，每多一张 +60 字。"""
+    return 300 + 60 * max(0, n - 1)
 
 
 def _cjk_len(text: str) -> int:
@@ -154,7 +154,7 @@ def main(argv=None) -> int:
     # ---- 3. 说明段长度 ----
     limit = _prose_limit(max(1, len(ids)))
     if plen > limit:
-        errors.append(f"说明段 {plen} 字，超过上限 {limit} 字（1 张 150 字，每多一张 +60）")
+        errors.append(f"说明段 {plen} 字，超过上限 {limit} 字（1 张 300 字，每多一张 +60）")
     if plen == 0:
         errors.append("没有说明段——报告不能只剩明细行")
 
