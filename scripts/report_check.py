@@ -10,7 +10,9 @@
   1. 从账本取本轮 `exit_confirm --published` 落下的 id 清单（不手抄 id）；
   2. 逐 id 回读云端，拿到 word_count / 标签行 / 概念名；
   3. 解析报告里的明细行，逐项对账；
-  4. 校验说明段的字数上限（1 张 ≤300 字，每多一张 +60 字，与 SKILL 报告口径一致）。
+  4. 校验说明段的字数上限（1 张 ≤300 字，每多一张 +60 字，与 SKILL 报告口径一致）；
+  5. 校验「新建」「更新」两段分写：账本 `updated` 之外的 id 按新建算，两段各自
+     列出的概念名必须与对应 id 集合一致——混在一段里说「建了 4 张卡」会被拦。
 
 用法：
   python scripts/report_check.py --report _tmp/report.txt --url https://mp.weixin.qq.com/s/xxx
@@ -39,6 +41,14 @@ DETAIL = re.compile(
     r"^(?P<name>[^：\n]{1,60})：\s*(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
     r"(?P<tags>#[^\s，,]+(?:[ 　]#[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
 )
+
+# 分段标题：整行只有「新建」或「更新」（可带冒号）。必须整行匹配——
+# 「建了 3 张卡，更新 1 张」这类开头句里的「更新」不算分段，否则每个报告都会
+# 被切成两段。
+SECTION = re.compile(r"^(新建|更新)\s*[：:]?$")
+
+# 分段里的条目：`- 概念名：一句读者能懂的话`
+BULLET = re.compile(r"^[-*]\s+(?P<body>.+)$")
 
 
 def _prose_limit(n: int) -> int:
@@ -88,15 +98,37 @@ def main(argv=None) -> int:
     errors: list[str] = []
     notes: list[str] = []
 
-    # ---- 明细行解析 ----
+    # ---- 明细行与「新建 / 更新」分段解析 ----
     detail_rows = []
     prose_lines = []
+    # 值是这一段的条目概念名；None 表示这一段没出现（与「出现但是空的」分开判）。
+    sections: dict[str, list[str] | None] = {"新建": None, "更新": None}
+    current = None
     for line in text.split("\n"):
-        m = DETAIL.match(line.strip())
+        s = line.strip()
+        m = DETAIL.match(s)
         if m:
             detail_rows.append(m.groupdict())
-        elif line.strip():
-            prose_lines.append(line.strip())
+            continue
+        sm = SECTION.match(s)
+        if sm:
+            current = sm.group(1)
+            if sections[current] is not None:
+                errors.append(f"「{current}」段出现了两次——两段各自只该有一处标题")
+            sections[current] = []
+            continue
+        bm = BULLET.match(s)
+        if bm and current:
+            body = bm.group("body").strip()
+            parts = re.split(r"[：:]", body, maxsplit=1)
+            if len(parts) < 2 or not parts[0].strip():
+                errors.append(
+                    f"「{current}」段的这一条不是「概念名：一句」的写法：{body[:24]}")
+            else:
+                sections[current].append(parts[0].strip())
+            continue
+        if s:
+            prose_lines.append(s)
 
     prose = "".join(prose_lines)
     plen = _cjk_len(prose)
@@ -119,6 +151,7 @@ def main(argv=None) -> int:
 
     # ---- 2. 逐卡对账（回读云端，不手抄） ----
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")
+    cloud_names: dict[str, str] = {}
     for rid in ids:
         try:
             memo = verify_card.fetch(rid)
@@ -130,6 +163,7 @@ def main(argv=None) -> int:
         lines = [ln.strip() for ln in raw.split("\n")]
         first = lines[0] if lines else ""
         second = lines[1] if len(lines) > 1 else ""
+        cloud_names[rid] = second
         want_tags = set(re.findall(r"#[^\s]+", first))
         want_n = memo.get("word_count")
 
@@ -151,7 +185,42 @@ def main(argv=None) -> int:
             ok = False
         print(f"  {'✓' if ok else '✗'} {second} | {rid} | {want_n} 字 | {first}")
 
-    # ---- 3. 说明段长度 ----
+    # ---- 3. 新建 / 更新分写 ----
+    # 账本只记了 `published`（全部 id）与 `updated`（其中属于更新既有卡的那几个），
+    # 差集即新建。没有 `updated` 字段的旧账本按「全部新建」处理——那一轮的分类
+    # 已无从判定，强判会把历史轮次判错。
+    marked = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
+    updated_ids = [i for i in ids if i in marked]
+    created_ids = [i for i in ids if i not in marked]
+    if ids:
+        for kind, want_ids in (("新建", created_ids), ("更新", updated_ids)):
+            block = sections[kind]
+            if want_ids and block is None:
+                errors.append(
+                    f"本轮有 {len(want_ids)} 张{kind}卡，报告里没有独立的「{kind}」段——"
+                    f"新建与更新必须分开写，不能都并进「建了 N 张卡」")
+                continue
+            if not want_ids and block is not None:
+                errors.append(
+                    f"报告写了「{kind}」段，但本轮没有{kind}卡——空段会被读成漏了卡")
+                continue
+            if not want_ids:
+                continue
+            want_names = [cloud_names.get(i, "") for i in want_ids]
+            missing_names = [n for n in want_names if n not in block]
+            stray_names = [n for n in block if n not in want_names]
+            if missing_names:
+                errors.append(f"「{kind}」段缺这些卡：{'、'.join(missing_names)}")
+            if stray_names:
+                errors.append(
+                    f"「{kind}」段里这些不是{kind}卡：{'、'.join(stray_names)}"
+                    f"（写错段等于把新建说成更新）")
+            # 名字层面查过就不重复报条数——同一次写错会变成三条提示，读的人反而
+            # 抓不住该改哪一处；条数只在剩下的情形（同一张卡写两遍）才有信息量。
+            elif len(block) != len(want_names):
+                errors.append(f"「{kind}」段写了 {len(block)} 条，账上是 {len(want_names)} 张")
+
+    # ---- 4. 说明段长度 ----
     limit = _prose_limit(max(1, len(ids)))
     if plen > limit:
         errors.append(f"说明段 {plen} 字，超过上限 {limit} 字（1 张 300 字，每多一张 +60）")
@@ -168,7 +237,8 @@ def main(argv=None) -> int:
         print("\n改完再发。逐卡明细必须与账本 id 一一对应，字数从云端回读取。", file=sys.stderr)
         return 1
 
-    print(f"\n[报告校验] 全过：{len(detail_rows)} 条明细对账一致，说明段 {plen}/{limit} 字")
+    print(f"\n[报告校验] 全过：{len(detail_rows)} 条明细对账一致"
+          f"（新建 {len(created_ids)} / 更新 {len(updated_ids)}），说明段 {plen}/{limit} 字")
     return 0
 
 

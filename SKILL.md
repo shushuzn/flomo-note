@@ -18,7 +18,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 2. **来源实实在在**。带来源的卡，URL 必须真抓且读回正文逐条对照才能落笔；摘要、记忆、按域名推演不算。抓取失败且无外链可追时禁写云。
 3. **文档改动立即推送并给真实 hash**。称「已提交 / 已推送」必须附 hash 并以 `git ls-remote` 核对（见 H25）。
 
-> **收尾三项铁律**：① 正文无自指备注（H15）；② 文档改动立即推送并附 hash（H25）；③ 每轮清理残留（H27）。
+> **收尾三项**：正文无自指备注（H15）、改动即推送附 hash（H25）、每轮清理（H27）。
 
 ## 二、硬限清单（唯一细则源，编号即引用点）
 
@@ -30,7 +30,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **H1 · 读卡必须取全文。** `memo_search` / `memo_recommended` 的 `content` 是截断快照（带 `content_truncated`），只能用于「发现有哪些卡」。凡要判断正文（合并、覆盖、核查），先 `memo_batch_get` 取全文。
 
-**H2 · 字数只认实测。** 取 `memo_batch_get` 全文长度或 `word_count`，禁按截断内容估算，无实测写「未实测」。
+**H2 · 字数只认实测。** 取全文长度或 `word_count`，禁按截断内容估算，无实测写「未实测」。
 
 **H3 · flomo 调用一律走脚本、逐次调用。** `python scripts/flomo_client.py <tool> --file <json>`；每个关键词单独调用并读该次原始返回，禁塞进临时脚本或循环合并成一份结果。查重走 `dedup.py`、标签走 `tagcheck.py`，每次返回独立成块；列表回包加 `--brief`，不写内联解析。
 
@@ -153,7 +153,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 ### 6. 判断
 四选一：无命中→新建；完全重复→更新；同事件→合并（H8–H10）；确实都不成立→退出（条件见 H6c）。
 
-**关账（阻塞）**：建卡与退出都须跑 `exit_confirm.py --url <链接>`——退出再附 `--objects/--search-log/--dedup-log/--reason` 四样，建卡用 `--published "id,…"`。未关账会拦住下次抓取。
+**关账（阻塞）**：建卡与退出都须跑 `exit_confirm.py --url <链接>`——退出再附 `--objects/--search-log/--dedup-log/--reason` 四样，建卡用 `--published "id,…"`，其中更新既有卡的再单列 `--updated`。未关账会拦住下次抓取。
 
 ### 7. 写作
 按 H14。
@@ -175,16 +175,14 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ## 四、收尾输出
 
-**报告校验（阻塞）**：发前跑 `scripts/report_check.py --url <链接> --text "<全文>"`，明细与字数对不上就不出稿。
+**报告校验（阻塞）**：`scripts/report_check.py --url <链接> --text "<全文>"` 不过不出稿。
 
-自然语言报，上限 300 字（每加一张 +60）；不出现字段表、管道符串、工具名、失败码。
+自然语言报，上限 300 字（每加一张 +60）；不出现字段表、管道符串、工具名、失败码；不写命中数、抓取过程、原文复述与分卡论证。
 
-- 开头「建了 N 张卡」（更新或退出各半句）。
-- 每张卡一句：概念名 + 一句读者能懂的话（是什么、这轮记哪一面），不堆缩写。
+- 开头：`建了 N 张卡，更新 M 张。`
+- 每张一句：概念名 + 读者能懂的话，不堆缩写；**新建与更新分段写**（`新建：`／`更新：` 各一行标题），没有的那类不留空段。
 - 末尾数据行：`<概念名>：id，标签，实测 N 字`。
 - 异常（有才写）：只写闸门开关与逐条认领、只能由用户定的事；能自修的不写待办。
-
-**不写**：命中数、抓取过程、原文复述、分卡论证。
 
 ## 五、附录
 
@@ -192,7 +190,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ### 写成功判定与防重复
 - 判定唯一依据：退出码 0 且 stderr 有 `[成功] 已写入 memo id=`；取不到 id 即失败，**绝不重发**。
-- 写前幂等：`memo_create` 按签名（H6）查重，云端已有同签名卡即复用其 id。
+- 写前幂等：按签名（H6）查重，已有同签名卡即复用 id。
 
 ### 工具与调用
 - 读：`memo_search` / `memo_batch_get` / `memo_recommended` / `tag_tree` / `tag_search`；写只有 `memo_create` / `memo_update` / `tag_rename`。参数名以 `--help` 为准。
@@ -201,7 +199,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 - 禁传 `linked_memos`（H12）；端点、鉴权、代理见 `ENVIRONMENT.md`。
 
 ### flomo 富文本实测（H14 定结构，本段定渲染）
-- 能渲染：加粗、高亮、下划线、列表；不渲染（标记原样显示）：标题、引用、代码块、链接、表格、图片。
+- 只渲染列表与强调；标题、引用、代码块、链接、表格、图片原样显示标记。
 - **本库取舍**：强调类一律不用，只用列表，`validate_memo.py` 判 ERR；存量按 H22b 处置。
 - 判定边界都在 `validate_memo.py`：表格、单星号、尖括号、裸邮箱各按真形态判（裸邮箱自动链接化，必要时写 `a(at)b.c`）。
 

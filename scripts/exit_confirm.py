@@ -85,6 +85,9 @@ def main():
                     help="本轮素材链接（逗号分隔可多条）；关账凭它对应到抓取时开的轮次")
     ap.add_argument("--published", default="",
                     help="已建卡的 memo id（逗号分隔）；给了即表示本轮以建卡关账，跳过退出三项核验")
+    ap.add_argument("--updated", default="",
+                    help="--published 里属于「更新既有卡」的 id（逗号分隔），其余按新建算；"
+                         "报告要求新建与更新分开写，账本不记这件事就没有判据")
     ap.add_argument("--search-log", default="", help="搜索记录JSON路径（退出模式必填）")
     ap.add_argument("--dedup-log", default="", help="dedup输出文件路径（退出模式必填）")
     ap.add_argument("--reason", default="", help="退出理由（退出模式必填）")
@@ -93,6 +96,7 @@ def main():
 
     urls = [u.strip() for u in args.url.split(",") if u.strip()]
     published = [x.strip() for x in args.published.split(",") if x.strip()]
+    updated = [x.strip() for x in args.updated.split(",") if x.strip()]
     if not urls:
         print("[退出拦截] --url 为空——关账必须落到具体素材链接", file=sys.stderr)
         return 1
@@ -104,18 +108,35 @@ def main():
             print(f"[退出拦截] --published 里有不像 memo id 的值：{', '.join(bad)}",
                   file=sys.stderr)
             return 1
+        # --updated 必须是 --published 的子集：写错一个 id 会让报告闸门把新建卡
+        # 判成更新卡，两边都「看起来对」，只有对账时才发现分类错了。
+        stray = [x for x in updated if x not in published]
+        if stray:
+            print(f"[退出拦截] --updated 里有不在 --published 里的 id：{', '.join(stray)}",
+                  file=sys.stderr)
+            return 1
+        bad_up = [x for x in updated if not re.fullmatch(r"[A-Za-z0-9]{8,}", x)]
+        if bad_up:
+            print(f"[退出拦截] --updated 里有不像 memo id 的值：{', '.join(bad_up)}",
+                  file=sys.stderr)
+            return 1
+        updated_arg = ",".join(updated)
         backfilled, missed = [], []
         for u in urls:
-            if round_ledger.close_round(u, "published", ",".join(published)) is not None:
+            if round_ledger.close_round(
+                    u, "published", ",".join(published), updated_arg) is not None:
                 continue
             # 账上没有这条素材：本轮没走抓取开账（直接粘贴全文），或旧轮次已被裁掉。
             # 补开一轮再关，否则 report_check 取不到 id，报告闸门对这类素材整体失效。
             round_ledger.open_round(u)
-            if round_ledger.close_round(u, "published", ",".join(published)) is not None:
+            if round_ledger.close_round(
+                    u, "published", ",".join(published), updated_arg) is not None:
                 backfilled.append(u)
             else:
                 missed.append(u)
-        print(f"[关账] 建卡 {len(published)} 张，素材 {len(urls)} 条已关闭")
+        split = (f"（新建 {len(published) - len(updated)} / 更新 {len(updated)}）"
+                 if updated else "")
+        print(f"[关账] 建卡 {len(published)} 张{split}，素材 {len(urls)} 条已关闭")
         if backfilled:
             print("[提示] 这些素材账上原本没有开账记录（直接粘贴全文或旧轮次已裁），"
                   f"已补录一条并关闭：{'、'.join(backfilled)}")

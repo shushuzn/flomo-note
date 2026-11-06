@@ -51,7 +51,11 @@ def _save(path: Path, data: dict) -> None:
     # 先按时间排序再截断：账本一旦被倒序写入，`closed[-KEEP_CLOSED:]` 切掉的就是
     # 「最后几条」＝最新几条，刚关账的那一轮当场消失（report_check 随后报「没有这条素材」）。
     # 排序让截断只依赖 closed_at，不依赖文件里行序是正是反。
-    closed.sort(key=lambda r: r.get("closed_at") or "")
+    # 次级键取 opened_at：同一秒内重开重关同一素材时两个 closed_at 相同，只按
+    # closed_at 排会退化成文件序，而文件序里新关的那条排在旧条**前面**（新轮次
+    # 先作为 opened 写入，再关闭），`rows[-1]` 因此取到旧轮次——报告闸门读到
+    # 上一版的 updated 与 detail，据此判「新建/更新」两段就会全判错。
+    closed.sort(key=lambda r: (r.get("closed_at") or "", r.get("opened_at") or ""))
     opened.sort(key=lambda r: r.get("opened_at") or "")
     data["rounds"] = opened + closed[-KEEP_CLOSED:]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,8 +90,13 @@ def open_round(url: str, article: str = "") -> dict:
     return entry
 
 
-def close_round(url: str, outcome: str, detail: str = "") -> dict | None:
-    """按 URL 关账。账上没有该 URL 时返回 None（记账晚于抓取的旧轮次）。"""
+def close_round(url: str, outcome: str, detail: str = "", updated: str = "") -> dict | None:
+    """按 URL 关账。账上没有该 URL 时返回 None（记账晚于抓取的旧轮次）。
+
+    `updated` 记的是 `detail` 里哪几个 id 属于「更新既有卡」，其余按新建算。
+    报告要求「新建与更新分开写」，而云端看不出这件事（新建卡的 created_at 也可能
+    就是今天），所以只能由关账这一手写进账本，报告闸门再据此对账。
+    """
     path = ledger_path()
     data = _load(path)
     closed = None
@@ -96,6 +105,7 @@ def close_round(url: str, outcome: str, detail: str = "") -> dict | None:
             r["closed_at"] = datetime.now().isoformat(timespec="seconds")
             r["outcome"] = outcome
             r["detail"] = detail
+            r["updated"] = updated
             closed = r
     if closed is not None:
         _save(path, data)
