@@ -183,5 +183,35 @@ for i in $(seq 1 $MAX); do
   kill "$TUN" 2>/dev/null; TUN=""
 done
 
-echo "[push] 已重试 $MAX 次仍失败，请检查网络/隧道"
+# ---- 3. SSH 回退：HTTPS 隧道全不通时改走 22 端口 ----
+# 为什么需要这条：隧道与 token 都只解决「认证 + 线路选举」，解决不了「HTTPS 到 GitHub
+# 整段不可达」。实测代理回 502 CONNECT tunnel failed、直连 443 超时，此时重试多少次
+# 都是同一个错；而 `git@github.com:22` 同时可用且已认证成功。两条通道互不依赖，
+# 缺了回退就只能等网络恢复，推送这件事被环境单向绑死。
+#
+# 必须重置 GIT_CONFIG_COUNT：上面已写入 5 条（含两条 url.*.insteadOf，一条把
+# https://github.com/ 映射到带 token 的 https、一条把它映射到 SSH）。两条前缀等长，
+# 同时存在时 git 选哪条不确定——不重置就会在「该走 SSH」时又拼出 https URL。
+echo "[push] HTTPS 通道 $MAX 次均失败，改试 SSH 通道（22 端口）…"
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
+export GIT_CONFIG_KEY_1="url.git@github.com:.insteadOf"
+export GIT_CONFIG_VALUE_1="https://github.com/"
+# 首次连新主机时自动收 key；SSH 不走 http.proxy，隧道端口对它无影响。
+export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+
+if git ls-remote origin HEAD >/dev/null 2>&1; then
+  if git push origin HEAD 2>&1 | sed 's/^/[push] /'; then
+    echo "[push] 推送完成（SSH 通道），校验远端 HEAD："
+    git ls-remote origin HEAD
+    echo "[push] OK"
+    echo "[push] 提示：本机 HTTPS 通道当前不可用，下次推送会先空跑 4 次再回退，耗时约半分钟。" >&2
+    exit 0
+  fi
+  echo "[push] SSH 通道也推送失败，请检查网络" >&2
+  exit 1
+fi
+
+echo "[push] 已重试 $MAX 次仍失败，SSH 通道亦不可达；请检查网络/隧道" >&2
 exit 1
