@@ -4,12 +4,16 @@
 # 把"清掉 ~/.gitconfig 写死的 7897 代理 + 起干净隧道 + 认证 + commit + push +
 # git ls-remote 校验远端"全部固化成一条命令，杜绝每次手搓 bash。
 #
-# 认证策略（关键）：默认用本机明文缓存凭据 ~/.git-credentials 里的 github token，
-#   经 `url.<token>@github.com/.insteadOf` 内联 + `credential.helper=` 关闭 manager。
+# 认证策略（两条通道，SSH 优先）：
+#   1. SSH（首选）：22 端口 + 本机密钥，经 `url.git@github.com/.insteadOf` 把 https
+#      URL 转成 SSH，**不改仓库的 remote 配置**。不经代理、不读凭据文件，
+#      因此 HTTPS 整段不可达时它仍然可用（实测代理 502 + 443 直连超时，SSH 正常）。
+#   2. HTTPS（回退）：本机明文缓存凭据 ~/.git-credentials 里的 github token，
+#      经 `url.<token>@github.com/.insteadOf` 内联 + `credential.helper=` 关闭 manager。
 #   **绝不使用 gh 凭据助手**——gh 取令牌会调被安全策略黑名单的 reg.exe，触发权限弹窗/
 #   被拒，且 GitHub IP 偶发 TLS EOF 时脚本重试会让 gh 反复重读凭据、反复撞 reg.exe。
 #   明文缓存凭据位于 git 自己的 store helper（非 Windows 凭据管理器），读取不依赖 reg.exe。
-#   若 ~/.git-credentials 无 github 条目，脚本直接报错退出，不回落到 gh。
+#   两条都不可用时才报错退出，不回落到 gh。
 #
 # 遇 GitHub 美国段 IP 的 TLS unexpected eof：自动重启干净隧道重试，
 #   最多 4 次（SOP：推送遇 EOF 先重启隧道，勿沿用经历波动的旧进程）。
@@ -79,15 +83,16 @@ if [ -f "$CRED_FILE" ]; then
            | sed -E 's#https://[^:]*:([^@]*)@.*#\1#' || true)"
 fi
 if [ -z "$TOKEN" ]; then
-  echo "[push] 错误：~/.git-credentials 中无 github.com 条目，无法避开 reg.exe 黑名单。" >&2
-  echo "[push] 请先 \`git credential approve\` 或手动写入，或用其他方式授权后重试。" >&2
+  echo "[push] 注意：~/.git-credentials 中无 github.com 条目，HTTPS 通道不可用（SSH 仍可尝试）。" >&2
+  echo "[push] 如需 HTTPS 回退，请先 \`git credential approve\` 或手动写入。" >&2
   echo "[push] 期望格式（每行一条）：https://<user>:<token>@github.com" >&2
-  exit 3
+else
+  # 格式自检：token 不该含空白 / 引号 / @，否则下面的 insteadOf 拼接会产生畸形 URL
+  case "$TOKEN" in
+    *[[:space:]\'\"@]*) echo "[push] 错误：解析出的 token 含非法字符，请检查 ~/.git-credentials 格式。" >&2
+                        echo "[push] 若无有效 token，请改用可用的 SSH 密钥。" >&2; TOKEN="" ;;
+  esac
 fi
-# 格式自检：token 不该含空白 / 引号 / @，否则下面的 insteadOf 拼接会产生畸形 URL
-case "$TOKEN" in
-  *[[:space:]\'\"@]*) echo "[push] 错误：解析出的 token 含非法字符，请检查 ~/.git-credentials 格式。" >&2; exit 3 ;;
-esac
 
 # ---- 1. 暂存 + 提交（只做一次）----
 # 提交前先禁用 Qoder post-commit hook：否则会拉起 Qoder.exe→reg.exe 被黑名单拦截（无害但噪音）
@@ -146,7 +151,46 @@ if [ "$NO_COMMIT" -eq 0 ]; then
   fi
 fi
 
-# ---- 2. 起隧道 + 推送（带重试）----
+# ---- 2. 首选 SSH（22 端口）----
+# 顺序为什么是 SSH 在前：两条通道依赖的东西不同。HTTPS 段要选举线路、内联 token，
+# 还要求代理能 CONNECT 到 github.com:443；SSH 只要 22 端口可达且本机有密钥，不经
+# HTTP 代理、不读 ~/.git-credentials。实测 HTTPS 整段不可达（代理回 502、直连 443
+# 超时）时 SSH 一直正常——可用性更高的通道放手选位置：网络正常时省掉一轮隧道选举，
+# 异常时不必先空转 4 次失败再回退。
+#
+# 先 ls-remote 探测再推：探测失败即判定无可用密钥或 22 端口被封，直接落到 token
+# 通道，不让一次注定失败的 push 先打半屏错误。
+#
+# 这里显式重设 GIT_CONFIG_COUNT：第 1 步只设了 1 条 hooksPath，而 HTTPS 段会写入
+# url.*.insteadOf（把 https://github.com/ 映射到带 token 的 https）。同一前缀的两条
+# insteadOf 并存时 git 选哪条不确定，故只设本段需要的 2 条。
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
+export GIT_CONFIG_KEY_1="url.git@github.com:.insteadOf"
+export GIT_CONFIG_VALUE_1="https://github.com/"
+# 首次连新主机时自动收 key；SSH 不走 http.proxy，隧道端口对它无影响。
+export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+
+if git ls-remote origin HEAD >/dev/null 2>&1; then
+  echo "[push] 走 SSH 通道推送…"
+  if git push origin HEAD 2>&1 | sed 's/^/[push] /'; then
+    echo "[push] 推送完成（SSH），校验远端 HEAD："
+    git ls-remote origin HEAD
+    echo "[push] OK"
+    exit 0
+  fi
+  echo "[push] SSH 推送失败，改试 HTTPS 通道…" >&2
+else
+  echo "[push] SSH 不可用（无密钥或 22 端口不通），改试 HTTPS 通道…" >&2
+fi
+
+# ---- 3. HTTPS 回退：隧道 + 内联 token（带重试）----
+if [ -z "$TOKEN" ]; then
+  echo "[push] 错误：SSH 与 HTTPS 两条通道都不可用（无密钥，也无 github token）。" >&2
+  echo "[push] 任选其一后重试：配一个 GitHub SSH 密钥，或写 ~/.git-credentials。" >&2
+  exit 3
+fi
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY 2>/dev/null || true
 MAX=4
 TUN=""
@@ -183,35 +227,5 @@ for i in $(seq 1 $MAX); do
   kill "$TUN" 2>/dev/null; TUN=""
 done
 
-# ---- 3. SSH 回退：HTTPS 隧道全不通时改走 22 端口 ----
-# 为什么需要这条：隧道与 token 都只解决「认证 + 线路选举」，解决不了「HTTPS 到 GitHub
-# 整段不可达」。实测代理回 502 CONNECT tunnel failed、直连 443 超时，此时重试多少次
-# 都是同一个错；而 `git@github.com:22` 同时可用且已认证成功。两条通道互不依赖，
-# 缺了回退就只能等网络恢复，推送这件事被环境单向绑死。
-#
-# 必须重置 GIT_CONFIG_COUNT：上面已写入 5 条（含两条 url.*.insteadOf，一条把
-# https://github.com/ 映射到带 token 的 https、一条把它映射到 SSH）。两条前缀等长，
-# 同时存在时 git 选哪条不确定——不重置就会在「该走 SSH」时又拼出 https URL。
-echo "[push] HTTPS 通道 $MAX 次均失败，改试 SSH 通道（22 端口）…"
-export GIT_CONFIG_COUNT=2
-export GIT_CONFIG_KEY_0=core.hooksPath
-export GIT_CONFIG_VALUE_0="$EMPTY_HOOKS"
-export GIT_CONFIG_KEY_1="url.git@github.com:.insteadOf"
-export GIT_CONFIG_VALUE_1="https://github.com/"
-# 首次连新主机时自动收 key；SSH 不走 http.proxy，隧道端口对它无影响。
-export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
-
-if git ls-remote origin HEAD >/dev/null 2>&1; then
-  if git push origin HEAD 2>&1 | sed 's/^/[push] /'; then
-    echo "[push] 推送完成（SSH 通道），校验远端 HEAD："
-    git ls-remote origin HEAD
-    echo "[push] OK"
-    echo "[push] 提示：本机 HTTPS 通道当前不可用，下次推送会先空跑 4 次再回退，耗时约半分钟。" >&2
-    exit 0
-  fi
-  echo "[push] SSH 通道也推送失败，请检查网络" >&2
-  exit 1
-fi
-
-echo "[push] 已重试 $MAX 次仍失败，SSH 通道亦不可达；请检查网络/隧道" >&2
+echo "[push] 已重试 $MAX 次仍失败，请检查网络/隧道" >&2
 exit 1

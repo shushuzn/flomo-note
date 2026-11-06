@@ -101,8 +101,11 @@ def main(argv=None) -> int:
     # ---- 明细行与「新建 / 更新」分段解析 ----
     detail_rows = []
     prose_lines = []
-    # 值是这一段的条目概念名；None 表示这一段没出现（与「出现但是空的」分开判）。
-    sections: dict[str, list[str] | None] = {"新建": None, "更新": None}
+    # 段是否出现单独记在 seen_section 里，不在 sections 的值上区分「没出现」与
+    # 「出现但空」：`dict[str, list[str] | None]` 的索引访问每次都是新求值，mypy
+    # 无法靠前一个 if 收窄，append 会按 None 报错（CI 的 mypy 阶段就是这么红的）。
+    sections: dict[str, list[str]] = {"新建": [], "更新": []}
+    seen_section: set[str] = set()
     current = None
     for line in text.split("\n"):
         s = line.strip()
@@ -113,9 +116,11 @@ def main(argv=None) -> int:
         sm = SECTION.match(s)
         if sm:
             current = sm.group(1)
-            if sections[current] is not None:
+            if current in seen_section:
+                # 只报重复，不清空已收集的条目：清空会把前面的条目一起丢掉，
+                # 随后又误报一条「段缺这些卡」，同一处写错变成两条互相矛盾的提示。
                 errors.append(f"「{current}」段出现了两次——两段各自只该有一处标题")
-            sections[current] = []
+            seen_section.add(current)
             continue
         bm = BULLET.match(s)
         if bm and current:
@@ -195,12 +200,13 @@ def main(argv=None) -> int:
     if ids:
         for kind, want_ids in (("新建", created_ids), ("更新", updated_ids)):
             block = sections[kind]
-            if want_ids and block is None:
+            has_section = kind in seen_section
+            if want_ids and not has_section:
                 errors.append(
                     f"本轮有 {len(want_ids)} 张{kind}卡，报告里没有独立的「{kind}」段——"
                     f"新建与更新必须分开写，不能都并进「建了 N 张卡」")
                 continue
-            if not want_ids and block is not None:
+            if not want_ids and has_section:
                 errors.append(
                     f"报告写了「{kind}」段，但本轮没有{kind}卡——空段会被读成漏了卡")
                 continue
