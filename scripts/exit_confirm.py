@@ -104,11 +104,24 @@ def main():
             print(f"[退出拦截] --published 里有不像 memo id 的值：{', '.join(bad)}",
                   file=sys.stderr)
             return 1
-        missed = [u for u in urls
-                  if round_ledger.close_round(u, "published", ",".join(published)) is None]
+        backfilled, missed = [], []
+        for u in urls:
+            if round_ledger.close_round(u, "published", ",".join(published)) is not None:
+                continue
+            # 账上没有这条素材：本轮没走抓取开账（直接粘贴全文），或旧轮次已被裁掉。
+            # 补开一轮再关，否则 report_check 取不到 id，报告闸门对这类素材整体失效。
+            round_ledger.open_round(u)
+            if round_ledger.close_round(u, "published", ",".join(published)) is not None:
+                backfilled.append(u)
+            else:
+                missed.append(u)
         print(f"[关账] 建卡 {len(published)} 张，素材 {len(urls)} 条已关闭")
+        if backfilled:
+            print("[提示] 这些素材账上原本没有开账记录（直接粘贴全文或旧轮次已裁），"
+                  f"已补录一条并关闭：{'、'.join(backfilled)}")
         if missed:
-            print(f"[提示] 账上本来没有这些链接（早于记账上线或已关过）：{'、'.join(missed)}")
+            print(f"[退出拦截] 补录后仍关不上：{'、'.join(missed)}", file=sys.stderr)
+            return 1
         return 0
 
     missing = [n for n, v in (("--objects", args.objects),
@@ -216,11 +229,22 @@ def main():
         print("  5. 确认确实无建卡价值，再跑本脚本留痕", file=sys.stderr)
         return 1
 
-    missed = [u for u in urls
-              if round_ledger.close_round(u, "exit", f"{len(objs)} 个对象") is None]
+    backfilled, missed = [], []
+    for u in urls:
+        if round_ledger.close_round(u, "exit", f"{len(objs)} 个对象") is not None:
+            continue
+        round_ledger.open_round(u)
+        if round_ledger.close_round(u, "exit", f"{len(objs)} 个对象") is not None:
+            backfilled.append(u)
+        else:
+            missed.append(u)
     print(f"[退出留痕] 已记录：{len(objs)}个对象审视完毕，HTTP校验通过；素材 {len(urls)} 条已关账")
+    if backfilled:
+        print("[提示] 这些素材账上原本没有开账记录（直接粘贴全文或旧轮次已裁），"
+              f"已补录一条并关闭：{'、'.join(backfilled)}")
     if missed:
-        print(f"[提示] 账上本来没有这些链接（早于记账上线或已关过）：{'、'.join(missed)}")
+        print(f"[退出拦截] 补录后仍关不上：{'、'.join(missed)}", file=sys.stderr)
+        return 1
     return 0
 
 

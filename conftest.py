@@ -19,6 +19,7 @@ sys.exit），默认收集会 import 它们，SystemExit 在收集阶段就炸�
 """
 
 import runpy
+import sys
 import types
 from pathlib import Path
 
@@ -54,11 +55,18 @@ class ScriptItem(pytest.Item):
     def runtest(self):
         # run_name="__main__" 让文件里的 `if __name__ == "__main__"` 照常执行；
         # SystemExit 是脚本的正常出口，码非 0 才算失败。
+        # argv 也要还原成「python tests/xxx.py」——`unittest.main()` 解析的是
+        # `sys.argv`，在 pytest 进程里拿到的是 pytest 自己的参数（-q、路径…），
+        # 于是这类用例在 pytest 入口恒失败、而单跑通过。
+        saved_argv = sys.argv
+        sys.argv = [str(self.path)]
         try:
             runpy.run_path(str(self.path), run_name="__main__")
         except SystemExit as exc:
             if exc.code not in (0, None):
                 raise AssertionError(f"退出码 {exc.code}（0 才算过）") from None
+        finally:
+            sys.argv = saved_argv
 
     def repr_failure(self, excinfo):  # 失败时把文件自己的输出摆出来，不套 pytest 的话术
         if isinstance(excinfo.value, AssertionError):
