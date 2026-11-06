@@ -44,20 +44,33 @@ def _load(path: Path) -> dict:
     return data
 
 
+def _next_seq(rounds: list[dict]) -> int:
+    """单调递增序号：同一秒内的先后只有它能分辨（时间戳精确到秒）。"""
+    return max((r.get("seq") or 0 for r in rounds), default=0) + 1
+
+
 def _save(path: Path, data: dict) -> None:
     rounds = data["rounds"]
-    closed = [r for r in rounds if r.get("closed_at")]
-    opened = [r for r in rounds if not r.get("closed_at")]
-    # 先按时间排序再截断：账本一旦被倒序写入，`closed[-KEEP_CLOSED:]` 切掉的就是
-    # 「最后几条」＝最新几条，刚关账的那一轮当场消失（report_check 随后报「没有这条素材」）。
-    # 排序让截断只依赖 closed_at，不依赖文件里行序是正是反。
-    # 次级键取 opened_at：同一秒内重开重关同一素材时两个 closed_at 相同，只按
-    # closed_at 排会退化成文件序，而文件序里新关的那条排在旧条**前面**（新轮次
-    # 先作为 opened 写入，再关闭），`rows[-1]` 因此取到旧轮次——报告闸门读到
-    # 上一版的 updated 与 detail，据此判「新建/更新」两段就会全判错。
-    closed.sort(key=lambda r: (r.get("closed_at") or "", r.get("opened_at") or ""))
-    opened.sort(key=lambda r: r.get("opened_at") or "")
-    data["rounds"] = opened + closed[-KEEP_CLOSED:]
+    # 整体保持时间正序，**不按「未关闭 / 已关闭」分段拼接**。
+    #
+    # 不能写成 `opened + closed[-KEEP_CLOSED:]`（未关闭的排前面）。那有一个真实后果：
+    # 分段拼接会把刚 open 的那条挪到已关闭条目的**前面**，从此账本不再时间有序；
+    # 而 `closed_at` 只精确到秒、`opened_at` 同样只到秒，同一秒里连做几轮（用例里
+    # 就是连做五轮）时三个排序键全部相等，稳定排序保持的正是这个被打乱的顺序。
+    # 于是 `[r for r ...][-1]` 取到最旧那一轮——报告闸门读到的是上一版的
+    # `updated`/`detail`，据此判「新建/更新」两段会全判错，而两边看上去都对。
+    #
+    # 现在：先按 (closed_at, opened_at, seq) 排正序，`seq` 兜住同秒；截断只动最旧的
+    # 已关闭条目，未关闭的一律保留（它们代表待关账的轮次，不能丢）。
+    ordered = sorted(rounds, key=lambda r: (r.get("opened_at") or "", r.get("seq") or 0))
+    # 裁「最旧」要按关账时间判，不按 opened_at：某条可能开得很早却关得很晚。
+    closed_sorted = sorted((r for r in ordered if r.get("closed_at")),
+                           key=lambda r: (r.get("closed_at") or "", r.get("seq") or 0))
+    overflow = len(closed_sorted) - KEEP_CLOSED
+    if overflow > 0:
+        drop = {id(r) for r in closed_sorted[:overflow]}
+        ordered = [r for r in ordered if id(r) not in drop]
+    data["rounds"] = ordered
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".rounds.", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -84,6 +97,8 @@ def open_round(url: str, article: str = "") -> dict:
         "closed_at": None,
         "outcome": "",
         "detail": "",
+        # 时间戳只到秒，同一秒里连开几轮就分不出先后；排序拿它做末级键。
+        "seq": _next_seq(data["rounds"]),
     }
     data["rounds"].append(entry)
     _save(path, data)

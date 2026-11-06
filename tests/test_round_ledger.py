@@ -75,6 +75,34 @@ check("倒序账本裁剪后仍留着刚开的那一轮", "https://example.com/n
 check("倒序账本裁剪后留下的是最新几条", "https://example.com/old0" not in _kept, _kept)
 check("关账条数不超过上限", len([u for u in _kept if "old" in u]) <= RL.KEEP_CLOSED, len(_kept))
 
+# ⑧ 同一秒内连开连关时，账本必须仍是时间正序，且末条就是最后关账的那一轮。
+#    旧实现把 rounds 重组成 `opened + closed[-N:]`，未关闭条目被挪到最前，从此账本
+#    不再有序；三个排序键（closed_at / opened_at 都只到秒）全部相等时，稳定排序
+#    保持的正是这个乱序，`rows[-1]` 于是取到最旧一轮。后果不是报错，是**静默判错**：
+#    report_check 拿上一版的 updated 判「新建 / 更新」，两边看上去都对。
+# 排序哨兵：只要求「三条同一秒」且字典序小于真实时间戳（'0' < '2'），
+# 不能写成真实日期——技能文档禁写具体日期（H28）。
+_T = "0000T00:00:00"
+_rows_same = [
+    {"url": "https://example.com/a", "article": "", "opened_at": _T, "closed_at": _T,
+     "outcome": "published", "detail": "第一轮", "updated": ""},
+    {"url": "https://example.com/a", "article": "", "opened_at": _T, "closed_at": _T,
+     "outcome": "published", "detail": "第二轮", "updated": "u1"},
+]
+_ledger.write_text(json.dumps({"rounds": _rows_same}, ensure_ascii=False), encoding="utf-8")
+RL.open_round("https://example.com/a", "")
+_order = [r.get("detail") or "(未关闭)" for r in RL._load(_ledger)["rounds"]]
+check("同秒内新开的轮次落在末尾，不被挪到最前", _order[-1] == "(未关闭)", _order)
+RL.close_round("https://example.com/a", "published", "第三轮", "u3")
+_rows3 = RL._load(_ledger)["rounds"]
+check("同秒内多次关账后，末条是最后关账的那一轮", _rows3[-1].get("detail") == "第三轮",
+      [r.get("detail") for r in _rows3])
+check("同秒内多次关账后，末条带的是这次写的 updated", _rows3[-1].get("updated") == "u3",
+      _rows3[-1].get("updated"))
+check("同秒内多次关账后账本仍时间正序",
+      [r.get("detail") for r in _rows3] == ["第一轮", "第二轮", "第三轮"],
+      [r.get("detail") for r in _rows3])
+
 print("---")
 print("全部通过" if all(RESULTS) else "存在失败用例")
 sys.exit(0 if all(RESULTS) else 1)
