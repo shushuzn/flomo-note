@@ -59,6 +59,14 @@ HUMAN_JUDGMENT = [
 
 STRUCT_LABELS = ("要点", "结构", "标签")
 
+# 只拦「整行就是结构标签」的情形，不能拿前缀判。
+# 概念名是学术复合名词时，首词常与结构标签同形：结构笛卡尔流、结构集、标签传播。
+# 旧逻辑用 startswith，会把这类正常概念名整批判 FAIL；真正要拦的是
+# 「结构」「要点」「标签」单独成行，或后面只跟一个冒号的结构标签行。
+_STRUCT_LABEL_LINE = re.compile(
+    r"^(?:" + "|".join(re.escape(x) for x in STRUCT_LABELS) + r")\s*[：:]?\s*$"
+)
+
 
 def _undo_render_blank(content: str):
     """还原渲染层在标签段后补的那一个空行。返回 (正文, 是否还原过)。
@@ -140,7 +148,7 @@ def run(memo_id: str, client=None, draft_path=None):
     checks.append(("首行是完整标签段", first.startswith("#") and "/" in first, first[:60]))
     checks.append(("第二行是概念名",
                    bool(second) and not second.startswith("#")
-                   and not second.startswith(STRUCT_LABELS),
+                   and not _STRUCT_LABEL_LINE.match(second),
                    second[:60]))
 
     # 形态检查同源于写前校验器：清空模块级列表后跑一遍。

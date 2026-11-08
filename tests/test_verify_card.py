@@ -115,6 +115,16 @@ def run_cases():
     checks, _ = VC.run("TESTID", FakeClient(memo(label_second)))
     check("第二行是结构标签判失败", not by_name(checks)["第二行是概念名"][0])
 
+    # 5b) 学术复合名词以「结构」开头：不能按前缀误判成结构标签。
+    term_second = "#科技/安全\n结构笛卡尔流\n\n要点：\n- 首词与结构标签同形，但整行是学术概念名。\n"
+    checks, info = VC.run("TESTID", FakeClient(memo(term_second)))
+    check("结构式学术概念名放行", by_name(checks)["第二行是概念名"][0], repr(info["second"]))
+
+    # 5c) 真结构标签后面只多一个冒号，仍要判失败。
+    label_colon = "#科技/安全\n结构：\n- 直接进正文。\n"
+    checks, _ = VC.run("TESTID", FakeClient(memo(label_colon)))
+    check("带冒号的结构标签仍判失败", not by_name(checks)["第二行是概念名"][0])
+
     # 6) 公式占位符残留：抽取坏的唯一可观测特征
     broken = GOOD + "- 界为 〈M12〉 与 〖M7〗。\n"
     checks, _ = VC.run("TESTID", FakeClient(memo(broken)))
