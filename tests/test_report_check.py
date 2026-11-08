@@ -45,6 +45,8 @@ CARDS = {
                      "content": "#科技/编程语言 #产业/游戏<br>\nVerse<br>\n\n正文\n"},
     "MjY0MTIzNTQw": {"word_count": 512, "tags": ["a"],
                      "content": "#产业/游戏<br>\n场景图<br>\n\n正文\n"},
+    "MjY0MTIzNTUw": {"word_count": 600, "tags": ["a"],
+                     "content": "#AI/智能体<br>\nDots：常驻智能体<br>\n\n正文\n"},
 }
 URL = "https://example.com/a"
 
@@ -123,6 +125,17 @@ def _run_all() -> int:
     flat = good.replace("新建：\n", "")
     rc = _run(flat)
     check("全新建但缺「新建」段被拦", rc == 1, f"退出码 {rc}")
+
+    # 2c. 概念名本身含全角冒号：明细行要按最后一个冒号切出 id → 放行
+    _prepare(["MjY0MTIzNTUw"])
+    colon_name = (
+        "建了 1 张卡。\n\n"
+        "新建：\n"
+        "- Dots：常驻智能体：这轮记它的常驻形态。\n\n"
+        "Dots：常驻智能体：MjY0MTIzNTUw，#AI/智能体，实测 600 字"
+    )
+    rc = _run(colon_name)
+    check("概念名含冒号时明细仍可解析", rc == 0, f"退出码 {rc}")
 
     # 3. 字数抄错 → 必须拦
     bad_n = good.replace("实测 444 字", "实测 450 字")

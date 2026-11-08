@@ -37,8 +37,10 @@ import verify_card  # noqa: E402
 
 # 明细行：`概念名：id，标签，实测 N 字`
 # 标签允许一个或多个 `#顶层/二级`，以空格分隔；全角逗号与半角都收。
+# 概念名本身可能含全角冒号（如 `Dots：OpenAI 常驻型个人智能体`），
+# 故名字段按贪婪匹配、由右侧的 id 反向定位最后一个冒号；不能用 [^：] 排除冒号。
 DETAIL = re.compile(
-    r"^(?P<name>[^：\n]{1,60})：\s*(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
+    r"^(?P<name>[^\n]{1,80})：\s*(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
     r"(?P<tags>#[^\s，,]+(?:[ 　]#[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
 )
 
@@ -125,7 +127,11 @@ def main(argv=None) -> int:
         bm = BULLET.match(s)
         if bm and current:
             body = bm.group("body").strip()
-            parts = re.split(r"[：:]", body, maxsplit=1)
+            # 概念名本身可能含冒号（如 `Dots：OpenAI 常驻型个人智能体`）；
+            # 分段条目是「概念名：一句」，故按最后一个冒号切，前面整体当概念名。
+            sep = "：" if "：" in body else ":"
+            head, found, tail = body.rpartition(sep)
+            parts = [head, tail] if found and head.strip() and tail.strip() else []
             if len(parts) < 2 or not parts[0].strip():
                 errors.append(
                     f"「{current}」段的这一条不是「概念名：一句」的写法：{body[:24]}")
