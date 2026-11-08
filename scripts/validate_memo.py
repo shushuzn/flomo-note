@@ -940,8 +940,28 @@ def _check_concept_slice(lines):
         # Ticktockman》）。判 ERR 会逼人改书名，故先认出这种包裹形态再判分句。
         _wrapped_title = re.fullmatch(
             r"《[^》]+》|「[^」]+」|“[^”]+”|\"[^\"]+\"", lines[cname_idx].strip())
+
+        def _strip_balanced_math(text):
+            """去掉成对括号内的内容，只保留括号外的文字。
+
+            数学概念名里的逗号常是记号的一部分：`(δ,R)-消失条件` 的逗号在圆括号内，
+            `H^{s,p} 内估计` 的逗号在花括号内。它们不是分句标点，按整句判 ERR 会逼人
+            改掉学术名词（H6b 要求概念名取对象的稳定指称，不能为过检重命名）。
+            只忽略**成对括号内部**的标点；括号外的逗号仍按分句处理。
+            """
+            pairs = (("(", ")"), ("（", "）"), ("{", "}"), ("[", "]"), ("【", "】"))
+            prev = None
+            while prev != text:
+                prev = text
+                for left, right in pairs:
+                    text = re.sub(
+                        re.escape(left) + r"[^" + re.escape(left + right) + r"]*" + re.escape(right),
+                        "", text)
+            return text
+
+        _cname_for_punct = _strip_balanced_math(lines[cname_idx])
         clause_punct = [] if _wrapped_title else [
-            p for p in "，。；！？,;" if p in lines[cname_idx]]
+            p for p in "，。；！？,;" if p in _cname_for_punct]
         if clause_punct:
             err(f"第 {cname_idx + 1} 行概念名称含分句标点「{''.join(clause_punct)}」——"
                 f"概念名是概括主题的名词短语，不是整句（H14）；整句放进概念名会让签名、"
