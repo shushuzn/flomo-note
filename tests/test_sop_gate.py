@@ -939,6 +939,25 @@ def run_usage_consistency_cases():
           f"未文档化：{undocumented}")
 
 
+def run_concept_relation_cases():
+    """近同名判据：首尾相接才算切片，纯拉丁字母增量视为不同术语。"""
+    rel = GATE._concept_relation
+    ident = GATE._concept_identity
+
+    check("近同名·完全同名判 same", rel(ident("Anthropic"), "Anthropic") == "same")
+    check("近同名·英文版本后缀判 near",
+          rel(ident("Anthropic"), "Anthropic S-1") == "near")
+    check("近同名·中文代次后缀判 near",
+          rel(ident("长征十号"), "长征十号乙") == "near")
+    check("近同名·版本号后缀判 near", rel(ident("LLAMA"), "LLAMA-2") == "near")
+    check("近同名·纯拉丁缩写后缀不判 near",
+          rel(ident("iBOT"), "CASIVIBOT") == "")
+    check("近同名·纯拉丁缩写反向不判 near",
+          rel(ident("CASIVIBOT"), "iBOT") == "")
+    check("近同名·中间包含不判 near",
+          rel(ident("BERT"), "RoBERTa") == "")
+
+
 if __name__ == "__main__":
     run_signature_cases()
     run_gate_check_cases()
@@ -954,6 +973,7 @@ if __name__ == "__main__":
     run_semantic_neighbor_cases()
     run_review_net_cases()
     run_usage_consistency_cases()
+    run_concept_relation_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

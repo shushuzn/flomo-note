@@ -434,11 +434,16 @@ def _concept_relation(cur, other):
     """返回 'same' / 'near' / ''。
 
     same：任一同一性口径完全相同——机器可断定是同一对象，直接阻塞。
-    near：一方是另一方的真子串、短名 ≥4 字，且多出来的部分 ≤ `NEAR_EXTRA_MAX`
+    near：一方是另一方的前缀或后缀、短名 ≥4 字，且多出来的部分 ≤ `NEAR_EXTRA_MAX`
           （「Anthropic」/「Anthropic S-1」、`长征十号`/`长征十号乙`）。
           这既可能是同一对象的切片卡，也可能确是两个对象，机器判不了，故同样
           **默认阻塞**，须 `--allow-near-concept` 写明理由放行。多出来的部分更长时
           （事件卡「某甲批评 Anthropic：…」）不算 near——那不是对象名，是句子。
+          只认首尾相接，是因为「短名出现在长名中间」多为缩写碰撞而非同一对象的
+          切片：`iBOT` 落在 `CASIVIBOT` 末端，二者是不同系统，不能据此阻塞。
+          纯拉丁字母的名字再加一道：若加长的部分也全是字母（如 `CASIVIBOT` 相对
+          `iBOT` 多出的 `CASV`），按不同术语放行；只有带数字、连字符等版本标记时才
+          继续判 near（`Anthropic`/`Anthropic S-1`、`LLAMA`/`LLAMA-2`）。
     """
     a1, a2 = cur
     b1, b2 = _concept_identity(other)
@@ -446,12 +451,24 @@ def _concept_relation(cur, other):
         return "same"
     if a2 and a2 == b2:
         return "same"
-    for x, y in ((a2, b2), (b2, a2)):
-        # 两个条件必须同时成立才算 near：前者判「一个是另一个的子串」（对象名被加长），
+    for x, y in ((a1, b1), (b1, a1), (a2, b2), (b2, a2)):
+        # 两个条件必须同时成立才算 near：前者判「短名与长名首尾相接」（对象名被加长），
         # 后者判加长的部分够短（`某甲批评 Anthropic：…` 是句子，不算同一个对象）。
-        if (x and y and x != y and len(x) >= 4 and x in y
-                and len(y.replace(x, "", 1)) <= NEAR_EXTRA_MAX):
-            return "near"
+        if not (x and y and x != y and len(x) >= 4):
+            continue
+        if y.startswith(x):
+            extra = y[len(x):]
+        elif y.endswith(x):
+            extra = y[:len(y) - len(x)]
+        else:
+            continue
+        if len(extra) > NEAR_EXTRA_MAX:
+            continue
+        # 纯拉丁字母、且增量也全是字母：视为两个不同缩写/术语，不判 near。
+        if x.isascii() and x.isalpha() and y.isascii() and y.isalpha() \
+                and extra.isascii() and extra.isalpha():
+            continue
+        return "near"
     return ""
 
 
