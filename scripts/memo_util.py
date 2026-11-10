@@ -209,6 +209,11 @@ SLICE_PATTERNS = [
 ]
 _SLICE_RE = [(lbl, re.compile(pat)) for lbl, pat in SLICE_PATTERNS]
 
+# 法律程序名豁免：`刑事附带民事诉讼` 的「诉讼」是程序类别词，不是事件名词。
+# 「事件名词切片」要求前缀 ≥5 字，恰好把它误判成「限定 + 事件」；它和
+# `医疗事故`、`劳动争议` 属同一防线——去掉「诉讼」不成词，是对象名本身。
+LEGAL_PROCEDURE_NAMES = {"刑事附带民事诉讼"}
+
 
 # ── 谓语动作**提示**（H6b：概念名回答「这是什么」，不回答「发生了什么」）──
 #
@@ -359,7 +364,7 @@ def slice_qualifiers(name: object) -> list[tuple[str, str]]:
       `谓语动作`                ——正则判不准（见 `_predicate_hits`），只报 WARN。
     """
     head = concept_head(name)
-    if not head:
+    if not head or head in LEGAL_PROCEDURE_NAMES:
         return []
     hits = []
     for lbl, rx in _SLICE_RE:
