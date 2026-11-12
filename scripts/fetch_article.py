@@ -46,6 +46,7 @@ import html as html_mod
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -145,6 +146,26 @@ _TAIL_MARKERS = re.compile(
 _TEXT_DATE = re.compile(
     r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T]+(\d{1,2}:\d{2}(?::\d{2})?))?"
 )
+
+
+def is_sogou_wechat_link(url: str) -> bool:
+    """搜狗微信结果给的是 `/link?url=...` 跳转页，不是微信正文页。"""
+    parsed = urllib.parse.urlsplit(url or "")
+    return (parsed.netloc.lower() == "weixin.sogou.com"
+            and parsed.path.rstrip("/") == "/link")
+
+
+def is_wechat_captcha(html: str) -> bool:
+    """识别微信「环境异常 / 去验证」页。
+
+    搜狗微信结果点进去先到 `weixin.sogou.com/link`，再跳
+    `mp.weixin.qq.com/s?src=11&...` 的签名链；该链在无微信登录态时会被
+    `wappoc_appmsgcaptcha` 拦下。这个页面可能仍返回 200，若不单独识别，
+    只会表现为「抽取仅 0 字符」，把「需要过一次验证」误报成普通反爬。
+    """
+    head = html[:8000]
+    return "环境异常" in head and ("wappoc_appmsgcaptcha" in head or "去验证" in head
+                                  or "poc_token" in head)
 
 
 def _title_core(title: str) -> str:
@@ -478,6 +499,11 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
     """
     if via not in net_util.VIA_CHOICES:
         raise UsageError(f"--via 只能是 {'/'.join(net_util.VIA_CHOICES)}，收到 {via!r}")
+    if is_sogou_wechat_link(url):
+        raise FetchError(
+            "搜狗微信结果链接是 /link 跳转页，不是微信正文；"
+            "请改用 mp.weixin.qq.com/s/ 直链"
+        )
     headers = {
         "User-Agent": net_util.user_agent(),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -494,7 +520,32 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
     except net_util.TransportError as exc:
         raise FetchError(str(exc)) from exc
     ctype = reply.headers.get("Content-Type", "")
-    return decode_html(reply.body, ctype), ctype, reply.channel
+    text = decode_html(reply.body, ctype)
+    if is_wechat_captcha(text):
+        # 微信会按出口 IP 判风险：环境代理偶尔拿到验证码页，同一 URL 直连却正常。
+        # auto 模式因此再直连一次；proxy/direct 是用户显式指定，不擅自换出口。
+        if via == "auto":
+            try:
+                reply = net_util.request(url, headers=headers, timeout=timeout, via="direct")
+            except urllib.error.HTTPError as exc:
+                raise FetchError(
+                    f"微信验证码（回退直连时 HTTP {exc.code}）"
+                ) from exc
+            except net_util.TransportError as exc:
+                raise FetchError(f"微信验证码（回退直连失败：{exc}）") from exc
+            ctype = reply.headers.get("Content-Type", "")
+            text = decode_html(reply.body, ctype)
+            if is_wechat_captcha(text):
+                raise FetchError(
+                    "微信文章被验证码拦截：直连仍需验证；请改用 mp.weixin.qq.com/s/ 直链，"
+                    "或在浏览器里过一次验证后重试"
+                )
+            return text, ctype, reply.channel + "（代理验证码→直连回退）"
+        raise FetchError(
+            "微信文章被验证码拦截：请改用 mp.weixin.qq.com/s/ 直链，"
+            "或改用 --via auto 让脚本换出口，或在浏览器里过一次验证后重试"
+        )
+    return text, ctype, reply.channel
 
 
 def main(argv: list[str] | None = None) -> int:

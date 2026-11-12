@@ -112,6 +112,21 @@ try:
     check("取到材料后自动开账", rc == 0 and pending == ["https://b.example/2"], (rc, pending))
     SH.round_ledger.close_round("https://b.example/2", "exit", "测试")
     _restore()
+    # ⑥ 指定搜狗微信入口时，引擎选择必须真的传到 run_search
+    _install(["https://b.example/2"], {"https://b.example/2": good})
+    seen = []
+    orig_run = SH.SW.run_search
+    SH.SW.run_search = lambda q, **kw: (seen.append(kw.get("engines")) or {
+        "engine_used": "sogou_wechat", "search_url": "https://weixin.sogou.com/weixin?type=2&query=" + q,
+        "results": [{"url": "https://b.example/2", "title": "标题", "snippet": ""}],
+        "rejected": [],
+    })
+    got = SH.hunt("绿债", "", 100, 5, 5.0, "direct", ("sogou_wechat",))
+    check("指定引擎后传给 run_search", seen == [("sogou_wechat",)], seen)
+    check("微信入口仍按普通候选抓取判定", (got["accepted"] or {}).get("url") == "https://b.example/2",
+          got["accepted"])
+    SH.SW.run_search = orig_run
+    _restore()
 finally:
     _restore()
 

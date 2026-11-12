@@ -65,6 +65,22 @@ BAIDU_GOOD = """
 <div class="c-abstract">非改居指把非居住用房改建为居住用途。</div></div>
 """
 
+SOGOU_WECHAT_GOOD = """
+<ul class="news-list">
+<li id="sogou_vr_11002601_box_0">
+  <div class="img-box"><a href="/link?url=img">图片</a></div>
+  <div class="txt-box"><h3><a href="/link?url=abc">豆包工作接入更多模型，推出限时特惠计划</a></h3>
+  <p class="txt-info">豆包工作新增 Kimi K3.1 Pro、GLM 5.3、DeepSeek V4.1 Flash 等第三方模型。</p>
+  <div class="s-p"><span class="all-time-y2">豆包</span></div></div>
+</li>
+<li id="sogou_vr_11002601_box_1">
+  <div class="txt-box"><h3><a href="/link?url=def">豆包工作接入第三方模型，企业使用前先看这几件事</a></h3>
+  <p class="txt-info">额度消耗倍率与模型选择页面的关系。</p>
+  <div class="s-p"><span class="all-time-y2">AI科技号外</span></div></div>
+</li>
+</ul>
+"""
+
 
 def test_tokens():
     """词块：短词丢掉、停用词丢掉、去重、标点切开。"""
@@ -186,6 +202,30 @@ def test_name_variant_match():
 
 
 
+def test_sogou_wechat_engine():
+    """搜狗微信搜索是独立入口：结果块、相对链接、留痕地址都要认对。
+
+    这条与普通搜狗网页搜索分开：普通搜狗用 `vrwrap`，微信搜索用
+    `ul.news-list > li`；链接是 `weixin.sogou.com/link` 跳转页，不是微信直链，
+    所以只做候选发现，不冒充正文来源。
+    """
+    results = SW.parse_sogou_wechat(SOGOU_WECHAT_GOOD)
+    check("微信结果块解析出 2 条", len(results) == 2, len(results))
+    check("微信标题解析", "豆包工作接入更多模型" in results[0]["title"], results[0])
+    check("微信摘要解析", "Kimi" in results[0]["snippet"], results[0])
+    check("相对跳转补成微信搜索域名",
+          results[0]["url"].startswith("https://weixin.sogou.com/link?url="),
+          results[0]["url"])
+
+    report = SW.run_search("豆包工作 接入更多模型", engines=("sogou_wechat",),
+                           fetcher=lambda engine, url: SOGOU_WECHAT_GOOD)
+    check("微信搜索那一路可被采用", report["engine_used"] == "sogou_wechat",
+          report["engine_used"])
+    check("微信留痕地址来自同一张引擎表",
+          report["search_url"] == SW.ENGINES["sogou_wechat"][0]("豆包工作 接入更多模型"),
+          report["search_url"])
+
+
 def test_real_url_landing():
     """留痕地址必须来自同一张引擎表，且真发出过的那一次。"""
     report = SW.run_search("非改居", engines=("baidu",),
@@ -261,6 +301,7 @@ def main():
     test_interleaved_word_order()
     test_generic_words_not_evidence()
     test_name_variant_match()
+    test_sogou_wechat_engine()
     test_real_url_landing()
     test_fallback_engine()
     test_all_rejected()

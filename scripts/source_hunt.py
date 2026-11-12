@@ -20,6 +20,8 @@
   python scripts/source_hunt.py "绿债"
   python scripts/source_hunt.py "绿债" --query "绿债 市场规模 2026" --min-chars 1200
   python scripts/source_hunt.py "转型金融" --max-try 6 --json _tmp/hunt.json
+  python scripts/source_hunt.py "豆包工作 接入更多模型" --engines sogou_wechat
+    （只做搜狗微信候选发现；结果仍是 /link 跳转页，抓正文须另给微信直链）
 
 退出码：
   0  已取到材料并开账（打印采用链接与落盘路径）
@@ -50,6 +52,7 @@ _OPTS = [
     Opt("--max-try", "max_try", "int", low=1, default=DEFAULT_MAX_TRY),
     Opt("--timeout", "timeout", "float", low=1, default=30.0),
     Opt("--via", "via", default="auto"),
+    Opt("--engines", "engines", default=""),
     Opt("--json", "json_out", default=None),
     Opt("--no-ledger", "no_ledger", "flag"),
 ]
@@ -69,10 +72,15 @@ def _relevance(body: str, chunks: list[str]) -> tuple[int, int]:
 
 
 def hunt(term: str, query: str, min_chars: int, max_try: int,
-         timeout: float, via: str) -> dict:
-    """搜一枪、逐条试抓；返回 {accepted, candidates, search}。"""
+         timeout: float, via: str, engines=None) -> dict:
+    """搜一枪、逐条试抓；返回 {accepted, candidates, search}。
+
+    `engines` 只影响发现入口；默认沿用 `search_web.DEFAULT_ENGINES`。
+    搜狗微信入口（`sogou_wechat`）给的是候选标题和跳转页，不能当正文页；
+    逐条抓取时仍按普通候选处理，抓不动就记原因换下一条，不把跳转页当成功。
+    """
     q = query or term
-    report = SW.run_search(q, timeout=timeout, via=via)
+    report = SW.run_search(q, timeout=timeout, via=via, engines=engines or SW.DEFAULT_ENGINES)
     chunks = _chunks(term)
     seen: set[str] = set()
     tried: list[dict] = []
@@ -135,8 +143,15 @@ def main(argv=None) -> int:
     if not term:
         raise UsageError("主题词为空")
 
+    raw_engines = str(ns["engines"] or "").strip()
+    engines = tuple(e.strip() for e in raw_engines.split(",") if e.strip()) or None
+    if engines:
+        unknown = [e for e in engines if e not in SW.ENGINES]
+        if unknown:
+            raise UsageError(f"未知引擎 {'、'.join(unknown)}；可选：{'、'.join(SW.ENGINES)}")
+
     result = hunt(term, ns["query"], ns["min_chars"], ns["max_try"],
-                  ns["timeout"], ns["via"])
+                  ns["timeout"], ns["via"], engines)
 
     report = result["search"]
     print(f"[检索] {result['query']}（引擎：{report.get('engine_used') or '无'}）")

@@ -24,6 +24,8 @@
   python scripts/search_web.py "城中村改造 定义"
   python scripts/search_web.py "漫步者 S2000MKIII" --json _tmp/search_s2000.json
   python scripts/search_web.py "非改居" --engines sogou,bing --min-hits 1
+  python scripts/search_web.py "豆包工作 接入更多模型" --engines sogou_wechat
+    （搜狗微信搜索只做公众号候选发现；结果链接是 /link 跳转页，不是正文）
 
 退出码：
   0  至少一路引擎给出可信结果（回包里 engine_used 指明是哪一路）
@@ -168,6 +170,11 @@ def relevance(query: str, results: list, min_hits=None, top_k: int = 3) -> dict:
 
 _BING_BLOCK = re.compile(r'<li class="b_algo"[\s\S]*?</li>', re.I)
 _SOGOU_BLOCK = re.compile(r'<div class="vrwrap"[\s\S]*?</div>\s*</div>', re.I)
+# 搜狗微信搜索的结果块与普通搜狗不同：`ul.news-list > li`，标题在 h3，
+# 摘要在 p.txt-info，账号在 span.all-time-y2；不能复用 vrwrap 解析。
+_SOGOU_WECHAT_BLOCK = re.compile(
+    r'<li[^>]+id="sogou_vr_11002601_box_[^"]*"[\s\S]*?</li>', re.I
+)
 _BAIDU_BLOCK = re.compile(r'<div[^>]+class="[^"]*c-container[^"]*"[\s\S]*?</div>\s*</div>', re.I)
 
 _TITLE_RES = (
@@ -215,6 +222,14 @@ def parse_sogou(html: str) -> list:
     return [_result(b, "https://www.sogou.com") for b in _SOGOU_BLOCK.findall(html)]
 
 
+def parse_sogou_wechat(html: str) -> list:
+    """解析搜狗微信搜索页（`weixin.sogou.com`），与普通搜狗网页搜索分开。
+
+    结果链接是 `/link?url=...` 的搜狗跳转，不是微信直链；调用方不得把它当正文页。
+    """
+    return [_result(b, "https://weixin.sogou.com") for b in _SOGOU_WECHAT_BLOCK.findall(html)]
+
+
 def parse_baidu(html: str) -> list:
     return [_result(b, "https://www.baidu.com") for b in _BAIDU_BLOCK.findall(html)]
 
@@ -227,6 +242,10 @@ def _quote(query: str) -> str:
 
 ENGINES = {
     "sogou": (lambda q: f"https://www.sogou.com/web?query={_quote(q)}", parse_sogou),
+    "sogou_wechat": (
+        lambda q: f"https://weixin.sogou.com/weixin?type=2&query={_quote(q)}",
+        parse_sogou_wechat,
+    ),
     "bing": (lambda q: f"https://www.bing.com/search?q={_quote(q)}&setlang=zh-CN&cc=CN", parse_bing),
     "baidu": (lambda q: f"https://www.baidu.com/s?wd={_quote(q)}", parse_baidu),
 }

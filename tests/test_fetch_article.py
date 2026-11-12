@@ -285,6 +285,58 @@ def test_heading_gap():
           "第二节：部署" in FA.gap_warnings(gap2)[0], FA.gap_warnings(gap2))
 
 
+def test_wechat_captcha():
+    """微信「环境异常 / 去验证」页要单独报，不能当成普通短正文。
+
+    搜狗微信结果转成签名链后访问，微信常返回 200 的验证页；若不识别，只会看到
+    「抽取仅 0 字符」，把「需要过一次验证」误报成反爬。识别只认组合特征，避免
+    正文里偶然出现「环境异常」被误伤。
+    """
+    captcha = (
+        "<html><head><title></title></head><body>"
+        '<p>环境异常</p><a href="https://mp.weixin.qq.com/mp/wappoc_appmsgcaptcha?poc_token=x">去验证</a>'
+        "</body></html>"
+    )
+    check("微信验证页可识别", FA.is_wechat_captcha(captcha) is True, captcha[:80])
+    article = "<html><body><p>这是一篇正常文章，讨论环境异常时的处置流程。</p></body></html>"
+    check("正常文章不误判", FA.is_wechat_captcha(article) is False, article[:80])
+    check("搜狗微信跳转页可识别",
+          FA.is_sogou_wechat_link("https://weixin.sogou.com/link?url=x&type=2") is True)
+    check("微信直链不被当成搜狗跳转页",
+          FA.is_sogou_wechat_link("https://mp.weixin.qq.com/s/abc") is False)
+    try:
+        FA.fetch("https://weixin.sogou.com/link?url=x&type=2", timeout=1, via="direct")
+        msg = "未拦下"
+    except FA.FetchError as exc:
+        msg = str(exc)
+    check("搜狗跳转页在发请求前就被拒", "不是微信正文" in msg, msg)
+
+    # 代理出口被微信判风险、直连正常：auto 模式必须自动换直连，而不是把验证页当正文。
+    class Reply:
+        def __init__(self, html, channel):
+            self.body = html.encode("utf-8")
+            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+            self.channel = channel
+
+    calls = []
+    real_request = FA.net_util.request
+
+    def fake_request(url, headers=None, timeout=30, via="auto", **_kw):
+        calls.append(via)
+        if via == "auto":
+            return Reply(captcha, "环境代理")
+        return Reply("<html><body><p>" + "正常正文" * 300 + "</p></body></html>", "直连")
+
+    FA.net_util.request = fake_request
+    try:
+        body, _ctype, channel = FA.fetch("https://mp.weixin.qq.com/s/ok", timeout=1, via="auto")
+    finally:
+        FA.net_util.request = real_request
+    check("微信验证码触发直连回退", calls == ["auto", "direct"] and "正常正文" in body,
+          (calls, body[:20]))
+    check("回退在通道说明里可见", "回退" in channel, channel)
+
+
 def test_bad_numeric_args():
     """`--timeout abc` / `--min-chars 0` 该抛 `UsageError` 并由入口渲染成一行提示。
 
@@ -365,7 +417,8 @@ if __name__ == "__main__":
                test_extract_site_pattern_comment_fallback,
                test_extract_article_and_div, test_balanced_div, test_inspect,
                test_short_content_detected, test_lead_trim, test_tail_trim,
-               test_published_from_text, test_heading_gap, test_bad_numeric_args,
+               test_published_from_text, test_heading_gap, test_wechat_captcha,
+               test_bad_numeric_args,
                test_url_is_positional, test_ledger_guard):
         fn()
     ok = all(RESULTS)
