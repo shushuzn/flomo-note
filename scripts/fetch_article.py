@@ -594,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
 
     original_url = url
     full_note = ""
+    full_ok = False
     full_url = arxiv_fulltext_url(url)
     if full_url:
         try:
@@ -603,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
                 page, content_type, net_channel = f_page, f_ctype, f_net
                 url = full_url
                 full_note = "arXiv HTML 全文"
+                full_ok = True
                 print(f"[全文] 已取 arXiv HTML 全文：{full_url}")
             else:
                 full_note = "arXiv HTML 无有效正文，回退摘要页（摘要级）"
@@ -610,11 +612,12 @@ def main(argv: list[str] | None = None) -> int:
         except FetchError as exc:
             full_note = f"arXiv HTML 不可用（{exc}），回退摘要页（摘要级）"
             print(f"[全文] {full_note}", file=sys.stderr)
-    try:
-        page, content_type, net_channel = fetch(url, timeout, via)
-    except FetchError as exc:
-        print(f"[失败] 抓取未完成：{exc}", file=sys.stderr)
-        return 1
+    if not full_ok:
+        try:
+            page, content_type, net_channel = fetch(url, timeout, via)
+        except FetchError as exc:
+            print(f"[失败] 抓取未完成：{exc}", file=sys.stderr)
+            return 1
     if "html" not in (content_type or "").lower() and "<html" not in page[:2000].lower():
         print(f"[失败] 响应不是 HTML（Content-Type: {content_type}）", file=sys.stderr)
         return 1
