@@ -393,6 +393,15 @@ def test_url_is_positional():
         check(f"{label}：提示含「{want}」", want in err.getvalue(), err.getvalue())
 
 
+def test_arxiv_fulltext_url():
+    """arXiv abs 页要能派生 HTML 全文页；非 arXiv 链接不得误改。"""
+    check("abs → html", FA.arxiv_fulltext_url("https://arxiv.org/abs/2609.15720")
+          == "https://arxiv.org/html/2609.15720")
+    check("带版本号仍取正文章节", FA.arxiv_fulltext_url("https://arxiv.org/abs/2303.18112v4")
+          == "https://arxiv.org/html/2303.18112")
+    check("非 arXiv 链接不派生", FA.arxiv_fulltext_url("https://www.ithome.com/1/027/145.htm") is None)
+
+
 def test_ledger_guard():
     """上一轮抓了没关账 → 新抓取在发起网络请求之前就被拦下。
 
@@ -419,7 +428,7 @@ if __name__ == "__main__":
                test_short_content_detected, test_lead_trim, test_tail_trim,
                test_published_from_text, test_heading_gap, test_wechat_captcha,
                test_bad_numeric_args,
-               test_url_is_positional, test_ledger_guard):
+               test_url_is_positional, test_arxiv_fulltext_url, test_ledger_guard):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

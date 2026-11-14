@@ -478,6 +478,19 @@ def _slug(url: str) -> str:
     return (last or "page")[:48]
 
 
+_ARXIV_ABS = re.compile(
+    r"https?://(?:www\.)?arxiv\.org/abs/([0-9]{4}\.[0-9]{4,5})(?:v\d+)?"
+)
+
+
+def arxiv_fulltext_url(url: str) -> str | None:
+    """arXiv abs 页 → HTML 全文页。只有新版论文有 HTML，取不到时由调用方回退。"""
+    m = _ARXIV_ABS.fullmatch(url.strip())
+    if not m:
+        return None
+    return f"https://arxiv.org/html/{m.group(1)}"
+
+
 class FetchError(Exception):
     """所有通道都没取到页面。消息里带每条通道各自的原因。"""
 
@@ -579,6 +592,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[拦截] {blocked}", file=sys.stderr)
         return 3
 
+    original_url = url
+    full_note = ""
+    full_url = arxiv_fulltext_url(url)
+    if full_url:
+        try:
+            f_page, f_ctype, f_net = fetch(full_url, min(timeout, 12.0), via)
+            f_body, f_channel = extract(f_page)
+            if "html" in (f_ctype or "").lower() and len(f_body) >= min_chars:
+                page, content_type, net_channel = f_page, f_ctype, f_net
+                url = full_url
+                full_note = "arXiv HTML 全文"
+                print(f"[全文] 已取 arXiv HTML 全文：{full_url}")
+            else:
+                full_note = "arXiv HTML 无有效正文，回退摘要页（摘要级）"
+                print(f"[全文] {full_note}", file=sys.stderr)
+        except FetchError as exc:
+            full_note = f"arXiv HTML 不可用（{exc}），回退摘要页（摘要级）"
+            print(f"[全文] {full_note}", file=sys.stderr)
     try:
         page, content_type, net_channel = fetch(url, timeout, via)
     except FetchError as exc:
@@ -621,12 +652,14 @@ def main(argv: list[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(body, encoding="utf-8")
 
-    print(f"[抓取] {url}")
+    print(f"[抓取] {original_url}")
     print(f"[出网] {net_channel}")
     print(f"[标题] {meta['title'] or '(未取到)'}")
     print(f"[发布] {meta['published'] or '(未取到)'}"
           + (f"（{pub_src}）" if meta["published"] else ""))
     print(f"[正文] {len(body)} 字符（通道：{channel}）")
+    if full_note:
+        print(f"[全文] {full_note}")
     if lead_cut or tail_cut:
         cuts = []
         if lead_cut:
@@ -641,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
         print(line)
     print(f"[文件] {out}")
     if ledger_on:
-        round_ledger.open_round(url, str(out))
+        round_ledger.open_round(original_url, str(out))
         print("[关账] 本轮已开账：建卡或退出后跑 exit_confirm.py --url 关闭，否则下次抓取被拦")
     print(f"[下一步] 读回全文：Read {out}（流程第 1 步纪律，未读回不得提炼）")
     if echo:

@@ -791,6 +791,16 @@ def _check_event_source(lines):
         r"(?:报道|消息|通报|通稿|披露)"
         r"\s*(?:称|指出|提到|显示|披露|介绍|发布)?"
     )
+    # 文献主语式：把「论文 / 文章 / 文献 / 研究报告 / 该研究」当作方法的执行者，
+    # 与「据某媒体报道」同属交代来源，只是没写引导词，旧版整套漏检。
+    # 例：`论文用抛物随机量子化构造测度`、`文章提出…`、`该研究证明…`。
+    # 守卫：主语必须在句首或分句首，避免 `这篇论文研究的是…` 作为被讨论对象时被误判。
+    source_agent = re.compile(
+        r"(?<![\u4e00-\u9fff])"
+        r"(?:(?:该|这|本|此)(?:篇|项)?)?"
+        r"(?:论文|文章|文献|本文|研究报告|研究|作者团队|研究团队)"
+        r"\s*(?:采用|使用|用|提出|证明|构造|建立|给出|发现|认为|指出|研究|报道|称)"
+    )
     source_label = re.compile(
         r"^\s*(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
         r"(?:来源|报道|通报|发布|消息|出处|链接|作者|机构|参考|资料)"
@@ -816,7 +826,7 @@ def _check_event_source(lines):
             continue
         hit = None
         for probe in (source_lead, source_bare, source_subj, source_act,
-                      source_media, source_lead_short, source_anon):
+                      source_media, source_lead_short, source_anon, source_agent):
             m = probe.search(s)
             if not m:
                 continue
@@ -845,6 +855,23 @@ def _check_event_source(lines):
                      f"概念自身的结构（工业来源 / 模型来源 / 典型温度参考）保留，不要为过检删掉。"
                      f"若确属结构标签，改写成带对象的标签（「起点是换掉刘海」），不要换成"
                      f"「最早的样子」这类空泛承接词——空标签见本组第 8) 项，同样会提示")
+
+    # 分数区间开闭检查：`s 取 3/4 到 1` 这类写法会丢失端点开闭，
+    # 把来源里的「大于 3/4 且不大于 1」读成含 3/4 的闭区间。
+    # 只在同时出现分数与范围类词时判，避免误伤年份、价格等普通区间。
+    range_frac = re.compile(
+        r"(?:取|从)\s*[^，。；：]{0,10}?\d+\s*/\s*\d+\s*到\s*\d+"
+    )
+    range_words = re.compile(r"指数|范围|区间|参数|阈值|端点")
+    for i, ln in enumerate(lines[2:], start=3):
+        s = ln.strip()
+        if not s:
+            continue
+        m = range_frac.search(s)
+        if m and range_words.search(s):
+            err(f"第 {i} 行用「{m.group(0).strip()}」写分数区间——端点开闭丢失。"
+                f"必须按原文写成「大于 X 且不大于 Y」（或对应的开闭组合），"
+                f"不得用「X 到 Y」概括；原文只给出定性范围时不得自行补端点（H13）")
 
     # 概念名称行（第 2 行）同样禁来源：捕获「XXX（江苏“风腐一体”通报）」
     # 「XXX（中央纪委国家监委通报）」这类把通报方写进概念名的形态（H16）。
