@@ -913,8 +913,10 @@ def test_batch_manifest_errors():
              [f"{rows[0][0]} | - | -", f"{dup} | - | -"], "正文完全相同"),
             ("同一 id 覆盖两次",
              [f"{rows[0][0]} | - | M9", f"{rows[1][0]} | - | M9"], "覆盖同一张卡"),
-            ("字段过多", [f"{rows[0][0]} | - | - | rename | skipweb | 多余"], "字段过多"),
+            ("字段过多", [f"{rows[0][0]} | - | - | rename | skipweb | near:理由在这里 | 多余"], "字段过多"),
             ("第 5 段不是已知开关", [f"{rows[0][0]} | - | - | - | 多余"], "只接受 `skipweb`"),
+            ("第 6 段没写 near 前缀", [f"{rows[0][0]} | - | - | - | - | 近义理由"], "必须写成 `near:理由`"),
+            ("near 理由太短", [f"{rows[0][0]} | - | - | - | - | near:太短"], "near 理由太短"),
             ("skipweb 与留痕同给",
              [f"{rows[0][0]} | {rows[0][1]} | - | - | skipweb"], "互相矛盾"),
             ("第 4 段不是 rename", [f"{rows[0][0]} | - | - | yes"], "只接受 `rename`"),
@@ -1202,7 +1204,7 @@ def test_manifest_per_line_flags():
         rows = _drafts(tmp, 2)
         man = _manifest(tmp, [
             f"{rows[0][0]} | - | - | - | skipweb,loss",
-            f"{rows[1][0]} | {rows[1][1]} | -",
+            f"{rows[1][0]} | {rows[1][1]} | - | - | - | near:旧卡是属概念总定义，本卡是顶阶特例，对象不同",
         ])
         items = PB.parse_manifest(man)
         check("清单：skipweb,loss 同时解析",
@@ -1210,6 +1212,9 @@ def test_manifest_per_line_flags():
               items[0])
         check("清单：未标开关的行两项都为 False",
               not items[1]["skip_web"] and not items[1]["allow_content_loss"],
+              items[1])
+        check("清单：第 6 段 near 理由逐行解析",
+              items[1]["allow_near"] == "旧卡是属概念总定义，本卡是顶阶特例，对象不同",
               items[1])
 
         PB.PAYLOAD = Path(tmp) / "payload.json"
@@ -1238,6 +1243,10 @@ def test_manifest_per_line_flags():
               "--skip-reason" in err2, err2)
         check("混批：第 2 行仍带留痕",
               any("--verify" in c for c in gates[1]), gates[1])
+        check("混批：第 2 行闸门带逐行 near 理由",
+              "--allow-near-concept" in gates[1]
+              and "旧卡是属概念总定义，本卡是顶阶特例，对象不同" in gates[1],
+              gates[1])
 
 
 def test_diff_reports_tag_change():

@@ -33,16 +33,18 @@
   python scripts/publish.py --batch _tmp/batch.txt                  # 多张卡：预检全过才写
   python scripts/publish.py --batch _tmp/batch.txt --dry-run        # 只预检，不写云
 
-批次清单每行 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss`，后四段可省或用 `-` 占位，
-`#` 开头为注释；第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于单卡的
-`--allow-rename`），第 5 段是本行开关——`skipweb`（本行确认非术语卡，不做网络验证）、
-`loss`（本行确属有意重写，放行内容丢失检查），可同时给，于是「非术语卡」与「带留痕的
-事件卡」能在一批里混跑：
+批次清单每行 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss | near:理由`，后五段可省或用
+`-` 占位，`#` 开头为注释；第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于
+单卡的 `--allow-rename`），第 5 段是本行开关——`skipweb`（本行确认非术语卡，不做网络验证）、
+`loss`（本行确属有意重写，放行内容丢失检查），可同时给，第 6 段是本行的近似同名放行理由
+（等价于单卡 `--allow-near-concept`），只在闸门报出包含关系同名卡时使用。于是「非术语卡」
+「带留痕的事件卡」「确属不同对象的近似同名卡」能在一批里混跑：
 
   # 本轮三张
   _tmp/draft_zt_1.txt | _tmp/verify_zt_1.json | -
   _tmp/draft_zt_2.txt | - | - | - | skipweb
   _tmp/draft_af_fix.txt | - | MjUzMzgyODYz | rename | skipweb,loss   # 改名并覆盖
+  _tmp/draft_topcoh.txt | _tmp/verify_topcoh.json | - | - | - | near:旧卡是属概念总定义，本卡是顶阶特例，对象不同
 
 批量的不变量只有一条：**先把 N 张全过预检（闸门 + 质检 + 覆盖对象身份），任何一张不过则
 一张都不写**，全过之后才逐张写入并立刻复核。它替代的是「每张各跑一遍 `--dry-run`、再各
@@ -1079,11 +1081,11 @@ def parse_manifest(path: Path) -> list[dict]:
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) > 5:
+        if len(parts) > 6:
             raise CLI.UsageError(
                 f"清单第 {lineno} 行字段过多（{len(parts)} 段）："
-                "每行至多 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss`")
-        while len(parts) < 5:
+                "每行至多 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss | near:理由`")
+        while len(parts) < 6:
             parts.append("-")
         draft = "" if parts[0] in ("-", "") else parts[0]
         verify = "" if parts[1] in ("-", "") else parts[1]
@@ -1100,6 +1102,17 @@ def parse_manifest(path: Path) -> list[dict]:
             raise CLI.UsageError(
                 f"清单第 {lineno} 行第 5 段只接受 `skipweb` 与 `loss`，"
                 f"看到的是「{' '.join(sorted(unknown))}」——不需要就留空或写 `-`")
+        near_reason = "" if parts[5] in ("-", "") else parts[5]
+        if near_reason and not near_reason.startswith("near:"):
+            raise CLI.UsageError(
+                f"清单第 {lineno} 行第 6 段必须写成 `near:理由`（近似同名放行），"
+                f"看到的是「{near_reason}」")
+        if near_reason:
+            near_reason = near_reason[len("near:"):].strip()
+            if len(near_reason) < 10:
+                raise CLI.UsageError(
+                    f"清单第 {lineno} 行 near 理由太短（{len(near_reason)} 字）："
+                    "必须写明为什么两个概念不是同一对象")
         if "skipweb" in extras and verify:
             raise CLI.UsageError(
                 f"清单第 {lineno} 行同时给了留痕与 skipweb：skipweb 是「确认非术语卡、"
@@ -1139,7 +1152,8 @@ def parse_manifest(path: Path) -> list[dict]:
         items.append({"draft": draft, "verify": verify, "update_id": update_id,
                       "allow_rename": allow_rename, "lineno": lineno,
                       "skip_web": "skipweb" in extras,
-                      "allow_content_loss": "loss" in extras})
+                      "allow_content_loss": "loss" in extras,
+                      "allow_near": near_reason})
     if not items:
         raise CLI.UsageError(f"批次清单里没有任何条目：{path}")
     return items
@@ -1221,7 +1235,8 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
         line_skip_web = skip_web or it.get("skip_web", False)
         code = precheck(run, it["draft"], it["verify"], line_skip_web,
                         update_id=it["update_id"], prefix=prefix,
-                        allow_near=allow_near, skip_reason=skip_reason)
+                        allow_near=it.get("allow_near") or allow_near,
+                        skip_reason=skip_reason)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)
