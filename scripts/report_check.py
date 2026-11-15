@@ -109,15 +109,22 @@ def main(argv=None) -> int:
     # 「出现但空」：`dict[str, list[str] | None]` 的索引访问每次都是新求值，mypy
     # 无法靠前一个 if 收窄，append 会按 None 报错（CI 的 mypy 阶段就是这么红的）。
     sections: dict[str, list[str]] = {"新建": [], "更新": []}
+    # 明细行的段位与行号按 id 另存：塞进 detail_rows 会让每条字段的类型退化成
+    # 「str | int | None」，下文按 str 用它们的每一处都会被 mypy 判错。
+    row_sec: dict[str, str | None] = {}
+    row_ln: dict[str, int] = {}
     seen_section: set[str] = set()
     current = None
     for ln_no, line in enumerate(text.split("\n")):
         s = line.strip()
         m = DETAIL.match(s)
         if m:
-            # 明细行也记下它落在哪一段：一句话在「更新」段、数据行却写在「新建」段，
-            # 两张卡就错位了，读的人按段找卡会找不到。
-            detail_rows.append(dict(m.groupdict(), section=current, ln=ln_no))
+            # 明细行另外记下它落在哪一段、在第几行：一句话在「更新」段、数据行
+            # 却写在「新建」段，两张卡就错位了，读的人按段找卡会找不到。
+            g = m.groupdict()
+            detail_rows.append(g)
+            row_sec[g["id"]] = current
+            row_ln[g["id"]] = ln_no
             continue
         sm = SECTION.match(s)
         if sm:
@@ -148,13 +155,13 @@ def main(argv=None) -> int:
     prose = "".join(prose_lines)
     plen = _cjk_len(prose)
     # 每张卡的明细行落在哪一段（没有段标题时为 None，另行由「缺段」判据拦下）
-    detail_section = {r["id"]: r.get("section") for r in detail_rows}
+    detail_section = row_sec
     # 报告的两种合法排版：逐卡「一句话 + 数据行」交错，或各段的小句写完后
     # 把数据行统一收在末尾。末尾那一段没有后续小句，故只有「后面还有小句」
     # 的数据行才谈得上落在哪一段——否则末尾整块会全部被误判成错位。
     bullet_lns = [i for i, ln in enumerate(text.split("\n")) if BULLET.match(ln.strip())]
     last_bullet_ln = max(bullet_lns) if bullet_lns else -1
-    detail_ln = {r["id"]: r.get("ln", -1) for r in detail_rows}
+    detail_ln = row_ln
 
     # ---- 1. 条数与 id 集合 ----
     if len(detail_rows) != len(ids):

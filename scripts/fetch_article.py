@@ -599,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     if full_url:
         try:
             f_page, f_ctype, f_net = fetch(full_url, min(timeout, 12.0), via)
-            f_body, f_channel = extract(f_page)
+            f_body, _f_channel = extract(f_page)
             if "html" in (f_ctype or "").lower() and len(f_body) >= min_chars:
                 page, content_type, net_channel = f_page, f_ctype, f_net
                 url = full_url
