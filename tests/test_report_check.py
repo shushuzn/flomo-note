@@ -45,6 +45,12 @@ CARDS = {
                      "content": "#科技/编程语言 #产业/游戏<br>\nVerse<br>\n\n正文\n"},
     "MjY0MTIzNTQw": {"word_count": 512, "tags": ["a"],
                      "content": "#产业/游戏<br>\n场景图<br>\n\n正文\n"},
+    "MjY0MTIzNTgw": {"word_count": 300, "tags": ["a"],
+                     "content": "#产业/游戏<br>\n蓝图（Blueprints）甲<br>\n\n"
+                                "同一段正文讲的是同一个对象与同一条结论\n"},
+    "MjY0MTIzNTkw": {"word_count": 300, "tags": ["a"],
+                     "content": "#产业/游戏<br>\n蓝图（Blueprints）乙<br>\n\n"
+                                "同一段正文讲的是同一个对象与同一条结论\n"},
     "MjY0MTIzNTYw": {"word_count": 320, "tags": ["a"],
                      "content": "#产业/游戏<br>\n蓝图（Blueprints）<br>\n\n正文\n"},
     "MjY0MTIzNTUw": {"word_count": 600, "tags": ["a"],
@@ -182,6 +188,19 @@ def _run_all() -> int:
     )
     rc = _run(same_name)
     check("两张卡同名严格拦下", rc == 1, f"退出码 {rc}")
+
+    # 8f. 标题不同、正文照抄 → 判内容实质重复
+    _prepare(["MjY0MTIzNTgw", "MjY0MTIzNTkw"])
+    dup_body = (
+        "建了 2 张卡。\n\n"
+        "新建：\n"
+        "- 蓝图（Blueprints）甲：第一张。\n"
+        "- 蓝图（Blueprints）乙：第二张。\n\n"
+        "蓝图（Blueprints）甲：MjY0MTIzNTgw，#产业/游戏，实测 300 字\n"
+        "蓝图（Blueprints）乙：MjY0MTIzNTkw，#产业/游戏，实测 300 字"
+    )
+    rc = _run(dup_body)
+    check("标题不同但正文相同被拦", rc == 1, f"退出码 {rc}")
 
     # 9. 混合轮：2 新建 + 1 更新，分两段写 → 放行
     mixed_ids = ["MjY0MTIzNTAw", "MjY0MTIzNTMw", "MjY0MTIzNTQw"]

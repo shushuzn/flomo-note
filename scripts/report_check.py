@@ -34,6 +34,7 @@ sys.path.insert(0, str(_SCRIPTS))
 
 import cli_util as CLI  # noqa: E402
 import flomo_client as FC  # noqa: E402
+import memo_util as MU  # noqa: E402
 import round_ledger  # noqa: E402
 import verify_card  # noqa: E402
 
@@ -198,6 +199,7 @@ def main(argv=None) -> int:
 
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")
     cloud_names: dict[str, str] = {}
+    cloud_bodies: dict[str, str] = {}
     for rid in ids:
         try:
             memo = verify_card.fetch(rid)
@@ -210,6 +212,7 @@ def main(argv=None) -> int:
         first = lines[0] if lines else ""
         second = lines[1] if len(lines) > 1 else ""
         cloud_names[rid] = second
+        cloud_bodies[rid] = raw
         want_tags = set(re.findall(r"#[^\s]+", first))
         want_n = memo.get("word_count")
 
@@ -230,6 +233,17 @@ def main(argv=None) -> int:
             errors.append(f"{rid} 字数不符：报告 {row_m['n']} / 云端实测 {want_n}")
             ok = False
         print(f"  {'✓' if ok else '✗'} {second} | {rid} | {want_n} 字 | {first}")
+
+    # 内容实质重复：标题不同但要点照抄，仍是同一张卡；改名不能当新卡建。
+    _bids = [i for i in ids if i in cloud_bodies]
+    for _i in range(len(_bids)):
+        for _j in range(_i + 1, len(_bids)):
+            a, b = _bids[_i], _bids[_j]
+            ratio = MU.overlap_ratio(cloud_bodies[a], cloud_bodies[b])
+            if ratio >= 0.5:
+                errors.append(
+                    f"内容实质重复：{a} 与 {b} 要点重合 {ratio:.0%}，仅标题不同——"
+                    "同一对象只落一张卡，另一张须退场或并回")
 
     # ---- 3. 新建 / 更新分写 ----
     # 账本只记了 `published`（全部 id）与 `updated`（其中属于更新既有卡的那几个），

@@ -48,6 +48,34 @@ def memo_signature(content: object) -> dict[str, str] | None:
     return {"tagline": tagline, "concept": concept}
 
 
+_PUNCT_RE = re.compile(r"[\s，。；：、！？（）「」《》〈〉·—…,.!?;:'\"()\[\]【】]+")
+
+
+def content_lines(text: object, min_len: int = 10) -> set[str]:
+    """正文要点行的归一集合：去空白标点、跳过标签行、只留 ≥min_len 字的整行。
+
+    用于跨卡判「是不是同一个内容」——标题不同但要点逐条相同，仍然是同一张卡。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    out: set[str] = set()
+    for ln in text.splitlines():
+        if ln.strip().startswith("#"):
+            continue
+        k = _PUNCT_RE.sub("", ln)
+        if len(k) >= min_len:
+            out.add(k)
+    return out
+
+
+def overlap_ratio(a: object, b: object, min_len: int = 10) -> float:
+    """两段正文的要点重合率（按行集合，取较小集合为分母）。0.0 表示无从判断。"""
+    la, lb = content_lines(a, min_len), content_lines(b, min_len)
+    if not la or not lb:
+        return 0.0
+    return len(la & lb) / min(len(la), len(lb))
+
+
 def signature_key(sig: dict[str, str] | None) -> str | None:
     """签名 → 稳定短键（用于凭证文件名等）。sig 为 None 时返回 None。"""
     if not sig:

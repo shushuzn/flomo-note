@@ -613,6 +613,24 @@ def run_dedup_concept_sweep_cases():
     check("查重·包含关系同名可按理由放行", not any("疑似重复" in x for x in b2))
     check("查重·放行理由留痕", any("--allow-near-concept" in x for x in n2))
 
+    # C2) 标题改掉但要点照抄 → 判内容实质重复（改名不能绕成新卡）
+    c2 = FakeClient(
+        tag_tree=_tt(1, ["AI/公司"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": [
+            _memo("DUP1", "Anthropic 公司")]}}},
+    )
+    body_same = ("#AI/公司\nAnthropic 集团\n\n"
+                 "这家公司做的是大模型基础设施\n\n要点：\n"
+                 "- 核心业务是训练与推理平台\n- 客户集中在企业侧")
+    orig = ("#AI/公司\nAnthropic\n\n"
+            "这家公司做的是大模型基础设施\n\n要点：\n"
+            "- 核心业务是训练与推理平台\n- 客户集中在企业侧")
+    c2._search["tag:AI/公司"]["structuredContent"]["memos"][0]["content"] = orig
+    b2, n2 = [], []
+    GATE._check_dedup(
+        c2, GATE.memo_signature(body_same), b2, n2, body=body_same)
+    check("查重·改名但内容相同被拦", any("内容实质重复" in x for x in b2), b2)
+
     # D) 不同对象 → 不阻塞（避免把「长征十号」/「长征十号乙」以外的新概念也误拦）
     c = FakeClient(
         tag_tree=_tt(1, ["AI/公司"]),
