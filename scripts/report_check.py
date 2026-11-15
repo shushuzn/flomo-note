@@ -180,6 +180,15 @@ def main(argv=None) -> int:
         errors.append(f"同一 id 写了多条明细：{', '.join(dup)}")
 
     # ---- 2. 逐卡对账（回读云端，不手抄） ----
+    # 同名只提示不拦：两张同名卡可分别更新，也可各自改名，检测层不替人做决定。
+    _names: dict[str, list[str]] = {}
+    for r in detail_rows:
+        _names.setdefault(r["name"].strip(), []).append(r["id"])
+    for _nm, _rids in _names.items():
+        if len(_rids) > 1:
+            notes.append(f"两张卡同名「{_nm}」（{'、'.join(_rids)}），不拦；"
+                         "改其中任一张前先取全文核对，不得只凭标题动卡")
+
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")
     cloud_names: dict[str, str] = {}
     for rid in ids:

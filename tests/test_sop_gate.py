@@ -571,7 +571,7 @@ def run_dedup_concept_sweep_cases():
     恰好排在 20 名之外，闸门遂记录「均不重复，放行新建」。下面三条钉住新口径：
     整簇翻页覆盖、翻页到第 2 页、包含关系同名。
     """
-    # A) 同名卡只在标签簇里（关键词命中 0）→ 阻塞
+    # A) 同名卡只在标签簇里（关键词命中 0）→ 提示，不阻塞
     c = FakeClient(
         tag_tree=_tt(2, ["AI/公司", "商业/企业"]),
         search={"tag:AI/公司": {"structuredContent": {"memos": [
@@ -580,12 +580,12 @@ def run_dedup_concept_sweep_cases():
     b, n = [], []
     got = GATE._check_dedup(
         c, GATE.memo_signature("#AI/公司 #金融/IPO\nAnthropic\n\n已提交 S-1\n"), b, n)
-    check("查重·同名卡只在标签簇里也判重复", any("概念名重复" in x for x in b))
-    check("查重·重复结论点名冲突卡", any("OLD1" in x for x in b))
+    check("查重·同名卡只提示不阻塞", not b)
+    check("查重·同名提示点名冲突卡", any("OLD1" in x for x in n))
     check("查重·凭证记录同名候选",
           [r["id"] for r in got["concept_sweep"]["same_concepts"]] == ["OLD1"])
 
-    # B) 同名卡在第 2 页（第 1 页 50 张无名冲突）→ 翻页后仍阻塞
+    # B) 同名卡在第 2 页（第 1 页 50 张无名冲突）→ 翻页后仍提示
     page1 = [_memo(f"P{i}", f"无关概念{i:02d}") for i in range(50)]
     c = _PagedClient(
         {("AI/公司", ""): page1,
@@ -595,7 +595,7 @@ def run_dedup_concept_sweep_cases():
     b, n = [], []
     got = GATE._check_dedup(
         c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n)
-    check("查重·同名卡在标签簇第 2 页也判重复", any("OLD2" in x for x in b))
+    check("查重·第 2 页同名卡同样只提示", not b and any("OLD2" in x for x in n))
     check("查重·翻页被记录（扫描 51 张）", got["concept_sweep"]["scanned"] == 51)
 
     # C) 包含关系同名：默认阻塞，写明理由后放行并留痕

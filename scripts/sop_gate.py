@@ -608,13 +608,15 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
                 sweep_rec["near_concepts"].append(rec)
 
         if sweep_rec["same_concepts"]:
+            # 同名只提示，不阻塞：改本稿标题、改云端那张卡的标题、两张都改，
+            # 都是合法走法，检测层不该替人做选择。
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」（{r['tagline']}）"
                 for r in sweep_rec["same_concepts"][:5])
-            blockers.append(
-                f"概念名重复·整簇扫描 {sweep_rec['scanned']} 张候选，发现同一对象已有卡：{detail}。"
-                "这是重复卡，必须用 --update-id 合并到该卡，不能新建。"
-            )
+            notes.append(
+                f"标题同名·云端已有同名卡：{detail}。可以改本稿标题；"
+                "若要把内容并进该卡或改它的标题，必须先取全文核对（H1/H22），"
+                "不得只凭标题相同就动既有卡。本次不阻塞。")
         if sweep_rec["near_concepts"]:
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」" for r in sweep_rec["near_concepts"][:5])
