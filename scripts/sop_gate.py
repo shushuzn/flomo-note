@@ -556,6 +556,14 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
             am = _result_memos(client.tool("memo_batch_get", {"ids": [anchor_id]}))
         except FlomoError:
             am = []
+        if not am or not (am[0].get("content") or "").strip():
+            blockers.append(
+                f"更新既有卡 {anchor_id} 前必须取到该卡全文，本次 memo_batch_get "
+                "没取到正文——未读全文不得更新（H1/H22）")
+        elif am[0].get("content_truncated"):
+            blockers.append(
+                f"更新既有卡 {anchor_id} 前必须取全文，回包仍是截断快照——"
+                "不得据截断内容覆盖（H1）")
         old_sig = memo_signature(am[0].get("content")) if am else None
         old_concept = old_sig["concept"] if old_sig else ""
         if old_concept and _concept_relation(_concept_identity(concept), old_concept) == "same":
@@ -613,10 +621,10 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」（{r['tagline']}）"
                 for r in sweep_rec["same_concepts"][:5])
-            notes.append(
-                f"标题同名·云端已有同名卡：{detail}。可以改本稿标题；"
-                "若要把内容并进该卡或改它的标题，必须先取全文核对（H1/H22），"
-                "不得只凭标题相同就动既有卡。本次不阻塞。")
+            blockers.append(
+                f"完全同标题严格禁止：云端已有逐字同名的卡 {detail}。"
+                "本稿必须改名后才能新建；确属同一对象就 --update-id 更新该卡，"
+                "更新前先取全文核对（H1/H22）。")
         if sweep_rec["near_concepts"]:
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」" for r in sweep_rec["near_concepts"][:5])

@@ -571,7 +571,7 @@ def run_dedup_concept_sweep_cases():
     恰好排在 20 名之外，闸门遂记录「均不重复，放行新建」。下面三条钉住新口径：
     整簇翻页覆盖、翻页到第 2 页、包含关系同名。
     """
-    # A) 同名卡只在标签簇里（关键词命中 0）→ 提示，不阻塞
+    # A) 同名卡只在标签簇里（关键词命中 0）→ 严格阻塞
     c = FakeClient(
         tag_tree=_tt(2, ["AI/公司", "商业/企业"]),
         search={"tag:AI/公司": {"structuredContent": {"memos": [
@@ -580,12 +580,12 @@ def run_dedup_concept_sweep_cases():
     b, n = [], []
     got = GATE._check_dedup(
         c, GATE.memo_signature("#AI/公司 #金融/IPO\nAnthropic\n\n已提交 S-1\n"), b, n)
-    check("查重·同名卡只提示不阻塞", not b)
-    check("查重·同名提示点名冲突卡", any("OLD1" in x for x in n))
+    check("查重·完全同标题一律阻塞", any("严格禁止" in x for x in b))
+    check("查重·同名阻塞点名冲突卡", any("OLD1" in x for x in b))
     check("查重·凭证记录同名候选",
           [r["id"] for r in got["concept_sweep"]["same_concepts"]] == ["OLD1"])
 
-    # B) 同名卡在第 2 页（第 1 页 50 张无名冲突）→ 翻页后仍提示
+    # B) 同名卡在第 2 页（第 1 页 50 张无名冲突）→ 翻页后仍阻塞
     page1 = [_memo(f"P{i}", f"无关概念{i:02d}") for i in range(50)]
     c = _PagedClient(
         {("AI/公司", ""): page1,
@@ -595,7 +595,7 @@ def run_dedup_concept_sweep_cases():
     b, n = [], []
     got = GATE._check_dedup(
         c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n)
-    check("查重·第 2 页同名卡同样只提示", not b and any("OLD2" in x for x in n))
+    check("查重·第 2 页同名卡同样阻塞", any("OLD2" in x for x in b))
     check("查重·翻页被记录（扫描 51 张）", got["concept_sweep"]["scanned"] == 51)
 
     # C) 包含关系同名：默认阻塞，写明理由后放行并留痕
@@ -636,6 +636,17 @@ def run_dedup_concept_sweep_cases():
     b, n = [], []
     GATE._check_dedup(
         c, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b, n, anchor_id="SELF")
+    # F0) 更新前取不到既有卡全文 → 必须阻塞（禁止不看全文就改卡）
+    c0 = FakeClient(
+        tag_tree=_tt(1, ["AI/公司"]),
+        search={"tag:AI/公司": {"structuredContent": {"memos": []}}},
+    )
+    b0, n0 = [], []
+    GATE._check_dedup(
+        c0, GATE.memo_signature("#AI/公司\nAnthropic\n\n正文\n"), b0, n0,
+        anchor_id="SELF")
+    check("更新未取到全文即阻塞", any("未读全文不得更新" in x for x in b0), b0)
+
     check("查重·更新且概念名未改不阻塞", not b)
     check("查重·更新跳过扫描留痕", any("跳过同名判定" in x for x in n))
 

@@ -186,8 +186,15 @@ def main(argv=None) -> int:
         _names.setdefault(r["name"].strip(), []).append(r["id"])
     for _nm, _rids in _names.items():
         if len(_rids) > 1:
-            notes.append(f"两张卡同名「{_nm}」（{'、'.join(_rids)}），不拦；"
-                         "改其中任一张前先取全文核对，不得只凭标题动卡")
+            _upd = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
+            _is_new = [r for r in _rids if r not in _upd]
+            if _is_new:
+                errors.append(
+                    f"完全同标题严格禁止：{'、'.join(_rids)} 共用「{_nm}」，"
+                    "新建卡不得与任何卡逐字同名")
+            else:
+                notes.append(f"两张卡同名「{_nm}」（{'、'.join(_rids)}）均为更新，"
+                             "各自更新前须已取全文核对")
 
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")
     cloud_names: dict[str, str] = {}

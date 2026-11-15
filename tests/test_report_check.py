@@ -170,7 +170,7 @@ def _run_all() -> int:
     rc = _run("这篇没有建卡：对象都只有一两句提及，已按退出留痕关账。")
     check("退出轮只写说明段即放行", rc == 0, f"退出码 {rc}")
 
-    # 8b. 两张卡同名 → 只提示，不判错（可改其一、可都改、也可并存）
+    # 8b. 两张卡同名 → 严格拦下（新建卡不得与任何卡逐字同名）
     _prepare(["MjY0MTIzNTAw", "MjY0MTIzNTYw"])
     same_name = (
         "建了 2 张卡。\n\n"
@@ -181,7 +181,7 @@ def _run_all() -> int:
         "蓝图（Blueprints）：MjY0MTIzNTYw，#产业/游戏，实测 320 字"
     )
     rc = _run(same_name)
-    check("两张卡同名不判错", rc == 0, f"退出码 {rc}")
+    check("两张卡同名严格拦下", rc == 1, f"退出码 {rc}")
 
     # 9. 混合轮：2 新建 + 1 更新，分两段写 → 放行
     mixed_ids = ["MjY0MTIzNTAw", "MjY0MTIzNTMw", "MjY0MTIzNTQw"]
