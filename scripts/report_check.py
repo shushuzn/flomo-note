@@ -121,6 +121,8 @@ def main(argv=None) -> int:
     ids = [x.strip() for x in (row.get("detail") or "").split(",") if x.strip()]
     if outcome != "published":
         ids = []
+    # 更新卡单独取出：标题同名只拦「新建」，更新路放行——两张同名卡都保留更新权限。
+    marked_ids = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
 
     errors: list[str] = []
     notes: list[str] = []
@@ -245,19 +247,25 @@ def main(argv=None) -> int:
         if int(row_m["n"]) != int(want_n or -1):
             errors.append(f"{rid} 字数不符：报告 {row_m['n']} / 云端实测 {want_n}")
             ok = False
-        for other_id, _other_name in _title_collisions(second, set(ids)):
-            errors.append(
-                f"标题同名：{rid}「{second}」与云端既有卡 {other_id} 同名——"
-                "一个对象只落一张卡，须并回该卡并让本卡退场")
+        if rid in marked_ids:
+            hits = _title_collisions(second, set(ids))
+            if hits:
+                notes.append(
+                    f"{rid}「{second}」与云端同名卡 {hits[0][0]} 并存（历史重复）；"
+                    "本卡是更新，照常放行，两张都保留更新权限")
+        else:
+            for other_id, _other_name in _title_collisions(second, set(ids)):
+                errors.append(
+                    f"标题同名：{rid}「{second}」与云端既有卡 {other_id} 同名——"
+                    "一个对象只落一张卡；确要改写该对象请走 --update-id")
         print(f"  {'✓' if ok else '✗'} {second} | {rid} | {want_n} 字 | {first}")
 
     # ---- 3. 新建 / 更新分写 ----
     # 账本只记了 `published`（全部 id）与 `updated`（其中属于更新既有卡的那几个），
     # 差集即新建。没有 `updated` 字段的旧账本按「全部新建」处理——那一轮的分类
     # 已无从判定，强判会把历史轮次判错。
-    marked = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
-    updated_ids = [i for i in ids if i in marked]
-    created_ids = [i for i in ids if i not in marked]
+    updated_ids = [i for i in ids if i in marked_ids]
+    created_ids = [i for i in ids if i not in marked_ids]
     if ids:
         for kind, want_ids in (("新建", created_ids), ("更新", updated_ids)):
             block = sections[kind]

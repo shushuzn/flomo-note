@@ -199,6 +199,14 @@ def _run_all() -> int:
     )
     rc = _run(collide)
     check("标题与云端既有卡同名被拦", rc == 1, f"退出码 {rc}")
+
+    # 8d. 更新卡撞上同名卡 → 放行（两张同名卡都要保留更新权限）
+    report_check._title_collisions = (
+        lambda name, own: [("MjY5OTk5OTk5", name)] if name == "Dots：常驻智能体" else [])
+    _prepare(["MjY0MTIzNTUw"], updated=["MjY0MTIzNTUw"])
+    rc = _run(collide.replace("建了 1 张卡。", "更新 1 张卡。")
+              .replace("新建：", "更新："))
+    check("更新卡与云端同名时放行", rc == 0, f"退出码 {rc}")
     report_check._title_collisions = lambda name, own: []
 
     # 9. 混合轮：2 新建 + 1 更新，分两段写 → 放行
