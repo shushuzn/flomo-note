@@ -91,7 +91,6 @@ from memo_util import (
     keywords_of_concept,
     memo_signature,
     normalize_concept,
-    overlap_ratio,
     signature_key,
     tag_key,
     tag_leaves,
@@ -575,7 +574,7 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
 
     sweep_rec = {"tag_clusters": [], "queries": [], "scanned": 0,
                  "truncated": [], "same_concepts": [], "near_concepts": [],
-                 "content_dups": []}
+                 }
     if enforce:
         candidates = dict(keyword_memos)
         for cluster in dict.fromkeys(near):
@@ -608,13 +607,6 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
             if not csig:
                 continue
             rel = _concept_relation(cur_id, csig["concept"])
-            # 标题改了、要点照抄：这也是同一张卡。只盯标题会被「改名」绕过，
-            # 所以另按要点行重合率判——重合过半即认定内容实质重复。
-            if body:
-                ratio = overlap_ratio(body, m.get("content"))
-                if ratio >= 0.5:
-                    sweep_rec["content_dups"].append(
-                        {"id": mid, "concept": csig["concept"], "ratio": ratio})
             if not rel:
                 continue
             rec = {"id": mid, "concept": csig["concept"],
@@ -624,12 +616,21 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
             else:
                 sweep_rec["near_concepts"].append(rec)
 
-        if sweep_rec["content_dups"]:
-            worst = max(sweep_rec["content_dups"], key=lambda r: r["ratio"])
-            blockers.append(
-                "内容实质重复·本稿要点与 "
-                f"{worst['id']}「{worst['concept']}」重合 {worst['ratio']:.0%}："
-                "改个标题绕不过同一对象，必须 --update-id 更新该卡（先取全文）")
+        # 同名 / 近名只是线索，判是不是同一对象必须读全文：这里把候选卡正文
+        # 全部打印出来，供逐张对照；不做字面相似度打分（公式、定义行天然重合，
+        # 机械打分会把不同概念的卡误判成重复）。
+        _ids_needing_read = [r["id"] for r in
+                             sweep_rec["same_concepts"] + sweep_rec["near_concepts"]]
+        if _ids_needing_read:
+            print("\n═══ 同名/近名候选全文（逐张对照后再决定新建或更新）═══")
+            for _i in range(0, len(_ids_needing_read), 10):
+                _chunk = _ids_needing_read[_i:_i + 10]
+                _memos = _result_memos(client.tool("memo_batch_get", {"ids": _chunk}))
+                for _m in _memos:
+                    print(f"── {_m.get('id')} | {_m.get('word_count')} 字")
+                    print((_m.get("content") or "").strip())
+            notes.append("查重·同名/近名候选已逐张取全文，是否同一对象按正文判断")
+
         if sweep_rec["same_concepts"]:
             # 同名只提示，不阻塞：改本稿标题、改云端那张卡的标题、两张都改，
             # 都是合法走法，检测层不该替人做选择。
