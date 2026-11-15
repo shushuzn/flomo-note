@@ -129,6 +129,17 @@ def _run_all() -> int:
     rc = _run(good)
     check("明细齐全且对账一致时放行", rc == 0, f"退出码 {rc}")
 
+    # 2d. 执行侧步骤不外发（H6g）：把对象清单抖进报告 → 必须拦
+    _prepare(list(CARDS)[:2])
+    leak = good + "\n先说对象清单：蓝图、Verse 两个都建了。"
+    rc = _run(leak)
+    check("报告里写对象清单被拦", rc == 1, f"退出码 {rc}")
+
+    # 2e. 请示语同理：把执行者该定的判回给用户 → 必须拦
+    ask = good + "\n需要我把这两张也挂到同一个标签下吗。"
+    rc = _run(ask)
+    check("报告里请示用户被拦", rc == 1, f"退出码 {rc}")
+
     # 2b. 全新建却没写「新建」段（都并进开头句）→ 必须拦
     flat = good.replace("新建：\n", "")
     rc = _run(flat)
