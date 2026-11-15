@@ -612,7 +612,7 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
                 f"{r['id']}「{r['concept']}」（{r['tagline']}）"
                 for r in sweep_rec["same_concepts"][:5])
             blockers.append(
-                f"概念名重复·整簇扫描 {sweep_rec['scanned']} 张候选，发现同一对象已有卡：{detail}。"
+                f"概念名重复（标题同名）·整簇扫描 {sweep_rec['scanned']} 张候选，发现云端已有同一概念名的卡：{detail}。"
                 "这是重复卡，必须用 --update-id 合并到该卡，不能新建。"
             )
         if sweep_rec["near_concepts"]:
