@@ -178,6 +178,15 @@ def main(argv=None) -> int:
     dup = [i for i in set(got_ids) if got_ids.count(i) > 1]
     if dup:
         errors.append(f"同一 id 写了多条明细：{', '.join(dup)}")
+    # 标题同名：两个 id 用同一个概念名，等于把两个对象写成一张卡的两面。
+    # 云端只按单卡查，报告是唯一能同时看到本轮全部标题的地方。
+    name_counts: dict[str, int] = {}
+    for r in detail_rows:
+        nm = r["name"].strip()
+        name_counts[nm] = name_counts.get(nm, 0) + 1
+    same = [nm for nm, c in name_counts.items() if c > 1]
+    if same:
+        errors.append(f"两张卡标题同名：{'、'.join(same)}——同对象只能有一张卡")
 
     # ---- 2. 逐卡对账（回读云端，不手抄） ----
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")

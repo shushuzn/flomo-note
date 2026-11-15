@@ -261,6 +261,18 @@ def audit_batch(bodies: list[str]) -> tuple[list[str], list[str]]:
     names = [_concept_of(b) for b in bodies]
     errors = [f"「{ln}」同时出现在 {names[idx[0]]} 与 {names[idx[1]]}"
               for ln, idx in shared_lines(bodies)]
+    # 标题同名：同批两稿的第二行相同，就是同一对象要落两张卡——云端的同名
+    # 拦截只看「已存在的卡」，同批互撞时两张都还不存在，任何单张预检都看不见。
+    seen: dict[str, int] = {}
+    for name in names:
+        if name == "(无概念名)":
+            continue
+        seen[name] = seen.get(name, 0) + 1
+    for name, cnt in seen.items():
+        if cnt > 1:
+            errors.append(
+                f"两卡标题同名：「{name}」在批内出现 {cnt} 次——"
+                "一个对象只能落一张卡；确属同一对象就走 --update-id 合并")
     notes = [f"{names[i]} 与 {names[j]} 字面重合 {share:.0%}："
              "逐条确认每条只归一张卡（H11③）"
              for i, j, share in overlap_pairs(bodies)]
