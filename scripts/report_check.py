@@ -12,7 +12,9 @@
   3. 解析报告里的明细行，逐项对账；
   4. 校验说明段的字数上限（1 张 ≤300 字，每多一张 +60 字，与 SKILL 报告口径一致）；
   5. 校验「新建」「更新」两段分写：账本 `updated` 之外的 id 按新建算，两段各自
-     列出的概念名必须与对应 id 集合一致——混在一段里说「建了 4 张卡」会被拦。
+     列出的概念名必须与对应 id 集合一致——混在一段里说「建了 4 张卡」会被拦；
+  6. 逐卡交错排版时，数据行必须跟它那句话同段——更新卡的小句在「更新」段、
+     明细行却留在「新建」段，名字与条数都查不出来，只有这一条能拦。
 
 用法：
   python scripts/report_check.py --report _tmp/report.txt --url https://mp.weixin.qq.com/s/xxx
@@ -109,11 +111,13 @@ def main(argv=None) -> int:
     sections: dict[str, list[str]] = {"新建": [], "更新": []}
     seen_section: set[str] = set()
     current = None
-    for line in text.split("\n"):
+    for ln_no, line in enumerate(text.split("\n")):
         s = line.strip()
         m = DETAIL.match(s)
         if m:
-            detail_rows.append(m.groupdict())
+            # 明细行也记下它落在哪一段：一句话在「更新」段、数据行却写在「新建」段，
+            # 两张卡就错位了，读的人按段找卡会找不到。
+            detail_rows.append(dict(m.groupdict(), section=current, ln=ln_no))
             continue
         sm = SECTION.match(s)
         if sm:
@@ -143,6 +147,14 @@ def main(argv=None) -> int:
 
     prose = "".join(prose_lines)
     plen = _cjk_len(prose)
+    # 每张卡的明细行落在哪一段（没有段标题时为 None，另行由「缺段」判据拦下）
+    detail_section = {r["id"]: r.get("section") for r in detail_rows}
+    # 报告的两种合法排版：逐卡「一句话 + 数据行」交错，或各段的小句写完后
+    # 把数据行统一收在末尾。末尾那一段没有后续小句，故只有「后面还有小句」
+    # 的数据行才谈得上落在哪一段——否则末尾整块会全部被误判成错位。
+    bullet_lns = [i for i, ln in enumerate(text.split("\n")) if BULLET.match(ln.strip())]
+    last_bullet_ln = max(bullet_lns) if bullet_lns else -1
+    detail_ln = {r["id"]: r.get("ln", -1) for r in detail_rows}
 
     # ---- 1. 条数与 id 集合 ----
     if len(detail_rows) != len(ids):
@@ -231,6 +243,15 @@ def main(argv=None) -> int:
             # 抓不住该改哪一处；条数只在剩下的情形（同一张卡写两遍）才有信息量。
             elif len(block) != len(want_names):
                 errors.append(f"「{kind}」段写了 {len(block)} 条，账上是 {len(want_names)} 张")
+            # 数据行必须跟它那句话在同一段：把更新卡的明细留在「新建」段，
+            # 段落层面看不出错（名字与条数都对得上），但按段读卡就会把更新说成新建。
+            misfiled = [cloud_names.get(i, i) for i in want_ids
+                        if detail_section.get(i) != kind
+                        and detail_ln.get(i, 10**6) < last_bullet_ln]
+            if misfiled:
+                errors.append(
+                    f"这些{kind}卡的数据行没写在本段里：{'、'.join(misfiled)}"
+                    f"——一句话在本段、明细行却在别段，按段读就成了另一类卡")
 
     # ---- 4. 说明段长度 ----
     limit = _prose_limit(max(1, len(ids)))

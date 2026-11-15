@@ -197,6 +197,16 @@ def _run_all() -> int:
     rc = _run(misplaced)
     check("更新卡写进新建段被拦", rc == 1, f"退出码 {rc}")
 
+    # 9c2. 一句话写在「更新」段、明细行却留在「新建」段 → 必须拦
+    #      段落层面名字与条数都对得上，只有按段读卡才露馅——真实发过的形态
+    lines = mixed.split("\n")
+    detail_line = next(ln for ln in lines if ln.startswith("场景图："))
+    lines = [ln for ln in lines if not ln.startswith("场景图：")]
+    idx_update = lines.index("更新：")
+    lines.insert(idx_update, detail_line)
+    rc = _run("\n".join(lines))
+    check("更新卡明细行留在新建段被拦", rc == 1, f"退出码 {rc}")
+
     # 9d. 只有更新的一轮写了空「新建」段 → 必须拦
     _prepare(["MjY0MTIzNTQw"], updated=["MjY0MTIzNTQw"])
     empty_new = (
