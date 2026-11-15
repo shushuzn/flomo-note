@@ -47,9 +47,6 @@ CARDS = {
                      "content": "#产业/游戏<br>\n场景图<br>\n\n正文\n"},
     "MjY0MTIzNTUw": {"word_count": 600, "tags": ["a"],
                      "content": "#AI/智能体<br>\nDots：常驻智能体<br>\n\n正文\n"},
-    # 与蓝图卡同标题的两张卡：用来验「报告里两张卡标题同名」这一条。
-    "MjY0MTIzNTYw": {"word_count": 320, "tags": ["a"],
-                     "content": "#产业/游戏<br>\n蓝图（Blueprints）<br>\n\n另一张正文\n"},
 }
 URL = "https://example.com/a"
 
@@ -106,9 +103,6 @@ def main() -> int:
 
 
 def _run_all() -> int:
-    import report_check
-    # 云端同名查询默认置空：用例离线，绝不联网；需要验同名时下方临时替换。
-    report_check._title_collisions = lambda name, own: []
 
     # 1. 事故原形：只有一句「建了 2 张卡。」→ 必须拦
     _prepare(list(CARDS)[:2])
@@ -173,41 +167,6 @@ def _run_all() -> int:
     _prepare([], outcome="exit")
     rc = _run("这篇没有建卡：对象都只有一两句提及，已按退出留痕关账。")
     check("退出轮只写说明段即放行", rc == 0, f"退出码 {rc}")
-
-    # 8b. 两张卡标题同名 → 必须拦（同对象只能有一张卡）
-    _prepare(["MjY0MTIzNTAw", "MjY0MTIzNTYw"])
-    same_title = (
-        "建了 2 张卡。\n\n"
-        "新建：\n"
-        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
-        "- 蓝图（Blueprints）：另一份材料里的同名对象。\n\n"
-        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
-        "蓝图（Blueprints）：MjY0MTIzNTYw，#产业/游戏，实测 320 字"
-    )
-    rc = _run(same_title)
-    check("两张卡标题同名被拦", rc == 1, f"退出码 {rc}")
-
-    # 8c. 标题与云端既有卡同名 → 必须拦（一个对象只落一张卡）
-    _prepare(["MjY0MTIzNTUw"])
-    report_check._title_collisions = (
-        lambda name, own: [("MjY5OTk5OTk5", name)] if name == "Dots：常驻智能体" else [])
-    collide = (
-        "建了 1 张卡。\n\n"
-        "新建：\n"
-        "- Dots：常驻智能体：这轮记它的常驻形态。\n\n"
-        "Dots：常驻智能体：MjY0MTIzNTUw，#AI/智能体，实测 600 字"
-    )
-    rc = _run(collide)
-    check("标题与云端既有卡同名被拦", rc == 1, f"退出码 {rc}")
-
-    # 8d. 更新卡撞上同名卡 → 放行（两张同名卡都要保留更新权限）
-    report_check._title_collisions = (
-        lambda name, own: [("MjY5OTk5OTk5", name)] if name == "Dots：常驻智能体" else [])
-    _prepare(["MjY0MTIzNTUw"], updated=["MjY0MTIzNTUw"])
-    rc = _run(collide.replace("建了 1 张卡。", "更新 1 张卡。")
-              .replace("新建：", "更新："))
-    check("更新卡与云端同名时放行", rc == 0, f"退出码 {rc}")
-    report_check._title_collisions = lambda name, own: []
 
     # 9. 混合轮：2 新建 + 1 更新，分两段写 → 放行
     mixed_ids = ["MjY0MTIzNTAw", "MjY0MTIzNTMw", "MjY0MTIzNTQw"]

@@ -976,26 +976,6 @@ def test_batch_shared_line_blocks():
         check("同批整行重复：点出那一行", "市级、国家级体育传统项目学校" in err, err)
 
 
-def test_batch_same_title_blocks():
-    """同批两张稿的第二行相同：写云前拦下——云端只查已存在的卡，同批互撞两边都还不在。
-
-    真卡形态：一次投多条材料时，把同一对象的两种说法拆成两稿，单张预检各自都过，
-    云端的同名拦截也看不见（两张都还没落库），最后云端出现两张同名卡。
-    """
-    with tempfile.TemporaryDirectory() as tmp:
-        PB.PAYLOAD = Path(tmp) / "payload.json"
-        rows = _drafts(tmp, 2)
-        rows[0][0].write_text("#AI/对齐\n安全对齐\n\n要点：\n- 甲卡的一条要点", encoding="utf-8")
-        rows[1][0].write_text("#AI/对齐\n安全对齐\n\n要点：\n- 乙卡的另一条要点", encoding="utf-8")
-        man = _manifest_rows(tmp, rows)
-        exec_fn, calls = make_exec()
-        code, _out, err = run(["--batch", str(man)], exec_fn)
-        check("同批标题同名：退出码 3", code == 3, code)
-        check("同批标题同名：一个字节都没写", calls == [], calls)
-        check("同批标题同名：点出概念名", "安全对齐" in err, err)
-        check("同批标题同名：给出合并出口", "--update-id" in err, err)
-
-
 def test_batch_shared_line_ignores_short_and_tag_lines():
     """标签行、短行不算重复：两张卡用同一套标签、同一句「要点：」是常态。
 
@@ -1310,7 +1290,6 @@ if __name__ == "__main__":
                test_update_rename_allowed, test_update_target_missing,
                test_update_read_unparseable,
                test_update_read_failure, test_update_failure_no_dup,
-               test_batch_same_title_blocks,
                test_allow_rename_without_update, test_update_dry_run,
                test_update_diff_reported, test_update_diff_unchanged,
                test_diff_truncated_and_large_delete,

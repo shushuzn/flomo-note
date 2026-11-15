@@ -611,18 +611,10 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」（{r['tagline']}）"
                 for r in sweep_rec["same_concepts"][:5])
-            if anchor_id:
-                # 更新场景：云端已经存在同名卡（历史重复）也必须能改。这里的同名
-                # 卡正是被覆盖对象或它的孪生卡，拦下等于两张都改不了；放行并留痕，
-                # 合并交给后续复盘，不在写入路径上卡死。
-                notes.append(
-                    "查重·更新场景发现云端同名卡（历史重复），本次更新放行："
-                    f"{detail}；合并留待后续处理")
-            else:
-                blockers.append(
-                    f"概念名重复（标题同名）·整簇扫描 {sweep_rec['scanned']} 张候选，发现云端已有同一概念名的卡：{detail}。"
-                    "这是重复卡，必须用 --update-id 合并到该卡，不能新建。"
-                )
+            blockers.append(
+                f"概念名重复·整簇扫描 {sweep_rec['scanned']} 张候选，发现同一对象已有卡：{detail}。"
+                "这是重复卡，必须用 --update-id 合并到该卡，不能新建。"
+            )
         if sweep_rec["near_concepts"]:
             detail = "；".join(
                 f"{r['id']}「{r['concept']}」" for r in sweep_rec["near_concepts"][:5])

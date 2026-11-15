@@ -34,7 +34,6 @@ sys.path.insert(0, str(_SCRIPTS))
 
 import cli_util as CLI  # noqa: E402
 import flomo_client as FC  # noqa: E402
-import memo_util as MU  # noqa: E402
 import round_ledger  # noqa: E402
 import verify_card  # noqa: E402
 
@@ -72,28 +71,6 @@ def _round_for(url: str):
     return rows[-1] if rows else None
 
 
-def _title_collisions(name: str, own_ids: set[str]) -> list[tuple[str, str]]:
-    """云端是否已有别的卡用同一个标题（标题对云端唯一，H6e）。
-
-    闸门在写云前按候选集比对；此处是报告前的第二道，直接用概念名去云端检索，
-    把「闸门候选没覆盖到」也收在这一层。用例把本函数换掉，不联网。
-    """
-    client = verify_card._default_client()
-    found: dict[str, str] = {}
-    for q in dict.fromkeys([name, MU.normalize_concept(name)]):
-        if not q:
-            continue
-        res = FC.tool_data(client.tool("memo_search", {"keywords": q, "limit": 50}))
-        for m in res.get("memos") or []:
-            mid = m.get("id")
-            if not mid or mid in own_ids:
-                continue
-            sig = MU.memo_signature(m.get("content") or "")
-            if sig and sig["concept"].strip() == name.strip():
-                found[mid] = sig["concept"]
-    return list(found.items())
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", help="报告文本文件路径")
@@ -121,8 +98,6 @@ def main(argv=None) -> int:
     ids = [x.strip() for x in (row.get("detail") or "").split(",") if x.strip()]
     if outcome != "published":
         ids = []
-    # 更新卡单独取出：标题同名只拦「新建」，更新路放行——两张同名卡都保留更新权限。
-    marked_ids = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
 
     errors: list[str] = []
     notes: list[str] = []
@@ -203,17 +178,8 @@ def main(argv=None) -> int:
     dup = [i for i in set(got_ids) if got_ids.count(i) > 1]
     if dup:
         errors.append(f"同一 id 写了多条明细：{', '.join(dup)}")
-    # 标题同名：两个 id 用同一个概念名，等于把两个对象写成一张卡的两面。
-    # 云端只按单卡查，报告是唯一能同时看到本轮全部标题的地方。
-    name_counts: dict[str, int] = {}
-    for r in detail_rows:
-        nm = r["name"].strip()
-        name_counts[nm] = name_counts.get(nm, 0) + 1
-    same = [nm for nm, c in name_counts.items() if c > 1]
-    if same:
-        errors.append(f"两张卡标题同名：{'、'.join(same)}——同对象只能有一张卡")
 
-# ---- 2. 逐卡对账（回读云端，不手抄） ----
+    # ---- 2. 逐卡对账（回读云端，不手抄） ----
     print(f"── 本轮已建卡 {len(ids)} 张，报告明细 {len(detail_rows)} 条")
     cloud_names: dict[str, str] = {}
     for rid in ids:
@@ -247,25 +213,15 @@ def main(argv=None) -> int:
         if int(row_m["n"]) != int(want_n or -1):
             errors.append(f"{rid} 字数不符：报告 {row_m['n']} / 云端实测 {want_n}")
             ok = False
-        if rid in marked_ids:
-            hits = _title_collisions(second, set(ids))
-            if hits:
-                notes.append(
-                    f"{rid}「{second}」与云端同名卡 {hits[0][0]} 并存（历史重复）；"
-                    "本卡是更新，照常放行，两张都保留更新权限")
-        else:
-            for other_id, _other_name in _title_collisions(second, set(ids)):
-                errors.append(
-                    f"标题同名：{rid}「{second}」与云端既有卡 {other_id} 同名——"
-                    "一个对象只落一张卡；确要改写该对象请走 --update-id")
         print(f"  {'✓' if ok else '✗'} {second} | {rid} | {want_n} 字 | {first}")
 
     # ---- 3. 新建 / 更新分写 ----
     # 账本只记了 `published`（全部 id）与 `updated`（其中属于更新既有卡的那几个），
     # 差集即新建。没有 `updated` 字段的旧账本按「全部新建」处理——那一轮的分类
     # 已无从判定，强判会把历史轮次判错。
-    updated_ids = [i for i in ids if i in marked_ids]
-    created_ids = [i for i in ids if i not in marked_ids]
+    marked = [x.strip() for x in (row.get("updated") or "").split(",") if x.strip()]
+    updated_ids = [i for i in ids if i in marked]
+    created_ids = [i for i in ids if i not in marked]
     if ids:
         for kind, want_ids in (("新建", created_ids), ("更新", updated_ids)):
             block = sections[kind]

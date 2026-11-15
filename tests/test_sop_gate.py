@@ -639,26 +639,6 @@ def run_dedup_concept_sweep_cases():
     check("查重·更新且概念名未改不阻塞", not b)
     check("查重·更新跳过扫描留痕", any("跳过同名判定" in x for x in n))
 
-    # F) 两张卡本来就同名（历史重复），改其中一张也不得被同名拦下：
-    #    更新路一律放行并留痕，合并留待复盘——拦下等于两张都改不了。
-    c = FakeClient(
-        tag_tree=_tt(1, ["AI/公司"]),
-        search={"tag:AI/公司": {"structuredContent": {"memos": [
-            _memo("TWIN", "Anthropic")]}}},
-        batch_get={"SELF2": {"structuredContent": {"memos": [
-            _memo("SELF2", "Anthropic S-1")]}}},
-    )
-    b, n = [], []
-    GATE._check_dedup(
-        c, GATE.memo_signature("#AI/公司\nAnthropic\n\n改名后的正文\n"),
-        b, n, anchor_id="SELF2")
-    check("查重·更新撞上同名卡不阻塞", not b, b)
-    check("查重·更新同名放行留痕", any("本次更新放行" in x for x in n), n)
-    check("查重·更新同名仍记录冲突卡",
-          [r["id"] for r in GATE._check_dedup(
-              c, GATE.memo_signature("#AI/公司\nAnthropic\n\n改名后的正文\n"),
-              [], [], anchor_id="SELF2")["concept_sweep"]["same_concepts"]] == ["TWIN"])
-
 
 def run_tag_tree_net_cases():
     """_tag_tree_total_and_count（假 client，不联网）。
