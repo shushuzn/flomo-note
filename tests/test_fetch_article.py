@@ -420,6 +420,45 @@ def test_ledger_guard():
     check("关账后账上不再挂该素材", round_ledger.pending() == [], round_ledger.pending())
 
 
+def test_from_file_entry():
+    """粘贴全文要有入口：落成标准产物、开一条 `paste://` 账、按同一把键关账。
+
+    这条路径此前根本不存在——第 1 步只认 URL，粘贴的长文只能绕过流程直接查重，
+    于是「读全文 → 列对象」整段没有产物可依。用例盯的是三件事：产物落盘、账本键
+    是 `paste://<slug>`、缺内容/同时给 URL 都要被拦。
+    """
+    import round_ledger
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "pastetext.md"
+        src.write_text("第一段正文。\n第二段正文，够长了。", encoding="utf-8")
+        out = Path(tmp) / "article_paste_demo.txt"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = FA.main(["--from-file", str(src), "--out", str(out),
+                            "--slug", "paste-demo", "--min-chars", "5"])
+        got = out.read_text(encoding="utf-8") if out.exists() else ""
+        check("--from-file 落成标准产物", code == 0 and "第二段正文" in got, code)
+        check("账本键是 paste://<slug>", "paste://paste-demo" in buf.getvalue(), buf.getvalue())
+        check("开账提示点了同一把键",
+              "exit_confirm.py --url paste://paste-demo" in buf.getvalue(), buf.getvalue())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            round_ledger.close_round("paste://paste-demo", "exit", "测试收尾")
+
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            short = FA.main(["--from-file", str(src), "--slug", "s", "--min-chars", "9999"])
+        check("粘贴内容不足阈值被拦", short == 2 and "不完整" in err.getvalue(), err.getvalue())
+
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            both = FA.cli_entry(lambda: FA.main(["--from-file", str(src), "https://a.example.com"]),
+                                errors=(), usage_code=1)
+        check("--from-file 与 URL 同给被拦", both == 1 and "只能给一个" in err.getvalue(),
+              err.getvalue())
+
+
 if __name__ == "__main__":
     for fn in (test_decode, test_to_text, test_extract_site_pattern,
                test_extract_site_pattern_nested_divs,
@@ -428,7 +467,8 @@ if __name__ == "__main__":
                test_short_content_detected, test_lead_trim, test_tail_trim,
                test_published_from_text, test_heading_gap, test_wechat_captcha,
                test_bad_numeric_args,
-               test_url_is_positional, test_arxiv_fulltext_url, test_ledger_guard):
+               test_url_is_positional, test_arxiv_fulltext_url, test_ledger_guard,
+               test_from_file_entry):
         fn()
     ok = all(RESULTS)
     print(f"\n{'全部通过' if ok else '存在失败'}（{len(RESULTS)} 项）")

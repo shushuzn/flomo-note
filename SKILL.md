@@ -144,7 +144,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **本节管**顺序与每步完成判据；**不管**规则本身（细则查第二节）。标「阻塞」的步骤未完成不得进下一步。
 
 ### 1. 抓取
-`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。arXiv 的 `abs` 页只算摘要，不算全文：有 HTML 全文先读 HTML，没有再读 PDF；只拿到摘要时，对象清单标「摘要级」，正文不得写摘要里没有的定量边界。只给主题词/术语时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，术语词块须在正文出现），抓不到换查询词或换网络再试。
+`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。**粘贴全文**（直接给正文、无链接）走 `--from-file <文件> --slug <名>`：同样落盘开账，键 `paste://<名>`，关账与报告都用它。arXiv 的 `abs` 页只算摘要，不算全文：有 HTML 全文先读 HTML，没有再读 PDF；只拿到摘要时，对象清单标「摘要级」，正文不得写摘要里没有的定量边界。只给主题词/术语时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，术语词块须在正文出现），抓不到换查询词或换网络再试。
 
 ### 2. 验证
 专业术语须真搜索标准名称与定义：**环境搜索优先，不可用时用 `search_web.py` 兜底**（词块不相关即换引擎）；留痕 verify.json 写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。
@@ -156,12 +156,12 @@ description: Use when the user sends a link, asks to save an article, clip a web
 `tag_tree` 现采，`tagcheck.py` 核存在性，不精确就新建二级（H17/H18）。
 
 ### 5. 查重
-`dedup.py --keywords "词1,词2"` 两路并查；命中后必须 `--ids` 回读全文，不凭标签名判断「不是同一个」。闸门另按整簇翻页比对概念名（H6e）。
+`dedup.py --keywords "词1,词2"` 两路并查；命中后必须 `--ids` 回读全文，不凭标签名判断「不是同一个」。闸门另按整簇翻页比对概念名（H6e）。输出末行 `[汇总]` 是命中计数的唯一依据，**禁接 `| head`**：截断后正文看着正常，结论却是空的。
 
 ### 6. 判断
 四选一：无命中→新建；完全重复→更新；同事件→合并（H8–H10）；确实都不成立→退出（条件见 H6c）。
 
-**关账（阻塞）**：建卡与退出都须跑 `exit_confirm.py --url <链接>`——退出再附 `--objects/--search-log/--dedup-log/--reason` 四样，建卡用 `--published "id,…"`，其中更新既有卡的再单列 `--updated`。未关账会拦住下次抓取。
+**关账（阻塞）**：两端都跑 `exit_confirm.py --url <链接> --objects "…"`——退出再附 `--search-log/--dedup-log/--reason`，建卡用 `--published "id,…"`，更新既有卡的再单列 `--updated`。未关账拦住下次抓取。
 
 ### 7. 写作
 按 H14。

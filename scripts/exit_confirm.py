@@ -103,6 +103,15 @@ def main():
 
     # 建卡关账：本轮已经产出卡片，三项退出核验不适用；只核 id 形态并关账。
     if published:
+        # 对象清单在建卡路径同样必填。此前只有「退出不建卡」分支校验 --objects，
+        # 建卡路径可以完全不列对象，于是「先列对象再查重」这一步没有任何机械落点：
+        # 拿标题词（`智商税` 这类泛概念）当对象去查，命中一堆同主题噪音，从输出上
+        # 看不出少了一步。所以这里只做一件事：不给对象名单，不许关账。
+        objs = [o.strip() for o in args.objects.split(",") if o.strip()]
+        if not objs:
+            print("[退出拦截] 建卡关账也要给 --objects：先把本轮对象逐个列出来再查重，"
+                  "不能拿标题词当对象", file=sys.stderr)
+            return 1
         bad = [x for x in published if not re.fullmatch(r"[A-Za-z0-9]{8,}", x)]
         if bad:
             print(f"[退出拦截] --published 里有不像 memo id 的值：{', '.join(bad)}",
@@ -136,7 +145,8 @@ def main():
                 missed.append(u)
         split = (f"（新建 {len(published) - len(updated)} / 更新 {len(updated)}）"
                  if updated else "")
-        print(f"[关账] 建卡 {len(published)} 张{split}，素材 {len(urls)} 条已关闭")
+        print(f"[关账] 建卡 {len(published)} 张{split}，对象 {len(objs)} 个"
+              f"（{'、'.join(objs)}），素材 {len(urls)} 条已关闭")
         if backfilled:
             print("[提示] 这些素材账上原本没有开账记录（直接粘贴全文或旧轮次已裁），"
                   f"已补录一条并关闭：{'、'.join(backfilled)}")

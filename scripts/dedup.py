@@ -168,6 +168,12 @@ def main(argv: list[str] | None = None, client=None) -> int:
         print("[失败] 至少给 --keywords / --tag / --id / --ids 之一", file=sys.stderr)
         return 1
 
+    # 末行 `[汇总]` 是「到底查了几张」的唯一依据，而它恰好在输出最末——接
+    # `| head -N` 一截就没了，剩下的正文看起来完全正常，于是「查了但没读到结论」
+    # 会被当成「查过、无命中」。抬头先把这件事说出来，让截断可见。
+    print("[查重] 末行为 [汇总]（含命中卡数）；看不到这一行就是输出被截断，"
+          "不得据此下结论", flush=True)
+
     if client is None:
         # 建连失败（含凭据缺失）在 main 里就收成退出码：`cli_entry` 那层是兜底，
         # 不该让「没配 token」这种可预期失败走到兜底上——消息会少掉这里的上下文。

@@ -198,10 +198,16 @@ try:
 
     _lm.open_round(URL, "/tmp/x.txt")
     pub_rc, pub_out, pub_err = run(["--url", URL, "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy"])
+    check("建卡关账缺 --objects 被拦（对象清单不许跳过）",
+          pub_rc == 1 and "--objects" in pub_err,
+          f"rc={pub_rc}, err={pub_err[:160]!r}")
+    pub_rc, pub_out, pub_err = run(["--url", URL, "--objects", "对象甲,对象乙",
+                                   "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy"])
     check("建卡关账：带 --published 直接关闭",
           pub_rc == 0 and "建卡 2 张" in pub_out and not _lm.pending(),
           f"rc={pub_rc}, out={pub_out[:160]!r}, err={pub_err[:160]!r}")
-    bad_rc, _, bad_err = run(["--url", URL, "--published", "not-an-id!"])
+    bad_rc, _, bad_err = run(["--url", URL, "--objects", "对象甲",
+                              "--published", "not-an-id!"])
     check("--published 里不像 id 的值被拦", bad_rc == 1 and "不像" in bad_err,
           f"rc={bad_rc}, err={bad_err[:160]!r}")
 
@@ -209,14 +215,16 @@ try:
     # 两段写得对不对。写漏一张会把新建卡判成更新卡，两边看着都对，只有对账时
     # 才炸——所以这一项必须落进账本，不能只在命令行里过一下。
     _lm.open_round(URL, "/tmp/x.txt")
-    stray_rc, _, stray_err = run(["--url", URL, "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy",
+    stray_rc, _, stray_err = run(["--url", URL, "--objects", "对象甲",
+                                 "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy",
                                  "--updated", "MjYwMDAwMDAw"])
     check("--updated 里的 id 不在 --published 中被拦",
           stray_rc == 1 and "不在 --published" in stray_err,
           f"rc={stray_rc}, err={stray_err[:160]!r}")
 
     _lm.open_round(URL, "/tmp/x.txt")
-    up_rc, up_out, up_err = run(["--url", URL, "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy",
+    up_rc, up_out, up_err = run(["--url", URL, "--objects", "对象甲",
+                                "--published", "MjY0MDk0NDkw,MjY0MDk0NTEy",
                                 "--updated", "MjY0MDk0NTEy"])
     rows = json.loads(LEDGER.read_text(encoding="utf-8"))["rounds"]
     last = [r for r in rows if r.get("url") == URL and r.get("closed_at")][-1]

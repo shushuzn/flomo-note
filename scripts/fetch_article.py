@@ -68,6 +68,8 @@ _OPTS = [
     Opt("--print", "echo", "flag"),
     Opt("--batch", "batch", "flag"),
     Opt("--no-ledger", "no_ledger", "flag"),
+    Opt("--from-file", "from_file", default=None),
+    Opt("--slug", "slug", default=""),
 ]
 
 # 站内专用抽取器。
@@ -561,6 +563,60 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
     return text, ctype, reply.channel
 
 
+def ingest_paste(src: Path, ns: dict) -> int:
+    """把已粘贴的全文落成标准抓取产物。
+
+    粘贴长文没有 URL，此前只能绕过第 1 步：不落盘、不开账，于是「读全文 → 列对象」
+    整段没有产物可依，模型顺手就拿标题词去查重。这里给它一个与网页抓取同形的结果：
+    `_tmp/article_<slug>.txt` 加一条以 `paste://<slug>` 为键的账——后续 exit_confirm
+    与 report_check 照旧按这个键取 id，不必为「粘贴」单开一套分支。
+
+    不做首尾裁剪：那套规则是给网页噪音（导航、推荐位、APP 下载块）写的，对人工
+    粘贴的正文误裁大于收益。
+    """
+    if not src.exists():
+        print(f"[失败] 文件不存在：{src}", file=sys.stderr)
+        return 1
+    text = src.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n").strip()
+    if len(text) < ns["min_chars"]:
+        print(f"[失败] 只有 {len(text)} 字符（阈值 {ns['min_chars']}）——"
+              "粘贴内容不完整，不能当全文", file=sys.stderr)
+        return 2
+
+    slug = ns["slug"] or _slug(src.stem)
+    key = f"paste://{slug}"
+    tmp_dir = PROJECT_ROOT / "_tmp"
+    if ns["out"]:
+        out = Path(ns["out"])
+    elif src.parent.resolve() == tmp_dir.resolve():
+        out = src
+    else:
+        out = tmp_dir / f"article_{slug}.txt"
+
+    ledger_on = not ns["no_ledger"]
+    blocked = "" if (ns["batch"] or not ledger_on) else round_ledger.pending_block_message()
+    if blocked:
+        print(f"[拦截] {blocked}", file=sys.stderr)
+        return 3
+
+    if out.resolve() != src.resolve():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text + "\n", encoding="utf-8")
+
+    print(f"[来源] 粘贴全文，无 URL；账本键 {key}")
+    print(f"[正文] {len(text)} 字符")
+    print(f"[文件] {out}")
+    if ledger_on:
+        round_ledger.open_round(key, str(out))
+        print(f"[关账] 本轮已开账：建卡或退出后跑 exit_confirm.py --url {key} 关闭，"
+              "否则下次抓取被拦")
+    print(f"[下一步] 读回全文：Read {out}（流程第 1 步纪律，未读回不得提炼）")
+    if ns["echo"]:
+        print("--- 正文 ---")
+        print(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     force_utf8()
     args = list(sys.argv[1:] if argv is None else argv)
@@ -570,8 +626,14 @@ def main(argv: list[str] | None = None) -> int:
     # URL 是位置参数，选项可在它前后（旧实现把 args[0] 直接当 URL，
     # `--out p.html <url>` 会把 `--out` 当链接、报「不是 http(s) 链接：--out」）。
     ns, pos = parse_options(args, _OPTS, positional_ok=True)
+    if ns["from_file"]:
+        # 粘贴全文与网页抓取是两条入口，同时给会让人以为「抓了又贴了」，判不清以哪份为准
+        if pos:
+            raise UsageError("--from-file 与位置参数 URL 只能给一个")
+        return ingest_paste(Path(ns["from_file"]), ns)
     if not pos:
-        raise UsageError("缺 URL：python scripts/fetch_article.py <url> [选项]")
+        raise UsageError("缺 URL：python scripts/fetch_article.py <url> [选项]；"
+                         "粘贴全文用 --from-file <文件>")
     if len(pos) > 1:
         raise UsageError(f"只接受一个 URL，多给了 {len(pos) - 1} 个：{' '.join(pos[1:])}")
     url = pos[0]

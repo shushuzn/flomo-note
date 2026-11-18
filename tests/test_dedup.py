@@ -177,6 +177,9 @@ def test_no_full():
     check("--no-full 不调 batch_get",
           all(c[0] != "memo_batch_get" for c in client.calls), client.calls)
     check("--no-full 显式声明未取正文", "未取正文" in out, out[-120:])
+    # 抬头声明「末行才是计数」：接 `| head` 截掉末行后，正文看着正常，没有这句
+    # 提醒就分不清「查过、无命中」与「没读到结论」。
+    check("抬头声明末行是计数依据", "[汇总]" in out and "截断" in out, out[:120])
 
 
 def test_failure_not_empty():
