@@ -698,9 +698,14 @@ def main() -> int:
 
 
 # 标准 MCP 工具契约（客户端侧镜像，供 sounding 等治理工具审计）。
-# flomo_client.py 透传任意工具名，此处只声明实际由 flomo MCP server 暴露、
-#本项目常用且有明确参数的工具；webfetch/websearch/memory_* 属环境级通用工具，
-#不在此 flomo 契约内。字段对齐 MCP spec：name / description / inputSchema / annotations。
+# **以服务端 `tools/list` 为准**：这份表是抄本、不是事实源，服务端加参数或去工具时
+# 它不会自己变，须重新拉一次比对（`client.tools_list()`）。字段对齐 MCP spec：
+# name / description / inputSchema / annotations。
+#
+# 服务端（flomo-mcp 1.0.0，协议版本见 `initialize` 回包）实暴露 13 个工具，全部
+# `additionalProperties: false`——未在 schema 里的字段会被拒，不是被忽略。
+# 实测上限：`memo_search` 单次 50（默认 10）、`tag_search` 单次 50（默认 20）、
+# `tag_tree` 默认 200、封顶 1000（limit 有效，传更大值夹到 1000）。
 FLOMO_MCP_TOOLS = [
     {
         "name": "memo_create",
@@ -709,9 +714,9 @@ FLOMO_MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "卡片正文，首行标签段加空行接正文"},
-                "format": {"type": "string", "description": "可选，markdown 或 html；省略即纯文本"},
-                "linked_memos": {"type": "array", "items": {"type": "string"}, "description": "可选，关联的其他 memo id 列表"}
+                "format": {"type": "string", "description": "可选，markdown 或 html；省略即纯文本"}
             },
+            "additionalProperties": False,
             "required": ["content"]
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
@@ -738,9 +743,15 @@ FLOMO_MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "keywords": {"type": "string", "description": "关键词，匹配正文与标签"},
-                "tag": {"type": "string", "description": "按顶层或子标签精确检索"},
-                "limit": {"type": "integer", "description": "返回条数上限，默认 10"}
+                "tag": {"type": "string", "description": "按完整标签路径精确检索（云端不接受裸顶层名）"},
+                "limit": {"type": "integer", "description": "返回条数上限，默认 10；服务端单次封顶 50"},
+                "start_date": {"type": "string", "description": "起始日期（含），形如 YYYY-MM-DD；与 end_date 组成区间"},
+                "end_date": {"type": "string", "description": "截止日期（含）；也是翻页游标——不认 offset，只能靠它往前推"},
+                "from": {"type": "string", "description": "来源渠道，如 ai；控制台层叫 source"},
+                "has_tag": {"type": ["boolean", "null"], "description": "三态：true 只要带标签、false 只要无标签、null 或不传不筛"},
+                "original_only": {"type": "boolean", "description": "只取原创，排除转发/摘录"}
             },
+            "additionalProperties": False,
             "required": []
         },
         "annotations": {"readOnlyHint": True}
@@ -751,9 +762,11 @@ FLOMO_MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "ids": {"type": "array", "items": {"type": "string"}, "description": "memo id 列表"},
-                "slugs": {"type": "array", "items": {"type": "string"}, "description": "memo slug 列表"}
+                "id": {"type": "string", "description": "单卡 id（服务端另有 ids，可为数组或逗号串）"},
+                "ids": {"type": ["array", "string"], "items": {"type": "string"},
+                        "description": "多卡 id，数组或字符串皆可"},
             },
+            "additionalProperties": False,
             "required": []
         },
         "annotations": {"readOnlyHint": True}
@@ -765,8 +778,10 @@ FLOMO_MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "锚定 memo 的 id（必填；服务端按此卡返回相关推荐）"},
-                "limit": {"type": "integer", "description": "返回条数上限"}
+                "limit": {"type": "integer", "description": "返回条数上限"},
+                "no_same_tag": {"type": "boolean", "description": "排除与本卡同标签的候选，只看跨主题关联"}
             },
+            "additionalProperties": False,
             "required": ["id"]
         },
         "annotations": {"readOnlyHint": True}
@@ -778,9 +793,24 @@ FLOMO_MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "prefix": {"type": "string", "description": "按顶层收窄（如「教育」），返回该顶层下全部标签；不传则拉全库，可能被服务端封顶 1000 条"},
-                "limit": {"type": "integer", "description": "返回条数上限；服务端实际封顶 1000，传更大值无效"},
+                "limit": {"type": "integer", "description": "返回条数上限，不传默认 200；超过 1000 被夹到 1000"},
                 "depth": {"type": "integer", "description": "层级深度。实测无效（传 1 返回空树，顶层不单独成条），不要依赖"}
-            }
+            },
+            "additionalProperties": False
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "tag_search",
+        "description": "按关键词搜标签名（子串匹配），返回命中的标签路径。当标签总数已过千、只想定位某个二级名、或核对跨顶层有没有同名写法时使用。要看某个顶层的完整兄弟清单请用 tag_tree 的 prefix。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "keywords": {"type": "string", "description": "子串关键词；大小写不敏感（搜 ai 能命中 AI/…）"},
+                "limit": {"type": "integer", "description": "返回条数上限，默认 20；服务端单次封顶 50"}
+            },
+            "additionalProperties": False,
+            "required": ["keywords"]
         },
         "annotations": {"readOnlyHint": True}
     },
@@ -791,9 +821,10 @@ FLOMO_MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "old_tag": {"type": "string", "description": "原标签名，含顶层斜杠"},
-                "new_tag": {"type": "string", "description": "新标签名"},
+                "new_tag": {"type": "string", "description": "新标签名；不得含空白、<、# 等终止标签的字符"},
                 "max_memos": {"type": "integer", "description": "受影响 memo 上限，防误改范围过大"}
             },
+            "additionalProperties": False,
             "required": ["old_tag", "new_tag"]
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}
@@ -802,7 +833,8 @@ FLOMO_MCP_TOOLS = [
         "name": "get_format_guide",
         "description": "返回 flomo 支持的卡片格式与富文本写法指南，含加粗、高亮、列表、下划线。当要确认某富文本语法是否被支持、写作前对齐格式时使用。不需要格式细节时不要用。",
         "inputSchema": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": False
         },
         "annotations": {"readOnlyHint": True}
     },
@@ -810,7 +842,35 @@ FLOMO_MCP_TOOLS = [
         "name": "get_tag_guide",
         "description": "返回 flomo 标签规则与命名约定指南。当要定新标签、判断顶层与子标签边界、或核顶层词表时使用。格式细节请用 get_format_guide。",
         "inputSchema": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": False
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "get_daily_review",
+        "description": "返回今日每日回顾挑中的历史笔记全文。当要按 flomo 的回顾池取素材、或核对某张旧卡是否已被回顾过时使用。按主题检索请用 memo_search，不要靠它翻历史。",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "memory_context",
+        "description": "返回用户的记忆文档（memory.md）：当前的工作、兴趣、项目、目标。当要判断新素材是否与用户当前在推进的事相关时使用。它是云端记忆文档、不是本仓库的记忆层，两者不要混用。",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False
+        },
+        "annotations": {"readOnlyHint": True}
+    },
+    {
+        "name": "memory_user",
+        "description": "返回用户画像文档（user.md）：身份、性格、价值观、偏好等较稳定的信息。当要判断表达口径、取舍偏好时使用。与 memory_context（当下事项）分工不同。",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False
         },
         "annotations": {"readOnlyHint": True}
     },

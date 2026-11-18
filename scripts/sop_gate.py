@@ -367,8 +367,8 @@ def _check_tags(tags, tagline, blockers, notes, *, index=None):
 def _tag_tree_total_and_count(client):
     """现采 tag_tree，返回 (total, 标签列表)。
 
-    `limit` 仍传 2000 只为兼容旧调用：服务端 inputSchema 为空、不认这个参数，
-    实测封顶 1000 条而 `total` 报真实值（1025）。**能否靠调大 limit 取全是否定的**，
+    `limit` 传 2000 会被服务端夹到 1000（该参数有效，不传默认只有 200），
+    而 `total` 报真实值（1025），所以**靠调大 limit 取全是否定的**，
     是否截断由调用方按 `len(tags) != total` 判，并据此逐名现查补查（见 `_check_dedup`）。
     回包解析走 `flomo_client.tool_data`（唯一实现）：逐字段兜底那套已删——
     它与 `tagcheck` 的「缺 total 就抛」是同一件事的两种写法，同一个回包会在
