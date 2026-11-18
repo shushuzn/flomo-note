@@ -96,6 +96,7 @@ from memo_util import (
     tag_leaves,
 )
 from scan_concept_duplication import normalize as strip_slice_name
+from tag_index import collect, leaf_names_of, tops_of
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
@@ -276,7 +277,7 @@ def _check_term_landed(item, body, blockers):
     return _landed_record(term, bool(matched), names=names, matched=matched)
 
 
-def _check_tags(tags, tagline, blockers, notes):
+def _check_tags(tags, tagline, blockers, notes, *, index=None):
     """④ 定标签的机器兜底：卡上每个标签在云端树里到底是什么状态。
 
     【为什么要它】这一步此前没有任何机器兜底。闸门只在查重第二路里数「同标签
@@ -294,7 +295,10 @@ def _check_tags(tags, tagline, blockers, notes):
     （误拦比漏检更危险，与 H6d 同一条原则）。
     """
     names = _tag_names(tags)
-    if not names:
+    if not names and (index is None or index.problems()):
+        # 空集合有两种来源，结论相反：**取不到**（无从核对，必须阻塞）与**确实没有**
+        # （`prefix` 查询返回空 = 这个顶层在库里不存在，本卡会连顶层一起新建）。
+        # 后者是合法动作，报「标签树未取到」会让人以为工具坏了、跑去重采。
         blockers.append(
             "标签树未取到（tag_tree 无内容），第 ④ 步标签核对无从进行"
             "——查重的标签路同样空转，重采通过后再跑"
@@ -881,20 +885,21 @@ def main():
     client = FlomoClient(token)
     client.init()
 
-    # 标签树只采一次：④ 存在性核对与 ⑤ 标签路查重用的是同一份树，各采一次既
-    # 多一次往返，也可能两次之间标签被改名而让两段结论互相矛盾。
-    total, tree = _tag_tree_total_and_count(client)
-    got = len(_tag_names(tree))
-    if total is None:
-        notes.append("标签树·未取到（第 ④ 步与查重标签路都将无从核对）")
-    else:
-        notes.append(f"标签树·现采 {got} 个（total {total}）")
-        if got < total:
-            notes.append(
-                f"标签树·被截断（{got} / {total}）"
-                "——「标签不存在」的结论可能不准，但错字类阻塞不受影响"
-            )
-    tag_check = _check_tags(tree, sig["tagline"], blockers, notes)  # ④
+    # 标签按顶层现采，不拉全量：判定路只需要本卡涉及的那几个簇，而全库封顶 1000 条
+    # （实测 total 1025），一拉就缺尾部——「该标签不在树中」会被误报成「库里有没这簇」，
+    # 近邻也会漏成 0。改成逐顶层 prefix 取后，每簇都是完整数据，两个结论才立得住。
+    # 仍只采一次：④ 存在性核对与 ⑤ 标签路查重用同一份，各采一次会让两段结论互相矛盾。
+    wanted = [f"{top}/{leaf}" for top, leaf in tag_leaves(sig["tagline"])] or \
+        re.findall(r"#([^\s#]+)", sig["tagline"])
+    index = collect(client, tops_of(wanted), leaf_names_of(wanted))
+    tree = index.names()
+    notes.append(
+        f"标签树·按顶层现采 {len(index.slices)} 个（{'、'.join(index.slices) or '—'}）、"
+        f"{len(tree)} 个标签"
+    )
+    for problem in index.problems():
+        notes.append(f"标签树·{problem}")
+    tag_check = _check_tags(tree, sig["tagline"], blockers, notes, index=index)  # ④
     dedup = _check_dedup(client, sig, blockers, notes, tree=tree, anchor_id=args.anchor_id,
                          allow_near=args.allow_near_concept, body=content)  # ⑤
     review = _check_review(client, sig, blockers, notes, args.anchor_id)  # ⑧

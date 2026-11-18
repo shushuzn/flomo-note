@@ -773,9 +773,14 @@ FLOMO_MCP_TOOLS = [
     },
     {
         "name": "tag_tree",
-        "description": "返回云端全部标签的层级树，含顶层、子标签与计数。当要现采标签树、查重前核近义顶层、或维护顶层词表时使用。只想要某主题卡片请用 memo_search，不要本工具。",
+        "description": "返回云端标签的层级树。默认一次拉全库，但服务端封顶 1000 条；传 prefix 按顶层收窄即可完整取回该簇（顶层有几十个、总数已过千，精确核对一律按 prefix 取）。当要现采标签树、查重前核近义顶层、或维护顶层词表时使用。只想要某主题卡片请用 memo_search，不要本工具。",
         "inputSchema": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "prefix": {"type": "string", "description": "按顶层收窄（如「教育」），返回该顶层下全部标签；不传则拉全库，可能被服务端封顶 1000 条"},
+                "limit": {"type": "integer", "description": "返回条数上限；服务端实际封顶 1000，传更大值无效"},
+                "depth": {"type": "integer", "description": "层级深度。实测无效（传 1 返回空树，顶层不单独成条），不要依赖"}
+            }
         },
         "annotations": {"readOnlyHint": True}
     },

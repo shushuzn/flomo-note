@@ -9,9 +9,10 @@
   python scripts/tagcheck.py --tags "AI/Agent,科技/测试"
   python scripts/tagcheck.py --grep "多语言|本地化"      # 只有标签名不确定时：先列出匹配的现有标签
 
-`--limit` 仅为兼容旧调用而保留：服务端 tag_tree 的 inputSchema 为空，不认该参数，
-实测封顶 1000 条。树被截断时会用 tag_search 逐名补查候选，并明说覆盖不全；
-补查仍未命中的一律判「无法确认」，绝不提示「可新建」。
+`--limit` 仅为兼容旧调用而保留：服务端 tag_tree 不认该参数，实测封顶 1000 条。
+所以判定路**不取全量**——按本卡涉及的那几个顶层逐个 `prefix` 取（实测每个顶层都能
+完整返回），存在性与兄弟清单都基于完整数据，不会把「被截掉」看成「没有」。
+只有 `--grep` 这种模糊检索才拉全树；要跨顶层核全量时加 `--full` 逐顶层拼。
 
 输出：逐个标签给 存在 / 层级 / 同顶层兄弟二级（供判断该复用还是新建更精准的二级）。
 与现有标签**只差空白、全半角斜杠或大小写**的，一律判「写错」并点出树里的那个写法
@@ -36,6 +37,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options  # noqa: E402
 from flomo_client import FlomoClient, FlomoError, load_token, tool_data  # noqa: E402
 from memo_util import tag_key  # noqa: E402
+from tag_index import collect, fetch_top, leaf_names_of, tops_of  # noqa: E402
 
 DEFAULT_LIMIT = 2000
 SIBLING_SHOW = 12
@@ -47,6 +49,8 @@ _OPTS = [
     # None = 没给；"" = 给了空值（空正则会命中全部标签，另判）
     Opt("--grep", "pattern", default=None),
     Opt("--limit", "limit", "int", low=1, default=DEFAULT_LIMIT),
+    Opt("--full", "full", "flag",
+        hint="；--grep 跨顶层取全量（逐顶层拼，慢，仅模糊改名/巡检用）"),
 ]
 
 
@@ -60,17 +64,16 @@ def split_tags(raw: str) -> list[str]:
 
 
 def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int, bool]:
-    """现采标签树，返回 (tags, total, truncated)。
+    """一次拉全库，返回 (tags, total, truncated)。
 
     回包解析走 `flomo_client.tool_data`（唯一实现）。此前只认 `structuredContent`，
     而 `sop_gate` 对同一回包做了逐字段兜底：云端一旦只给 `content[].text`，
     闸门判通过、本脚本报「回包缺 total 字段」——同一份数据两个结论，且错怪了标签树。
 
-    **截断不再抛错**：服务端 `tag_tree` 的 inputSchema 为空，根本不认 `limit`，
-    实测封顶 1000 条而 `total` 会报 1025。此前 `len(tags) != total` 直接失败，
-    并提示「调大 --limit 重采」——那是个做不到的动作，流程第 4 步从此永远卡死。
-    截断改由 `main` 用 `tag_search` 逐名补查候选，并明说覆盖不全；绝不据
-    「截断后的树里搜不到」判「不存在，可新建」（H18）。
+    **截断不再抛错**：服务端根本不认 `limit`，实测封顶 1000 条而 `total` 报 1025。
+    此前 `len(tags) != total` 直接失败，并提示「调大 --limit 重采」——那是个做不到
+    的动作，流程第 4 步从此永远卡死。现在只有 `--grep` 的模糊检索走这条路，
+    截断时明说覆盖范围；要全量用 `--full`（见 `load_all`）。
     """
     sc = tool_data(client.tool("tag_tree", {"limit": limit}))
     tags = sc.get("tags") or []
@@ -81,18 +84,30 @@ def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int, bool]:
     return names, int(total), len(names) != int(total)
 
 
-def search_tag_names(client: FlomoClient, name: str, limit: int = 50) -> list[str]:
-    """按完整标签名现查（`tag_search` 是子串匹配，精确名命中可靠）。
+def load_all(client: FlomoClient, limit: int) -> tuple[list[str], int]:
+    """真全量：先拉一次，被截断则按顶层逐个 `prefix` 拼。
 
-    回包 `tags` 是 `[{"name": "…"}]`；`tool_data` 已从 `content[].text` 兜底解码。
-    子串匹配可能带回同名的更长标签，但它们都是真实存在的标签，加进候选集合
-    只会补全兄弟清单，不会让「不存在」被误判成「存在」（存在性按逐字精确比）。
+    顶层只有几十个，拼得全；代价是几十次往返，只在 `--grep --full` 时走。
+    拼不全（某顶层取不到）时如实标出，不假装全量。
     """
-    sc = tool_data(client.tool("tag_search", {"keywords": name, "limit": limit}))
-    out: list[str] = []
-    for t in (sc.get("tags") or []):
-        out.append(str(t.get("name", "")) if isinstance(t, dict) else str(t))
-    return [x for x in out if x]
+    tags, total, truncated = load_tree(client, limit)
+    if not truncated:
+        return tags, total
+    print(f"[标签树] total {total}，一次只回 {len(tags)} 条（服务端封顶 1000），"
+          f"按 {len(tops_of(tags))} 个顶层逐个拼")
+    out = list(tags)
+    dead = []
+    for top in tops_of(tags):
+        sl = fetch_top(client, top, limit)
+        if sl.error or sl.truncated:
+            dead.append(top)
+        for n in sl.names:
+            if n not in out:
+                out.append(n)
+    if dead:
+        print(f"[标签树] 这 {len(dead)} 个顶层没拼全：{', '.join(dead)}"
+              f"——全量 {len(out)} 条是下界", file=sys.stderr)
+    return out, total
 
 
 def inspect_tag(tag: str, tags: list[str]) -> dict:
@@ -144,6 +159,7 @@ def main(argv: list[str] | None = None, client=None) -> int:
     raw_tags = ns["raw_tags"]
     pattern = ns["pattern"]
     limit = ns["limit"]
+    full = ns["full"]
 
     tags_wanted = split_tags(raw_tags)
     if pattern == "":
@@ -159,36 +175,49 @@ def main(argv: list[str] | None = None, client=None) -> int:
             token, _src = load_token()
             client = FlomoClient(token)
             client.init()
-        tags, total, truncated = load_tree(client, limit)
-    except (FlomoError, RuntimeError) as exc:
-        print(f"[失败] 标签树未取到：{exc}", file=sys.stderr)
+    except FlomoError as exc:
+        print(f"[失败] 云端连不上：{exc}", file=sys.stderr)
         return 1
 
-    tree_count = len(tags)
-    if truncated:
-        print(f"[标签树] total {total}，服务端只返回 {tree_count} 条（封顶 1000，limit 不被接受）；"
-              "候选标签用 tag_search 逐名补查，同顶层兄弟清单可能不全")
-        for tag in tags_wanted:
-            for hit in search_tag_names(client, tag):
-                if hit not in tags:
-                    tags.append(hit)
-    else:
-        print(f"[标签树] {total} 个（limit={limit}，条数与 total 相符）")
+    # 判定路**不取全量**：只按本卡涉及的顶层逐个 prefix 取。每个顶层下的标签数远小于
+    # 服务端的 1000 条封顶，所以拿到的是完整数据——「这个二级不存在」从此有证据，
+    # 不再需要在截断的树里猜测，也不会把「被截掉」说成「没有」。
+    tags: list[str] = []
+    unchecked_tops: set[str] = set()
+    if tags_wanted:
+        idx = collect(client, tops_of(tags_wanted), leaf_names_of(tags_wanted))
+        tags = idx.names()
+        print(f"[标签] 按顶层取 {len(idx.slices)} 个（{'、'.join(idx.slices) or '—'}），"
+              f"共 {len(tags)} 个标签，含跨顶层同名补查")
+        for problem in idx.problems():
+            print(f"   [注意] {problem}")
+        unchecked_tops = {t for t, sl in idx.slices.items() if not sl.ok}
+
+    # 模糊检索要全库视图：默认拉一次，截断就明说覆盖范围；--full 逐顶层拼真全量。
     if pattern:
+        tree_view = tags
+        if full:
+            tree_view, total = load_all(client, limit)
+            tree_truncated = False
+        elif not tags_wanted:
+            tree_view, total, tree_truncated = load_tree(client, limit)
+            if tree_truncated:
+                print(f"[标签树] total {total}，一次只回 {len(tree_view)} 条（服务端封顶 1000）；"
+                      "以下匹配只覆盖这些，跨顶层核全量加 --full")
+        else:
+            tree_truncated = False
         try:
             rx = re.compile(pattern, re.I)
         except re.error as exc:
             print(f"[失败] --grep 正则有误：{exc}", file=sys.stderr)
             return 2
-        hits = [t for t in tags if rx.search(t)]
-        print(f"[匹配] 正则「{pattern}」命中 {len(hits)} 个")
+        hits = [t for t in tree_view if rx.search(t)]
+        print(f"[匹配] 正则「{pattern}」命中 {len(hits)} 个"
+              + (f"（覆盖 {len(tree_view)} 个标签）" if full or not tags_wanted else "（本卡涉及顶层内）"))
         for t in hits[:GREP_SHOW]:
             print("   " + t)
         if len(hits) > GREP_SHOW:
             print(f"   …另 {len(hits) - GREP_SHOW} 个未列出（缩小 --grep 范围再看）")
-        if truncated:
-            print(f"   [注意] 树缺 {total - tree_count} 条，以上只覆盖前 {tree_count} 条；"
-                  "精确核单个标签请用 --tags（会逐名现查）")
         if not hits:
             print("   现有标签里没有匹配项；该新建还是换词再找，按 H18 判，不要据「搜不到」就建近义簇")
         if not tags_wanted:
@@ -210,12 +239,11 @@ def main(argv: list[str] | None = None, client=None) -> int:
             bad += 1
             continue
         if info["exists"]:
-            note = "（树截断，逐名现查确认）" if truncated and tag not in tags[:tree_count] else ""
-            print(f"✓ {tag}  已存在（同顶层 {len(info['siblings'])} 个二级）{note}")
+            print(f"✓ {tag}  已存在（同顶层 {len(info['siblings'])} 个二级）")
         else:
-            if truncated:
+            if info["top"] in unchecked_tops:
                 unverifiable += 1
-                print(f"✗ {tag}  无法确认：服务端封顶 {tree_count}/{total} 条，逐名现查也未命中；"
+                print(f"✗ {tag}  无法确认：「{info['top']}」这个顶层没取全（见上面的注意项）；"
                       "到云端标签页人工核对后再定，不要据「搜不到」新建（H18）")
             else:
                 hint = "该顶层存在，可直接新建此二级" if info["top_exists"] else "该顶层也不存在，须连同顶层一起新建"

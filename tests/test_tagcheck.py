@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tagcheck.py 的离线回归用例（不联网）。"""
 
-COVERS = ("tagcheck", "sop_gate",)
+COVERS = ("tagcheck", "sop_gate", "tag_index")
 
 import contextlib
 import importlib.util
@@ -34,24 +34,34 @@ def check(label, ok, detail=""):
 
 
 class FakeClient:
-    def __init__(self, tags, total=None, search_tags=None):
+    def __init__(self, tags, total=None, search_tags=None, top_totals=None):
         self.tags = tags
         # 默认是同一份；截断场景可另给「树里没有、但 tag_search 能查到」的标签
         self.search_tags = tags if search_tags is None else search_tags
         self.total = len(tags) if total is None else total
+        # 模拟「某个顶层自己也取不全」：{顶层: 服务端报的 total}
+        self.top_totals = dict(top_totals or {})
         self.calls = []
 
     def init(self):
         pass
+
+    def tree(self, prefix=None):
+        """模拟服务端 tag_tree：带 prefix 时按顶层过滤（实测能完整返回该簇）。"""
+        if prefix:
+            scoped = [t for t in self.tags if t == prefix or t.startswith(prefix + "/")]
+            return {"tags": scoped, "total": self.top_totals.get(prefix, len(scoped))}
+        return {"tags": self.tags, "total": self.total}
 
     def tool(self, name, args=None):
         self.calls.append((name, dict(args or {})))
         if name == "tag_search":
             kw = (args or {}).get("keywords", "")
             limit = (args or {}).get("limit", 50)
+            # 实测服务端标签搜索不区分大小写（搜 `ai` 能命中 `AI/…`），而 prefix 区分。
             return {"structuredContent": {"tags": [
-                {"name": t} for t in self.search_tags if kw in t][:limit]}}
-        return {"structuredContent": {"tags": self.tags, "total": self.total}}
+                {"name": t} for t in self.search_tags if kw.lower() in t.lower()][:limit]}}
+        return {"structuredContent": self.tree((args or {}).get("prefix"))}
 
 
 def run(argv, client):
@@ -116,8 +126,8 @@ class ContentOnlyClient(FakeClient):
         if name == "tag_search":
             kw = (args or {}).get("keywords", "")
             return {"structuredContent": {"tags": [
-                {"name": t} for t in self.search_tags if kw in t]}}
-        inner = json.dumps({"tags": self.tags, "total": self.total}, ensure_ascii=False)
+                {"name": t} for t in self.search_tags if kw.lower() in t.lower()]}}
+        inner = json.dumps(self.tree((args or {}).get("prefix")), ensure_ascii=False)
         return {"content": [{"type": "text", "text": inner}]}
 
 
@@ -136,10 +146,10 @@ def test_content_only_shape():
           t_total == g_total == len(TAGS), (t_total, g_total))
     check("同一回包：两侧标签集合一致", list(t_tags) == list(g_tags) or sorted(t_tags) == sorted(g_tags))
 
-    # 宽容只给「回包形态」，不给「数据不全」：content 形态下若现查也查不到，仍须阻塞
-    cl = ContentOnlyClient(["科技/测试"], total=5, search_tags=["科技/测试"])
+    # 宽容只给「回包形态」，不给「数据不全」：该顶层自己取不全时仍须阻塞
+    cl = ContentOnlyClient(["AI/AgentHarness"], top_totals={"AI": 5}, search_tags=["AI/AgentHarness"])
     code, _out, err = run(["--tags", "AI/Agent"], cl)
-    check("content 形态 + 现查未命中：仍阻塞", code == 1 and "无法确认" in _out, (code, err))
+    check("content 形态 + 顶层取不全：仍阻塞", code == 1 and "无法确认" in _out, (code, err))
 
     # 完全读不到：必须抛错，不能当成「标签树是空的」继续走
     class DeadClient:
@@ -154,38 +164,73 @@ def test_content_only_shape():
     check("工具级错误：抛错并带出错误正文", "token expired" in raised, raised)
 
 
-def test_truncated_tree():
-    # 服务端封顶（total 5、只回 4 条）不再直接失败：候选标签逐名现查命中即判存在。
-    # 树里故意不含 AI/Agent，只让 tag_search 查得到——否则「命中」来自树本身，
-    # 测不到补查这条路径。
-    client = FakeClient(["AI/AgentHarness", "科技/测试"], total=5, search_tags=TAGS)
+def test_full_tree_truncated_is_irrelevant():
+    # 全库 1025 条、一次只回 1000 条是常态（服务端封顶）。判定路按顶层 prefix 取，
+    # 该簇仍是完整的——所以「全库截断」不该再变成「无法确认」或「样本不全」的提示。
+    client = FakeClient(["AI/Agent", "AI/AgentHarness", "科技/测试"], total=1025)
     code, out, _err = run(["--tags", "AI/Agent"], client)
-    check("截断但逐名现查命中：退出码 0", code == 0, out)
-    check("截断：明说服务端封顶", "封顶" in out, out)
-    check("截断：标出逐名现查确认", "逐名现查确认" in out, out)
-    check("截断：确实逐名现查过", any(n == "tag_search" for n, _a in client.calls), client.calls)
+    check("全库截断：判定仍为 0", code == 0, out)
+    check("全库截断：不拿它当判定缺陷", "截断" not in out and "封顶" not in out, out)
+    check("确实按顶层取过",
+          any(a.get("prefix") == "AI" for n, a in client.calls if n == "tag_tree"), client.calls)
 
 
-def test_truncated_unverifiable():
-    # 截断 + 现查未命中 = 无法判断，绝不能退回「不存在，可新建」——
+def test_top_slice_truncated_unverifiable():
+    # 顶层自己都取不全（理论上该簇远小于 1000，但不赌）：不许退回「不存在，可新建」——
     # 那正是近义簇分裂的入口（H18）。退出码 1：结论不可信，须人工核对。
-    client = FakeClient(TAGS, total=5)
+    client = FakeClient(["AI/AgentHarness"], top_totals={"AI": 5})
     code, out, _err = run(["--tags", "AI/确实不存在"], client)
-    check("截断且现查未命中：退出码 1", code == 1, code)
-    check("截断且现查未命中：不提示可新建", "可新建" not in out, out)
-    check("截断且现查未命中：要求人工核对", "人工核对" in out, out)
+    check("顶层取不全：退出码 1", code == 1, code)
+    check("顶层取不全：不提示可新建", "可新建" not in out, out)
+    check("顶层取不全：要求人工核对", "人工核对" in out, out)
 
 
 def test_grep_truncated_warns():
     client = FakeClient(TAGS, total=5)
     code, out, _err = run(["--grep", "Agent"], client)
     check("grep 遇截断：退出码仍为 0", code == 0, code)
-    check("grep 遇截断：明说只覆盖前若干条", "只覆盖前" in out, out)
+    check("grep 遇截断：明说只覆盖这些", "只覆盖" in out, out)
+
+
+def test_grep_full_joins_tops():
+    # --full：先拉一次，被截断则按顶层逐个 prefix 拼，拼出真全量再搜。
+    client = FakeClient(TAGS, total=5)
+    code, out, _err = run(["--grep", "Agent", "--full"], client)
+    check("--full 退出码 0", code == 0, code)
+    check("--full 逐顶层拼过",
+          [a.get("prefix") for n, a in client.calls if n == "tag_tree"].count("AI") == 1,
+          client.calls)
+    check("--full 报了拼接过程", "逐个拼" in out, out)
+    check("--full 结果含两个 Agent 相关标签",
+          "AI/AgentHarness" in out and "AI/Agent" in out, out)
 
 
 def test_hash_prefix_and_split():
     code, out, _err = run(["--tags", "#AI/Agent，科技/测试"], FakeClient(TAGS))
     check("去 # 前缀与全角逗号分隔", code == 0 and out.count("✓") == 2, out)
+
+
+def test_tag_index_split_and_collect():
+    # tag_index 是「按顶层现采」的实现层，判定路的正确性全压在它身上，单独认领。
+    TI = sys.modules["tag_index"]
+    check("顶层与二级按半角切", TI.split_tag("AI/Agent") == ("AI", "Agent"))
+    check("全角斜杠同按分隔符切", TI.split_tag("AI／Agent") == ("AI", "Agent"))
+    check("无斜杠时二级为空", TI.split_tag("科技") == ("科技", ""))
+    check("tops_of 去重", TI.tops_of(["AI/a", "AI/b", "科技/c"]) == ["AI", "科技"])
+    check("leaf_names_of 不取三级", TI.leaf_names_of(["AI/a", "AI/a/子"]) == ["a"])
+
+    idx = TI.collect(FakeClient(TAGS), ["AI"], ["Agent"])
+    check("按顶层取到本簇全部",
+          sorted(idx.names()) == ["AI", "AI/Agent", "AI/AgentHarness"], idx.names())
+
+    # prefix 大小写敏感、tag_search 不敏感（实测）：小写顶层取回空，靠补查救回，
+    # 否则 `#ai/新二级` 会被判成「顶层也不存在」——把已有的簇连顶层重开一遍。
+    low = TI.collect(FakeClient(TAGS), ["ai"], [])
+    check("小写顶层靠搜索补回", "AI/Agent" in low.names(), low.names())
+
+    # 顶层自己取不全时须报出来（判定方据此改判「无法确认」），不能静默当成完整
+    short = TI.collect(FakeClient(["AI/Agent"], top_totals={"AI": 5}), ["AI"], [])
+    check("顶层取不全被记为问题", any("截断" in p for p in short.problems()), short.problems())
 
 
 def test_grep_lists_matches():
@@ -273,9 +318,11 @@ def test_missing_value_and_unknown():
 
 if __name__ == "__main__":
     for fn in (test_existing_ok, test_missing_tag, test_missing_tag_leaf_only_tree,
-               test_three_levels, test_truncated_tree, test_truncated_unverifiable,
-               test_grep_truncated_warns, test_hash_prefix_and_split,
-               test_content_only_shape, test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
+               test_three_levels, test_full_tree_truncated_is_irrelevant,
+               test_top_slice_truncated_unverifiable,
+               test_grep_truncated_warns, test_grep_full_joins_tops, test_hash_prefix_and_split,
+               test_content_only_shape, test_tag_index_split_and_collect,
+               test_grep_lists_matches, test_grep_no_hit, test_grep_with_tags,
                test_written_differently, test_fullwidth_slash_not_depth_error,
                test_case_only_top_exists, test_bad_limit, test_duplicate_flag,
                test_empty_grep, test_missing_value_and_unknown):

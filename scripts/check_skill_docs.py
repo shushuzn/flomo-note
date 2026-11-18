@@ -215,7 +215,7 @@ STEP_ANCHORS = {
     "10": ("--anchor-id", "sop_gate.py", "--show-body", "max_memos", "tag_rename"),
 }
 # 既不属某条 H、也不属某一步的散记号（附录里的替代写法与实现出处）。
-GLOBAL_ANCHORS = ("a(at)b.c", "_SLICE_RE", "tag_search")
+GLOBAL_ANCHORS = ("a(at)b.c", "_SLICE_RE", "区分大小写")
 # 任何技能文档都不豁免日期扫描——H28 是严格禁止，无例外。
 # ENVIRONMENT.md 同样受日期（ERR）与叙事词（WARN）双重约束：
 # 它记录环境事实时只写「是什么」（IP、端口、路径），不写「哪天发生的"。

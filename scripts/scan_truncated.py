@@ -46,6 +46,7 @@ from flomo_client import (  # noqa: E402
     tool_data,
 )
 from memo_util import find_truncation, memo_signature  # noqa: E402
+from tag_index import fetch_top  # noqa: E402
 
 BATCH_LIMIT = 10  # 服务端 memo_batch_get 单次上限，超过即整批报错
 MAX_LIMIT = 50    # memo_search 单次返回上限（服务端硬上限，无分页参数）
@@ -74,6 +75,11 @@ def all_tags(client) -> list[str]:
 
     注意：`tag_tree` 只给标签名，**不给每个标签下的卡片数**（本项目实测），所以拿不到
     「该扫多少张」的期望值——扫描规模只能报「扫到了多少」，不能报「覆盖率」。
+
+    一次拉全库会被服务端封顶 1000 条（实测 total 1025）。缺的不是随机尾部，而是
+    排序靠后的簇——那些簇下的卡将一张都不进候选，扫描结果却照旧打「干净」。
+    故条数不足时按顶层逐个 `prefix` 拼（顶层几十个，巡检本来就要逐标签取卡，
+    这点往返不算什么）。拼不全就如实写在输出里，不假装全量。
     """
     res = client.tool("tag_tree", {"limit": 2000})
     data = tool_data(res) or {}
@@ -84,6 +90,25 @@ def all_tags(client) -> list[str]:
         path = t if isinstance(t, str) else (t.get("path") or t.get("name") or "")
         if path and path not in out:
             out.append(path)
+    total = data.get("total")
+    if total is None or len(out) >= int(total):
+        return out
+    print(f"  [标签树] total {total}，一次只回 {len(out)} 条（服务端封顶 1000），按顶层逐个拼")
+    tops: list[str] = []
+    for path in out:
+        top = path.split("/")[0]
+        if top and top not in tops:
+            tops.append(top)
+    short = []
+    for top in tops:
+        sl = fetch_top(client, top)
+        if sl.error or sl.truncated:
+            short.append(top)
+        for n in sl.names:
+            if n not in out:
+                out.append(n)
+    note = f"（{len(short)} 个顶层没拼全：{'、'.join(short)}，这是下界）" if short else ""
+    print(f"  [标签树] 枚举自 {len(tops)} 个顶层、{len(out)} 个标签{note}")
     return out
 
 
