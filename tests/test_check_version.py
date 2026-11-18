@@ -157,9 +157,20 @@ def test_tag_rollback():
 
 
 def test_tag_unavailable_is_not_pass():
-    # 不是 git 仓库时取不到标签：必须报「无法判定」，不能静默当成已对齐
+    # 取不到标签时必须报「无法判定」，不能静默当成已对齐。
+    #
+    # **这个场景不能靠「临时目录不在任何仓库里」来造**：`run_tests.sh` 在外部 TMPDIR
+    # 为空时（CI 就是这个情形）会把它指到仓库内的 `_tmp/.tmp`，此时 git 会沿目录向上
+    # 找到本仓库——「不是仓库」变成「是仓库，只是标签不全」，同一条断言在 CI 与本机
+    # 得到相反结论。测出来的红是环境的，不是代码的。故直接把取标签这一步打成失败，
+    # 环境不参与判定。
     root = make_repo("1.0.0", ("1.0.0",))
-    errs, _ = CV.check(root, check_tag=True)
+    orig = CV._git
+    CV._git = lambda *a, **k: (128, "fatal: not a git repository")
+    try:
+        errs, _ = CV.check(root, check_tag=True)
+    finally:
+        CV._git = orig
     check("取不到标签时报无法判定", any("无法判定" in e for e in errs), errs)
 
 
