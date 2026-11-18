@@ -135,6 +135,7 @@ flomo-note/
 | `covers.py` | 「脚本有没有用例」的唯一解析：读用例里的 `COVERS` 声明。闸门（`check_skill_docs`）与控制台 `has_test` 列共用这一份——两处各写一份会出现「闸门说有覆盖、页面说没有」这种相反结论 |
 | `check_skill_docs.py` | 内容纪律自检（日期 / 叙事）+ 五项跨文件结构检查（README 清单、用例命名、交叉引用、命令行选项、脚本-用例覆盖声明） |
 | `run_tests.sh` | 跑 `tests/` 下全部用例与上述自检；CI 与本地共用这一条命令 |
+| `run_ci.sh` | 本地复现 CI 的四个阶段（ruff → 用例 → mypy → pytest+覆盖率），命令与 `ci.yml` 逐条对齐、由 `tests/test_run_ci.py` 挡漂移。缺开发期工具时非 0 退出而非静默少跑一道 |
 | `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |
 | `scan_qualified_concepts.py` / `scan_concept_duplication.py` | 存量取证：统计概念名里的切片限定、找「同一对象被切成多张卡」的实例（只读，不写云） |
 | `scan_truncated.py` | 存量取证：找正文被「检索回包截断版」覆盖过的卡（正文中段缺一段）。候选只从检索回包取 id、判定只看 `memo_batch_get` 的真实正文；取不回正文即退出码 2，不把「没读到」报成干净 |
