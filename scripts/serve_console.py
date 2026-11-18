@@ -269,6 +269,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 end_date=self._q(q, "end_date"),
                 source=self._q(q, "source"),
                 has_tag=self._q(q, "has_tag"),
+                original_only=self._q(q, "original_only"),
                 limit=self._q(q, "limit", 20),
             ),
             "/api/cloud/memo": lambda r: r.memo_detail(self._q(q, "id", "")),

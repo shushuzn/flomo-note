@@ -33,6 +33,7 @@ const state = {
   cloudEnd: "",
   cloudSource: "",
   cloudHasTag: "",
+  cloudOriginal: "",
   cloudLimit: 20,
   cloudData: null,
   selectMode: false,
@@ -181,6 +182,7 @@ async function fetchCloud() {
   if (state.cloudEnd)    p.set("end_date", state.cloudEnd);
   if (state.cloudSource) p.set("source", state.cloudSource);
   if (state.cloudHasTag) p.set("has_tag", state.cloudHasTag);
+  if (state.cloudOriginal) p.set("original_only", state.cloudOriginal);
   p.set("limit", String(state.cloudLimit));
   return cloudApi(`/api/cloud/memos?${p}`);
 }
@@ -194,6 +196,7 @@ function cloudHeadline() {
   if (state.cloudSource) bits.push(`来源 ${state.cloudSource}`);
   if (state.cloudHasTag === "1") bits.push("含标签");
   if (state.cloudHasTag === "0") bits.push("无标签");
+  if (state.cloudOriginal === "1") bits.push("仅原创");
   return bits.length ? `筛选 ${bits.join(" · ")}` : "最近笔记";
 }
 
@@ -236,6 +239,10 @@ async function viewNotes() {
       <select class="input input-sel" id="cloud-has-tag">
         ${[["", "标签不限"], ["1", "仅含标签"], ["0", "仅无标签"]].map(([v, l]) =>
           `<option value="${v}"${state.cloudHasTag === v ? " selected" : ""}>${l}</option>`).join("")}
+      </select>
+      <select class="input input-sel" id="cloud-original">
+        ${[["", "含转发"], ["1", "仅原创"]].map(([v, l]) =>
+          `<option value="${v}"${state.cloudOriginal === v ? " selected" : ""}>${l}</option>`).join("")}
       </select>
       <select class="input input-sel" id="cloud-limit">
         ${[20, 50].map((n) => `<option value="${n}"${state.cloudLimit === n ? " selected" : ""}>${n} 条</option>`).join("")}
@@ -407,6 +414,7 @@ function runCloudQuery() {
   state.cloudStart  = start;
   state.cloudEnd    = end;
   state.cloudSource = ($("#cloud-source")?.value || "").trim();
+  state.cloudOriginal = $("#cloud-original")?.value || "";
   state.cloudMode = "search";
   refreshCloud();
 }
@@ -965,6 +973,7 @@ document.addEventListener("click", (e) => {
     state.cloudMode = "recent";
     state.cloudQuery = state.cloudTag = state.cloudStart = state.cloudEnd = state.cloudSource = "";
     state.cloudHasTag = "";
+    state.cloudOriginal = "";
     state.selected.clear();
     refreshCloud();
     return;
@@ -973,6 +982,7 @@ document.addEventListener("click", (e) => {
     state.cloudMode = "review";
     state.cloudQuery = state.cloudTag = state.cloudStart = state.cloudEnd = state.cloudSource = "";
     state.cloudHasTag = "";
+    state.cloudOriginal = "";
     refreshCloud();
     return;
   }
@@ -1100,6 +1110,10 @@ document.addEventListener("change", (e) => {
   }
   if (e.target.id === "cloud-has-tag") {
     state.cloudHasTag = e.target.value;
+    refreshCloud();
+  }
+  if (e.target.id === "cloud-original") {
+    state.cloudOriginal = e.target.value;
     refreshCloud();
   }
   if (e.target.id === "rel-nosame") {

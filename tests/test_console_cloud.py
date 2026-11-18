@@ -334,14 +334,15 @@ def run_search_conditions():
     r, _ = reader_for(fake)
 
     out = r.list_memos(keywords="召回", tag="AI/RAG", start_date=D1, end_date=D2,
-                       source="ai", has_tag="1", limit=200)
+                       source="ai", has_tag="1", original_only="1", limit=200)
     name, args = fake.calls[-1]
     check("搜索全条件透传", name == "memo_search" and args == {
         "limit": C.MAX_LIMIT, "keywords": "召回", "tag": "AI/RAG",
-        "start_date": D1, "end_date": D2, "from": "ai", "has_tag": True}, str(args))
+        "start_date": D1, "end_date": D2, "from": "ai", "has_tag": True,
+        "original_only": True}, str(args))
     check("搜索回带条件（界面据此回显筛选项）",
           out["start_date"] == D1 and out["end_date"] == D2 and out["source"] == "ai"
-          and out["has_tag"] is True, str(out))
+          and out["has_tag"] is True and out["original_only"] is True, str(out))
 
     r.list_memos()
     check("无条件时不塞检索键", fake.calls[-1][1] == {"limit": C.DEFAULT_LIMIT},
@@ -353,6 +354,11 @@ def run_search_conditions():
 
     r.list_memos(has_tag="说不清")
     check("has_tag 无法判定时不传", fake.calls[-1][1] == {"limit": C.DEFAULT_LIMIT},
+          str(fake.calls[-1][1]))
+
+    r.list_memos(original_only="0")
+    check("original_only 假值透传",
+          fake.calls[-1][1] == {"limit": C.DEFAULT_LIMIT, "original_only": False},
           str(fake.calls[-1][1]))
 
 # --------------------------------------------------------------------------- #

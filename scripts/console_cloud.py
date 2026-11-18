@@ -494,12 +494,14 @@ class CloudReader:
         end_date=None,
         source=None,
         has_tag=None,
+        original_only=None,
         limit=DEFAULT_LIMIT,
     ) -> dict:
         """列 / 搜卡片：无参即最近若干条，其余条件为可选收窄。
 
         `tag` 须是**完整标签路径**（如 `AI/决策模型`）——云端不接受裸顶层名。
-        `source` 对应云端的 `from`（渠道，如 `ai`）。`has_tag` 为三态：真 / 假 / 不传。
+        `source` 对应云端的 `from`（渠道，如 `ai`）。`has_tag` 与 `original_only`
+        都是三态：真 / 假 / 不传；后者为真时只取原创、排掉转发与摘录。
         """
         n = _clamp_limit(limit)
         args: dict = {"limit": n}
@@ -516,6 +518,9 @@ class CloudReader:
         tri = _tri_bool(has_tag)
         if tri is not None:
             args["has_tag"] = tri
+        original = _tri_bool(original_only)
+        if original is not None:
+            args["original_only"] = original
         memos = self._memos(self.call("memo_search", args))
         return {
             "count": len(memos),
@@ -527,6 +532,7 @@ class CloudReader:
             "end_date": end_date or "",
             "source": source or "",
             "has_tag": tri,
+            "original_only": original,
             "memos": [slim_memo(m) for m in memos],
         }
 

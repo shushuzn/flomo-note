@@ -108,6 +108,7 @@ flomo-note/
 | `netdoctor.py` | 出网通道体检：逐通道真发请求并给出下一步命令，替代手写 `curl -x` 猜端口 |
 | `tag_index.py` | 标签按顶层现采的唯一实现：`tag_tree` 封顶 1000 条而全库已过千，判定路改为逐顶层 `prefix` 取（每簇完整返回），`prefix` 区分大小写、`tag_search` 不敏感故取空时复核写法。`tagcheck` / `sop_gate` / `scan_truncated` 共用 |
 | `tagcheck.py` | 标签树现采 + 存在性 / 严格两级 / 同顶层兄弟二级 / 只差空白·全半角·大小写的近义名（判据同写前闸门；按顶层取，簇自身取不全即非 0 退出） |
+| `mcp_contract.py` | 核对 `flomo_client.FLOMO_MCP_TOOLS` 与云端 `tools/list` 是否一致：工具集合、每个工具的参数名、必填项三样逐项比，有漂移非 0 退出。抄本是给外部审计看的事实来源，服务端加参数/去工具时它不会自己变（`additionalProperties: false` 下照旧抄本传参会被拒），改完抄本就跑它 |
 | `dedup.py` | 查重执行器：每个关键词单独调一次、id 去重后分批取全文；`--id` 走复盘路、`--ids` 点名读全文 |
 | `sop_gate.py` | 流程闸门：代跑标签核对 / 查重两路 / 复盘三路，校验验证留痕，全过后落带正文指纹的凭证 |
 | `exit_confirm.py` | 轮次关账闸门，两种出口：退出须交对象清单、搜索记录、查重输出、理由四样，缺一即非 0；建卡传 `--published "id,…"` 直接关账。未关账的素材会拦住下一次抓取 |
@@ -187,7 +188,7 @@ python scripts/serve_console.py --port 9000
 
 | 接口 | 内容 |
 |------|------|
-| `/api/cloud/memos` | 卡片列表：`keywords` / `tag` / `start_date` / `end_date` / `source` / `has_tag` / `limit`（无参即最近） |
+| `/api/cloud/memos` | 卡片列表：`keywords` / `tag` / `start_date` / `end_date` / `source` / `has_tag` / `original_only` / `limit`（无参即最近；`has_tag` 与 `original_only` 为三态） |
 | `/api/cloud/memo` | 按 `id` 取单卡全文（列表里的正文可能被云端截断） |
 | `/api/cloud/memos/batch` | 按 `ids` 批量取全文（逗号分隔，单次上限 10 条） |
 | `/api/cloud/review` | 今日回顾 |
