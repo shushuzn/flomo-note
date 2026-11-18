@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,7 +68,7 @@ def fetch_top(client, top: str, limit: int = DEFAULT_LIMIT) -> TopSlice:
     """取一个顶层下的全部标签路径。"""
     try:
         sc = tool_data(client.tool("tag_tree", {"prefix": top, "limit": limit}))
-    except Exception as exc:  # 读不到≠空簇，交给调用方按 error 判
+    except Exception as exc:  # noqa: BLE001 — 读不到≠空簇，交给调用方按 error 判
         return TopSlice(top=top, error=str(exc))
     raw = [str(t) for t in (sc.get("tags") or [])]
     total = sc.get("total")
@@ -91,7 +92,7 @@ def search_names(client, keyword: str, limit: int = SEARCH_LIMIT) -> list[str]:
     """
     try:
         sc = tool_data(client.tool("tag_search", {"keywords": keyword, "limit": limit}))
-    except Exception:
+    except Exception:  # noqa: BLE001 — 搜不到就当没命中，缺的那部分由调用方按截断另判
         return []
     out: list[str] = []
     for t in (sc.get("tags") or []):
@@ -138,7 +139,7 @@ class TagIndex:
         return out
 
 
-def collect(client, tops: list[str], leaf_names: list[str] = ()) -> TagIndex:
+def collect(client, tops: list[str], leaf_names: Sequence[str] = ()) -> TagIndex:
     """按顶层取标签；`leaf_names` 给的二级名各做一次跨顶层同名补查。
 
     跨顶层补查是 H18 的一条实证判据（`金融/宏观审慎` 撞过 `宏观/宏观审慎`）：

@@ -667,7 +667,7 @@ def run_anchor_case():
 
         # 第 10 步改写回「取锚走 dedup」：选项名还在，属主没了。这种写法读者照抄
         # 会报未知参数，而只锚选项名时全绿——属主必须与选项名一起锚住。
-        line10 = next(l for l in src.splitlines() if "--anchor-id" in l)
+        line10 = next(row for row in src.splitlines() if "--anchor-id" in row)
         assert "sop_gate.py" in line10, "第 10 步已不写取锚属主，本用例失效"
         bad10 = line10.replace("取锚属 `sop_gate.py` 第 ⑧ 步、不属 dedup：", "取锚：")
         assert bad10 != line10, "变异目标已改写，本用例失效"

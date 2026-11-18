@@ -92,7 +92,7 @@ def test_identical_is_not_vacuous():
 
 
 def test_server_extra_tool():
-    server = baseline() + [{"name": "tag_merge", "inputSchema": {"type": "object", "properties": {}}}]
+    server = [*baseline(), {"name": "tag_merge", "inputSchema": {"type": "object", "properties": {}}}]
     code, out, _err = run([], FakeClient(server))
     check("服务端多工具：退出码 1", code == 1, code)
     check("服务端多工具：点名未登记", "tag_merge" in out and "未登记" in out, out)
@@ -117,7 +117,7 @@ def test_param_missing_in_contract():
 def test_param_extra_in_contract():
     server = baseline()
     at(server, "memo_create")["inputSchema"]["properties"].pop("format")
-    code, out, _err = run([], FakeClient(server))
+    _code, out, _err = run([], FakeClient(server))
     check("抄本多写参数：点名 format", "format" in out and "多写" in out, out)
 
 
@@ -140,7 +140,7 @@ def test_required_drift():
 def test_required_missing_in_contract():
     server = baseline()
     sch = at(server, "memo_create")["inputSchema"]
-    sch["required"] = list(sch.get("required") or []) + ["format"]
+    sch["required"] = [*list(sch.get("required") or []), "format"]
     _code, out, _err = run([], FakeClient(server))
     check("抄本漏标必填：点名 format", "漏标必填" in out, out)
 
@@ -153,7 +153,7 @@ def test_fetch_failure():
 
 
 def test_json_output():
-    server = baseline() + [{"name": "tag_merge", "inputSchema": {"type": "object"}}]
+    server = [*baseline(), {"name": "tag_merge", "inputSchema": {"type": "object"}}]
     code, out, _err = run(["--json"], FakeClient(server))
     data = json.loads(out)
     check("--json：退出码仍按漂移给", code == 1, code)
