@@ -35,14 +35,16 @@
 
 批次清单每行 `草稿 | 留痕 | 覆盖 id | rename | skipweb,loss | near:理由`，后五段可省或用
 `-` 占位，`#` 开头为注释；第 4 段只认 `rename`（覆盖既有卡时允许连概念名一起改，等价于
-单卡的 `--allow-rename`），第 5 段是本行开关——`skipweb`（本行确认非术语卡，不做网络验证）、
-`loss`（本行确属有意重写，放行内容丢失检查），可同时给，第 6 段是本行的近似同名放行理由
-（等价于单卡 `--allow-near-concept`），只在闸门报出包含关系同名卡时使用。于是「非术语卡」
-「带留痕的事件卡」「确属不同对象的近似同名卡」能在一批里混跑：
+单卡的 `--allow-rename`），第 5 段是本行开关——`skipweb`（本行确认非术语卡，不做网络验证，
+可写成 `skipweb:理由` 只给这一行用）、`loss`（本行确属有意重写，放行内容丢失检查），
+可同时给，第 6 段是本行的近似同名放行理由（等价于单卡 `--allow-near-concept`），只在闸门
+报出包含关系同名卡时使用。跳过检索必须给理由（闸门强制）：行内 `skipweb:…` 优先，命令行
+`--skip-reason` 是整批的回退，两者都没有就拦在预检。于是「非术语卡」「带留痕的事件卡」
+「确属不同对象的近似同名卡」能在一批里混跑：
 
   # 本轮三张
   _tmp/draft_zt_1.txt | _tmp/verify_zt_1.json | -
-  _tmp/draft_zt_2.txt | - | - | - | skipweb
+  _tmp/draft_zt_2.txt | - | - | - | skipweb:车型卡，正文无待定义的术语
   _tmp/draft_af_fix.txt | - | MjUzMzgyODYz | rename | skipweb,loss   # 改名并覆盖
   _tmp/draft_topcoh.txt | _tmp/verify_topcoh.json | - | - | - | near:旧卡是属概念总定义，本卡是顶阶特例，对象不同
 
@@ -1096,11 +1098,29 @@ def parse_manifest(path: Path) -> list[dict]:
                 f"清单第 {lineno} 行第 4 段只接受 `rename`（覆盖时允许改概念名），"
                 f"看到的是「{flag}」——不需要改名就留空或写 `-`")
         allow_rename = flag == "rename"
-        extras = {t for t in re.split(r"[,，\s]+", parts[4]) if t and t != "-"}
+        # 第 5 段支持 `skipweb:理由`：闸门强制要求跳过检索必须写理由，而此前只有
+        # 命令行一个 `--skip-reason` 能承载它——混批里一行跳过、一行照常带留痕时，
+        # 前者与后者共用一句「本批 X 张非术语卡」，理由与它实际覆盖的行对不上。
+        # 行级理由优先，命令行理由仍是整批的回退（两者都没有时照旧拦，不因这处放宽）。
+        # 切分只按逗号：理由里带空格是常态（中文句子），按空白切会把理由拆成
+        # 好几个「未知开关」。所以带冒号的那一段整段吃掉，不写逗号即可。
+        raw_tokens = [c.strip() for c in re.split(r"[,，]+", parts[4]) if c.strip()]
+        extras: set[str] = set()
+        row_skip_reason = ""
+        for tok in raw_tokens:
+            if tok == "-":
+                continue
+            key, _, val = tok.partition(":")
+            if val.strip():
+                extras.add(key)
+                if key == "skipweb":
+                    row_skip_reason = val.strip()
+            else:
+                extras.update(key.split())
         unknown = extras - {"skipweb", "loss"}
         if unknown:
             raise CLI.UsageError(
-                f"清单第 {lineno} 行第 5 段只接受 `skipweb` 与 `loss`，"
+                f"清单第 {lineno} 行第 5 段只接受 `skipweb`（可写 `skipweb:理由`）与 `loss`，"
                 f"看到的是「{' '.join(sorted(unknown))}」——不需要就留空或写 `-`")
         near_reason = "" if parts[5] in ("-", "") else parts[5]
         if near_reason and not near_reason.startswith("near:"):
@@ -1152,6 +1172,7 @@ def parse_manifest(path: Path) -> list[dict]:
         items.append({"draft": draft, "verify": verify, "update_id": update_id,
                       "allow_rename": allow_rename, "lineno": lineno,
                       "skip_web": "skipweb" in extras,
+                      "skip_reason": row_skip_reason,
                       "allow_content_loss": "loss" in extras,
                       "allow_near": near_reason})
     if not items:
@@ -1233,10 +1254,12 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
     for i, it in enumerate(items, 1):
         prefix = f"[{i}/{n}] "
         line_skip_web = skip_web or it.get("skip_web", False)
+        # 行级理由优先：批次级 --skip-reason 说不了「这一行为什么跳」，混批时会张冠李戴
+        line_skip_reason = it.get("skip_reason") or skip_reason
         code = precheck(run, it["draft"], it["verify"], line_skip_web,
                         update_id=it["update_id"], prefix=prefix,
                         allow_near=it.get("allow_near") or allow_near,
-                        skip_reason=skip_reason)
+                        skip_reason=line_skip_reason)
         if code:
             print(f"[失败] 第 {i}/{n} 张预检未过（{it['draft']}）——本批一张都没写"
                   f"{'，前面过的几张也只过了预检' if i > 1 else ''}", file=sys.stderr)

@@ -1198,6 +1198,38 @@ def test_readings_scale_equivalence():
           f"{PB.readings('30,000 台')} vs {PB.readings('30,000 元')}")
 
 
+def test_manifest_row_skip_reason():
+    """第 5 段可写 `skipweb:理由`：理由跟着这一行走，不必整批共用一句。
+
+    混批里「一行跳过检索、一行带留痕」是常态，而命令行只有一个 `--skip-reason`——
+    不给就拦（闸门强制），给了就把两行的理由说成一件事。行级写法补上这个缺口，
+    优先级高于命令行理由，但不改变「两者都没有就拦」的判据。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rows = _drafts(tmp, 1)
+        row_reason = "海康威视是公司卡 正文没有待定义的术语"
+        man = _manifest(tmp, [f"{rows[0][0]} | - | - | - | skipweb:{row_reason}"])
+        items = PB.parse_manifest(man)
+        check("清单：skipweb:理由 解析出开关", items[0]["skip_web"] is True, items[0])
+        check("清单：行级理由原样保留", items[0]["skip_reason"] == row_reason, items[0])
+
+        PB.PAYLOAD = Path(tmp) / "payload.json"
+        exec_fn, calls = make_exec()
+        code, _out, _err = run(["--batch", str(man)], exec_fn)
+        gates = [c for c in calls if len(c) > 1 and Path(c[1]).name == "sop_gate.py"]
+        check("行级理由：不给命令行理由也能过预检", code == 0, code)
+        check("行级理由：闸门收到的是这一行自己的理由",
+              "--skip-reason" in gates[0] and row_reason in gates[0], gates[0])
+
+        # 行级理由优先：命令行给的是整批回退，不该盖掉更具体的那一句
+        exec_fn2, calls2 = make_exec()
+        code2, _o2, _e2 = run(["--batch", str(man), "--skip-reason", "整批都是非术语卡"], exec_fn2)
+        gates2 = [c for c in calls2 if len(c) > 1 and Path(c[1]).name == "sop_gate.py"]
+        check("行级理由优先于命令行理由",
+              code2 == 0 and row_reason in gates2[0] and "整批都是非术语卡" not in gates2[0],
+              gates2[0])
+
+
 def test_manifest_per_line_flags():
     """第 5 段 `skipweb` / `loss` 逐行生效：混批里一行跳过网络验证、另一行照常带留痕。"""
     with tempfile.TemporaryDirectory() as tmp:
@@ -1315,6 +1347,7 @@ if __name__ == "__main__":
                test_batch_next_steps, test_precheck_echoes_concept,
                test_batch_shared_line_blocks,
                test_manifest_per_line_flags,
+               test_manifest_row_skip_reason,
                test_batch_shared_line_ignores_short_and_tag_lines,
                test_batch_overlap_note,
                test_records_last_id):
