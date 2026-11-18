@@ -519,6 +519,10 @@ class FakeClient:
                                         {"structuredContent": {"memos": []}})
             kw = a.get("keywords", "")
             return self._search.get(kw, {"structuredContent": {"memos": []}})
+        if name == "tag_search":
+            kw = (args or {}).get("keywords", "")
+            return self._search.get("tagsearch:" + kw,
+                                    {"structuredContent": {"tags": []}})
         if name == "memo_recommended":
             return self._recommended
         if name == "memo_batch_get":
@@ -739,6 +743,27 @@ def run_dedup_net_cases():
           "科技/机器人" in got.get("tag_neighbors", []))
     check("_check_dedup 同级不同名不命中",
           "科技/机器人学" not in got.get("tag_neighbors", []))
+
+    # 5) 树被服务端封顶（total 5、实回 1）：目标簇走 tag_search 逐名补回。
+    #    旧实现只看树，会把「被截掉」误报成「该标签不在树中，本卡将新建簇」。
+    c = FakeClient(
+        tag_tree=_tt(5, ["投资/一级市场"]),
+        search={"tagsearch:科技/机器人": {"structuredContent": {"tags": [
+            {"name": "科技/机器人"}, {"name": "科技/机器人/人形"}]}}},
+    )
+    b, n = [], []
+    GATE._check_dedup(c, GATE.memo_signature("#科技/机器人\n某概念\n\n正文\n"), b, n)
+    note = next(x for x in n if "查重·标签路" in x)
+    check("截断时逐名补查回近邻", "近邻 2 个簇" in note, note)
+    check("截断补查命中：不报将新建簇", "将新建簇" not in note, note)
+
+    # 6) 截断 + 现查也未命中 → 判「无法确认」，绝不写「将新建簇」
+    c = FakeClient(tag_tree=_tt(5, ["投资/一级市场"]), search={})
+    b, n = [], []
+    GATE._check_dedup(c, GATE.memo_signature("#科技/机器人\n某概念\n\n正文\n"), b, n)
+    note = next(x for x in n if "查重·标签路" in x)
+    check("截断且补查落空：判无法确认", "无法确认" in note, note)
+    check("截断且补查落空：不写将新建簇", "将新建簇" not in note, note)
 
 
 def run_semantic_neighbor_cases():

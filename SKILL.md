@@ -205,7 +205,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 - 判定边界都在 `validate_memo.py`；裸邮箱必要时写 `a(at)b.c`。
 
 ### 标签树现采
-只在云端，本地不留快照。每次现采 `tag_tree` 并传 `{"limit":2000}`，以 `total` 核 `len(tags)`，不符即调大重采。
+只在云端，不留快照。`tag_tree` 封顶 1000、不认 `limit`；`total` 更大时逐名 `tag_search` 补查，补不到判「无法确认」，不据此判新簇。
 
 ### 来源信息的识别形态（H15 定判据，本节定形态）
 判据见 H15；形态与正则都在 `validate_memo.py`。

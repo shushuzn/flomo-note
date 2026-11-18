@@ -361,9 +361,11 @@ def _check_tags(tags, tagline, blockers, notes):
 
 
 def _tag_tree_total_and_count(client):
-    """现采 tag_tree，返回 (total, 覆盖全部标签的集合)。
+    """现采 tag_tree，返回 (total, 标签列表)。
 
-    limit 必须传大值（服务端默认 200 会截断）；以 `total` 为准。
+    `limit` 仍传 2000 只为兼容旧调用：服务端 inputSchema 为空、不认这个参数，
+    实测封顶 1000 条而 `total` 报真实值（1025）。**能否靠调大 limit 取全是否定的**，
+    是否截断由调用方按 `len(tags) != total` 判，并据此逐名现查补查（见 `_check_dedup`）。
     回包解析走 `flomo_client.tool_data`（唯一实现）：逐字段兜底那套已删——
     它与 `tagcheck` 的「缺 total 就抛」是同一件事的两种写法，同一个回包会在
     两个脚本里得到相反结论。
@@ -374,6 +376,21 @@ def _tag_tree_total_and_count(client):
     if total is None:
         raise FlomoError("tag_tree 回包缺 total 字段，无法判断标签树是否被截断")
     return total, tags or []
+
+
+def _tag_leaf_names(client, keyword, limit=50):
+    """按标签名现查（`tag_search` 子串匹配），返回命中的标签名列表。
+
+    截断补查专用：树缺尾部标签时，用它把本卡要用的那个簇（含父与子）补回来。
+    服务端单次上限 50 条，只够补一个簇，不能当全量枚举用。
+    """
+    sc = tool_data(client.tool("tag_search", {"keywords": keyword, "limit": limit}))
+    out = []
+    for t in (sc.get("tags") or []):
+        name = t.get("name") if isinstance(t, dict) else str(t)
+        if name:
+            out.append(name)
+    return out
 
 
 # 概念名扫描的翻页上限与页长。服务端 `memo_search` 单次上限 50，且不认 offset，
@@ -505,10 +522,27 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
                 keyword_memos[m["id"]] = m
         notes.append(f"查重·关键词「{kw}」命中 {len(memos)} 条")
     # 第二路：tag_tree 列同主标签细分
+    truncated = False
     if tree is None:
         _total, tree = _tag_tree_total_and_count(client)
+        truncated = len(_tag_names(tree)) != _total
     names = set(_tag_names(tree))
     leaves = tag_leaves(sig["tagline"])
+    # 服务端封顶 1000 条、`total` 报真实值，缺的是排序尾部。尾部簇不在树里时，
+    # 「该标签不在树中，本卡将新建簇」会变成误报，这一路的近邻也会漏成 0。
+    # 截断后对每个待用标签逐名现查补回（单次上限 50，够补一个簇的父与子）；
+    # 补查仍落空的单列出来，改说「无法确认」，绝不写「将新建簇」。
+    unresolved: set[str] = set()
+    if truncated:
+        for top, leaf in leaves:
+            target = f"{top}/{leaf}"
+            if target in names or any(n.startswith(target + "/") for n in names):
+                continue
+            filled = _tag_leaf_names(client, target)
+            if filled:
+                names.update(filled)
+            else:
+                unresolved.add(target)
     near = []
     for top, leaf in leaves:
         hit = 0
@@ -520,8 +554,15 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
                 hit += 1
         # 「0 个簇」有两种含义，必须说清是哪一种：簇在但没卡，还是这个名字根本
         # 不在树里（后者意味着本卡会新建簇，这一路实际没扫到任何同类卡）。
-        absent = "" if f"{top}/{leaf}" in names else "（该标签不在树中，本卡将新建簇）"
-        notes.append(f"查重·标签路「{top}/{leaf}」近邻 {hit} 个簇{absent}")
+        target = f"{top}/{leaf}"
+        if target in names:
+            absent = ""
+        elif target in unresolved:
+            absent = ("（标签树被服务端封顶、逐名现查也未命中：无法确认，"
+                      "不要据此当作新簇）")
+        else:
+            absent = "（该标签不在树中，本卡将新建簇）"
+        notes.append(f"查重·标签路「{target}」近邻 {hit} 个簇{absent}")
     # 命中>0 自动取全文打印：不看全文就过不了闸门
     all_hit_ids = list(keyword_memos)
     if all_hit_ids:
