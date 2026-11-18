@@ -415,6 +415,14 @@ def run_brief_cases():
     tree = FC.brief_text("tag_tree", {"structuredContent": {"total": 665, "tags": ["A/1", "A/2"]}})
     check("tag_tree 给 total 与 returned", "total=665" in tree and "returned=2" in tree)
 
+    # 标签树超过 30 条时的显示截断：提示只能是「按 prefix 逐个取」。
+    # 服务端 limit 封顶 1000，调大它解决不了全库截断，也解决不了这里只列 20 条。
+    many = FC.brief_text("tag_tree", {"structuredContent": {
+        "total": 1025, "tags": [f"T{i}" for i in range(40)]}})
+    check("标签树显示截断给未显示条数", "另有 20 个未显示" in many)
+    check("截断提示指向 prefix 而非调大 limit",
+          "prefix" in many and "limit" not in many)
+
     w = FC.brief_text("memo_create", {"structuredContent": {"id": "M2", "word_count": 700,
                                                             "tags": ["文化/影视"]}})
     check("写回包只给 id/字数/标签与载体标记", "id=M2" in w and "link=" in w)

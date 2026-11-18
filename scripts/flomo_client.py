@@ -338,10 +338,12 @@ def brief_text(name: str, payload: object) -> str | None:
         )
 
     if isinstance(tags, list):
+        # 这里截的是**屏幕显示**（超过 30 只列 20），与服务端封顶 1000 是两回事：
+        # 两条路都只能说「按顶层 prefix 逐个取」，调大 limit 一条也解决不了。
         shown = tags if len(tags) <= 30 else tags[:20]
         out = [f"total={sc.get('total')} returned={len(tags)}"] + [str(t) for t in shown]
         if len(tags) > len(shown):
-            out.append(f"……另有 {len(tags) - len(shown)} 个（按前缀收窄或调大 limit）")
+            out.append(f"……另有 {len(tags) - len(shown)} 个未显示（要完整清单按顶层传 prefix 逐个取）")
         return "\n".join(out)
 
     return None
