@@ -644,24 +644,40 @@ def run_anchor_case():
             print("      ERR :", m)
 
         # 按「上一轮压缩时真丢过的五个记号」各变异一次——这几条正是这层检查的由来
+        # 判据是「该处被拦下」，不是「全篇只报一条」：同一记号可以挂在多条上
+        # （`sop_gate.py` 第 8 步是闸门、第 10 步是取锚），全局变异本就该两处都报。
         mutations = [
-            ("流程第 8 步的闸门脚本", "sop_gate.py", "闸门"),
-            ("H23 的退场标签", "#待清理", "#清空"),
-            ("附录的切片实现出处", "_SLICE_RE", "切片正则"),
-            ("H6d 的实现函数名", "_predicate_hits", "实现"),
-            ("H28 的 SKIP 可见性", "SKIP", "不打印"),
+            ("流程第 8 步的闸门脚本", "sop_gate.py", "闸门", "流程第 8 步"),
+            ("H23 的退场标签", "#待清理", "#清空", "H23"),
+            ("附录的切片实现出处", "_SLICE_RE", "切片正则", "附录"),
+            ("H6d 的实现函数名", "_predicate_hits", "实现", "H6d"),
+            ("H28 的 SKIP 可见性", "SKIP", "不打印", "H28"),
         ]
-        for label, old, new in mutations:
+        for label, old, new, where in mutations:
             assert old in src, f"变异目标 {old!r} 已不在文档里，用例失效"
             mut = src.replace(old, new)
             assert mut != src, f"变异 {old!r} 未生效"
             skill.write_text(mut, encoding="utf-8")
             errs = CD.check_skill_anchors(root)
-            hit = len(errs) == 1 and old in errs[0]
+            hit = any(where in m and old in m for m in errs)
             ok &= hit
             print(f"{'PASS' if hit else 'FAIL'}  删掉{label}被判错")
             for m in errs:
                 print("      ERR :", m)
+
+        # 第 10 步改写回「取锚走 dedup」：选项名还在，属主没了。这种写法读者照抄
+        # 会报未知参数，而只锚选项名时全绿——属主必须与选项名一起锚住。
+        line10 = next(l for l in src.splitlines() if "--anchor-id" in l)
+        assert "sop_gate.py" in line10, "第 10 步已不写取锚属主，本用例失效"
+        bad10 = line10.replace("取锚属 `sop_gate.py` 第 ⑧ 步、不属 dedup：", "取锚：")
+        assert bad10 != line10, "变异目标已改写，本用例失效"
+        skill.write_text(src.replace(line10, bad10), encoding="utf-8")
+        errs = CD.check_skill_anchors(root)
+        hit = any("流程第 10 步" in m and "sop_gate.py" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  第 10 步只留选项名、丢了取锚属主被判错")
+        for m in errs:
+            print("      ERR :", m)
 
         # 新增条目却不登记锚点：规则加了，守卫没跟上
         skill.write_text(src + "\n**H99 · 新规则。** 正文。\n", encoding="utf-8")

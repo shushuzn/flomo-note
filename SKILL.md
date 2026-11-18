@@ -166,8 +166,8 @@ description: Use when the user sends a link, asks to save an article, clip a web
 `memo_create` 或 `memo_update`，写后回读（H11）。
 
 ### 10. 复盘（写卡后必做，须现查）
-- **入口**：三路都走 `scripts/dedup.py`——`--keywords`、`--tag "AI/X"`、写云后 `--id <本卡 id>` 定向复查。取锚：`--anchor-id` → 关键词首条 → 标签簇首条，三空才阻塞。
-- **本卡全文自查（阻塞）**：先 `verify_card.py --id <id> --draft <草稿> --show-body` 打底，再通读补人读项（H11）。不为看全文去拼 `memo_batch_get` 请求文件（H5）。
+- **入口**：三路走 `dedup.py`——`--keywords`、`--tag "AI/X"`、写云后 `--id <本卡 id>` 复查。取锚属 `sop_gate.py` 第 ⑧ 步、不属 dedup：`--anchor-id` → 关键词首条 → 标签簇首条，三空才阻塞。
+- **本卡全文自查（阻塞）**：先 `verify_card.py --id <id> --draft <草稿> --show-body` 打底，再通读补人读项（H11）。
 - **新建合理性 / 错配 / 硬塞**：应更新既有卡（H9）、塞进元层面筐（H18）、标签与主体不符（H18）——是则当轮处置。
 - **标签归并与补挂**：仅命名不同则 `tag_rename` 归并（异步生效，禁据读回未变即判失败）；回执看两个数——`updated_memos` 为 0 是一条没写（须带 `max_memos` 重跑），小于 `matched_memos` 是标签已分裂。宽簇吞掉具体主题则当轮建二级或改挂。
 - **跨卡合并**：按 H9/H10/H11/H23 全流程免确认；报告主卡 id、合并后字数、退场 id、标签结果。绝不声明「已合并两张卡」。

@@ -208,7 +208,11 @@ STEP_ANCHORS = {
     "7": (),  # 只有格式判据（按 H14 写），无可执行记号可锚
     "8": ("publish.py", "--draft", "sop_gate.py"),
     "9": ("memo_create",),
-    "10": ("--anchor-id", "--show-body", "max_memos", "tag_rename"),
+    # 第 10 步同时挂两个脚本：`--anchor-id` 属 sop_gate（复盘第 ⑧ 步取锚），
+    # `--id` 属 dedup。只锚选项名不锚属主时，「取锚走 dedup.py」这种把参数挂错
+    # 脚本的写法照样全绿——读者照抄会报未知参数（选项归属检查只认命令片段，
+    # 这一句是自然语言，不在它的射程内）。
+    "10": ("--anchor-id", "sop_gate.py", "--show-body", "max_memos", "tag_rename"),
 }
 # 既不属某条 H、也不属某一步的散记号（附录里的替代写法与实现出处）。
 GLOBAL_ANCHORS = ("a(at)b.c", "_SLICE_RE", '{"limit":2000}')
@@ -648,7 +652,8 @@ def check_skill_anchors(root: Path) -> list[str]:
     三向都拦（缺一个方向就有一种漏法）：
       ① 文档里的条目没登记锚点——新增规则时「它掉不得的那几个记号」没人定义；
       ② 锚点表里的条目在文档中已不存在——删条目后锚点悬空，守卫静默失效；
-      ③ 登记的记号在文档里找不到——改写时被顺手删掉的正是这种。
+      ③ 登记的记号在文档里找不到——改写时被顺手删掉的正是这种。**流程步骤按该步
+         自己的正文判**：记号漂到别步、全篇仍有，读者照这一步照样做不了。
 
     外加一条恒真防线：锚点词若就写在条目自己的标题句里，它永远命中，等于没查
     （命中率≈100% 的判据要先怀疑判据本身）。
@@ -698,30 +703,44 @@ def check_skill_anchors(root: Path) -> list[str]:
             continue
         errs += _anchor_misses(hid, tokens, onestmt[hid], text)
 
-    # 流程步骤同理：第 8 步丢过 `sop_gate.py`，读起来仍是「闸门 + 质检全过才写云」
-    steps: dict[str, str] = {}
+    # 流程步骤同理：第 8 步丢过 `sop_gate.py`，读起来仍是「闸门 + 质检全过才写云」。
+    # 步骤的锚点**只认该步自己的正文**：按全篇找的话，记号从第 8 步漂到第 10 步
+    # 照样命中（`sop_gate.py` 两处都有），而读者照第 8 步做仍然做不了——
+    # 这正是本次 `--anchor-id` 挂错脚本时漏检的形态，只是方向相反。
+    step_titles: dict[str, str] = {}
+    step_bodies: dict[str, list[str]] = {}
+    cur: str | None = None
     for ln in lines:
         m = STEP_TITLE_RE.search(ln)
         if m:
-            steps.setdefault(m.group(1), ln)
-    for num in steps:
+            cur = m.group(1)
+            step_titles.setdefault(cur, ln)
+            step_bodies.setdefault(cur, [])
+            continue
+        if ln.startswith("## ") or ln.startswith("### "):
+            cur = None
+        elif cur is not None:
+            step_bodies[cur].append(ln)
+    for num in step_titles:
         if num not in STEP_ANCHORS:
             errs.append(
                 f"SKILL.md: 流程第 {num} 步未登记操作要素锚点——新增步骤须在 "
                 f"check_skill_docs.STEP_ANCHORS 写明该步的命令 / 选项"
             )
     for num, tokens in STEP_ANCHORS.items():
-        if num not in steps:
+        if num not in step_titles:
             errs.append(f"SKILL.md: 锚点表登记的流程第 {num} 步已不存在——同步删锚点")
             continue
-        errs += _anchor_misses(f"流程第 {num} 步", tokens, steps[num], text)
+        errs += _anchor_misses(f"流程第 {num} 步", tokens, step_titles[num],
+                               "\n".join(step_bodies[num]), scoped=True)
 
     # 文档级记号：散落在附录里、既不属某条 H 也不属某一步的那几个
     errs += _anchor_misses("附录", GLOBAL_ANCHORS, "\x00", text)
     return errs
 
 
-def _anchor_misses(label, tokens, statement, text):
+def _anchor_misses(label, tokens, statement, text, scoped=False):
+    """`text` 是判「还在不在」的射程：条目按全篇、流程步骤按该步正文（`scoped`）。"""
     out = []
     for t in tokens:
         if t in statement:
@@ -730,10 +749,16 @@ def _anchor_misses(label, tokens, statement, text):
                 f"等于没查——改取正文里的记号"
             )
         elif t not in text:
-            out.append(
-                f"SKILL.md: {label} 丢了操作要素 {t!r}（锚点表登记的必需记号）——"
-                f"改写时被删掉了，读者照做不了；确认要删就同步删锚点并说明理由"
-            )
+            if scoped:
+                out.append(
+                    f"SKILL.md: {label} 丢了操作要素 {t!r}——该步正文里找不到它。"
+                    f"写在全篇别处不算：读者照这一步做，需要的是这一步自己写清用哪个"
+                )
+            else:
+                out.append(
+                    f"SKILL.md: {label} 丢了操作要素 {t!r}（锚点表登记的必需记号）——"
+                    f"改写时被删掉了，读者照做不了；确认要删就同步删锚点并说明理由"
+                )
     return out
 
 
