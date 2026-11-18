@@ -15,7 +15,15 @@
 
 [project]
 name = "flomo-note"
-version = "0.1.0"
+# 版本号的**唯一权威来源**。另两处（CHANGELOG 最新条目、git 标签 `vX.Y.Z`）都是它
+# 的派生表示，由 `scripts/check_version.py` 逐条比对。
+#
+# 为什么不是每处都写一份：抄 N 份就有 N-1 份会漂，且漂了之后没人知道该信哪份——
+# 「这个脚本是哪个版本」这类问题一旦有两个答案，就等于没有答案。
+#
+# 口径（详见 CHANGELOG 开头）：主版本动硬限编号与命令行契约、次版本加脚本/步骤/硬限、
+# 修订号只修缺陷与文案。
+version = "1.0.0"
 description = "flomo 写卡 SOP 的脚本与用例：闸门、查重、发布、回读、退场"
 requires-python = ">=3.11"
 dependencies = []

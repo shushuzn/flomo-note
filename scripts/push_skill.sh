@@ -24,6 +24,12 @@
 #   不传文件但已有暂存   → **只提交已暂存的内容，不再追加**（尊重调用方的精确控制）
 #   传文件路径          → 只 add 那些文件（便于精确控制）
 #   --no-commit 开头    → 跳过 commit，仅推送已提交内容
+#   --tag <标签名> 开头 → 只推这一个标签（不提交、不动分支）
+#
+# 为什么标签也走这里：本机推 gitHub 的可行通道只有本脚本里那两条（SSH 优先、
+# HTTPS+隧道回退），直接 `git push origin v1.0.0` 会撞同一段 TLS 中断。发布流程
+# 里「打标签」和「推标签」是两件事，后者若不在同一入口，就等于把通道细节重新
+# 交给手搓——而手搓的版本不会带重试，也不会回读远端核对。
 #
 # 为什么「已有暂存就不再 -A」：`git add -A` 会把工作区里任何未跟踪文件一起带上。
 # 调用方先精确 `git add` 了 6 个文件、再调用本脚本时，-A 会把它刻意排除的文件
@@ -52,9 +58,24 @@ fi
 
 # 解析参数
 NO_COMMIT=0
+TAG=""
 if [ "${1:-}" = "--no-commit" ]; then
   NO_COMMIT=1
   shift || true
+elif [ "${1:-}" = "--tag" ]; then
+  TAG="${2:-}"
+  if [ -z "$TAG" ]; then
+    echo "用法: push_skill.sh --tag <标签名>" >&2
+    exit 2
+  fi
+  # 本地没有这个标签就当场报，不要在推送阶段拿一个不存在的 ref 去换一句
+  # 「src refspec does not match any」——那句话读起来像网络问题，其实是没打标签。
+  if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    echo "[push] 错误：本地没有标签 $TAG。先打标签：git tag -a $TAG -m \"$TAG\"" >&2
+    exit 4
+  fi
+  NO_COMMIT=1
+  shift 2
 fi
 MSG="${1:-}"
 if [ "$NO_COMMIT" -eq 0 ] && [ -z "$MSG" ]; then
@@ -63,6 +84,15 @@ if [ "$NO_COMMIT" -eq 0 ] && [ -z "$MSG" ]; then
 fi
 shift || true
 FILES=("$@")
+
+# 推什么、核什么，只在这一处决定。分支与标签共用后面的两条通道逻辑，
+# 若各自写一遍 ref，改了一处漏了另一处就会变成「推的是分支、核的是标签」。
+PUSH_REF="HEAD"
+VERIFY_DESC="HEAD"
+if [ -n "$TAG" ]; then
+  PUSH_REF="refs/tags/$TAG"
+  VERIFY_DESC="标签 $TAG"
+fi
 
 # 空 hooks 目录：屏蔽 Qoder post-commit 追踪器（会拉起 Qoder.exe→reg.exe 被黑名单拦截，无意义）
 EMPTY_HOOKS="$(mktemp -d)"
@@ -151,6 +181,21 @@ if [ "$NO_COMMIT" -eq 0 ]; then
   fi
 fi
 
+# 远端回读：核的是「同一个提交」，不只是「有这个 ref」。
+# 只 ls-remote 看到一行就报成功，在标签上尤其危险——远端可能停着上次的旧值
+# （推送失败但 ref 早就在），看起来一切正常。分支与标签共用这一个判定。
+verify_remote() {
+  local remote local_sha
+  remote="$(git ls-remote origin "$PUSH_REF" 2>/dev/null | awk 'NR==1{print $1}')"
+  local_sha="$(git rev-parse "$PUSH_REF")"
+  echo "[push] 远端 $VERIFY_DESC = ${remote:-（空）}；本地 = $local_sha"
+  if [ "$remote" != "$local_sha" ]; then
+    echo "[push] 错误：远端与本地不是同一个对象——推送没有真正生效" >&2
+    return 1
+  fi
+  return 0
+}
+
 # ---- 2. 首选 SSH（22 端口）----
 # 顺序为什么是 SSH 在前：两条通道依赖的东西不同。HTTPS 段要选举线路、内联 token，
 # 还要求代理能 CONNECT 到 github.com:443；SSH 只要 22 端口可达且本机有密钥，不经
@@ -174,9 +219,9 @@ export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeou
 
 if git ls-remote origin HEAD >/dev/null 2>&1; then
   echo "[push] 走 SSH 通道推送…"
-  if git push origin HEAD 2>&1 | sed 's/^/[push] /'; then
-    echo "[push] 推送完成（SSH），校验远端 HEAD："
-    git ls-remote origin HEAD
+  if git push origin "$PUSH_REF" 2>&1 | sed 's/^/[push] /'; then
+    echo "[push] 推送完成（SSH），校验远端 $VERIFY_DESC："
+    if ! verify_remote; then exit 5; fi
     echo "[push] OK"
     exit 0
   fi
@@ -217,9 +262,9 @@ for i in $(seq 1 $MAX); do
   export GIT_CONFIG_VALUE_4="$EMPTY_HOOKS"
 
   echo "[push] 第 $i 次尝试推送（隧道端口 $PORT）…"
-  if git push origin HEAD 2>&1 | sed 's/^/[push] /'; then
-    echo "[push] 推送完成，校验远端 HEAD："
-    git ls-remote origin HEAD
+  if git push origin "$PUSH_REF" 2>&1 | sed 's/^/[push] /'; then
+    echo "[push] 推送完成，校验远端 $VERIFY_DESC："
+    if ! verify_remote; then exit 5; fi
     echo "[push] OK"
     exit 0
   fi

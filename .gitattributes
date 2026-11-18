@@ -1,0 +1,27 @@
+# 换行符归一：仓库里一律 LF（索引与检出都是）。
+#
+# 为什么必须写成仓库属性：`core.autocrlf` 是**本机设置**，不是仓库的一部分。
+# 这台开发机是 Windows + `core.autocrlf=true`，所以检出是 CRLF、索引是 LF，看着一切
+# 正常；换一台 `core.autocrlf=false` 的 Windows 机器改同一批文件，提交时 CRLF 会原样
+# 写进索引——而 CI 在 ubuntu 上跑 `bash scripts/run_tests.sh`，那 105 行里每一行都
+# 多一个 \r：`set -uo pipefail` 变成 `pipefail\r`（invalid option name），
+# `REPO_ROOT="$(cd … && pwd)"` 拿到带 \r 的路径，脚本从头到尾失败，报的却是
+# 「command not found」。这类事故的排查成本高得离谱，而防住它只需要这一行。
+#
+# 为什么不只写 `* text=auto`：那只是「自动探测是否文本」，检出仍按本机 core.autocrlf
+# 决定。显式 `eol=lf` 才能让任何机器检出同一份字节。
+#
+# 加这条时索引里已经全是 LF（`git ls-files --eol` 逐个核过），因此它**不产生任何
+# diff**：不是改了 96 个文件的换行，是把「碰巧如此」变成「规定如此」。
+* text=auto eol=lf
+
+# 二进制：显式声明，免得某天加进来的图片被当文本做换行转换（会损坏文件）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
+*.zip   binary
