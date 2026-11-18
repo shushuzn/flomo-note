@@ -7,8 +7,11 @@
 
 用法：
   python scripts/tagcheck.py --tags "AI/Agent,科技/测试"
-  python scripts/tagcheck.py --tags "#AI/Agent" --limit 2000
   python scripts/tagcheck.py --grep "多语言|本地化"      # 只有标签名不确定时：先列出匹配的现有标签
+
+`--limit` 仅为兼容旧调用而保留：服务端 tag_tree 的 inputSchema 为空，不认该参数，
+实测封顶 1000 条。树被截断时会用 tag_search 逐名补查候选，并明说覆盖不全；
+补查仍未命中的一律判「无法确认」，绝不提示「可新建」。
 
 输出：逐个标签给 存在 / 层级 / 同顶层兄弟二级（供判断该复用还是新建更精准的二级）。
 与现有标签**只差空白、全半角斜杠或大小写**的，一律判「写错」并点出树里的那个写法
@@ -18,7 +21,7 @@
 
 退出码：
   0  全部存在且严格两级、无写法重复
-  1  标签树被截断或调用失败（结论不可信）
+  1  标签树调用失败；或树被截断且逐名现查仍无法确认（结论不可信）
   2  有标签缺失 / 层级不合规 / 与现有标签只差写法，或命令行参数写错（须按输出调整）
 """
 from __future__ import annotations
@@ -56,24 +59,40 @@ def split_tags(raw: str) -> list[str]:
     return out
 
 
-def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int]:
-    """现采标签树，返回 (tags, total)。条数与 total 不符即视为截断（抛错）。
+def load_tree(client: FlomoClient, limit: int) -> tuple[list[str], int, bool]:
+    """现采标签树，返回 (tags, total, truncated)。
 
     回包解析走 `flomo_client.tool_data`（唯一实现）。此前只认 `structuredContent`，
     而 `sop_gate` 对同一回包做了逐字段兜底：云端一旦只给 `content[].text`，
     闸门判通过、本脚本报「回包缺 total 字段」——同一份数据两个结论，且错怪了标签树。
+
+    **截断不再抛错**：服务端 `tag_tree` 的 inputSchema 为空，根本不认 `limit`，
+    实测封顶 1000 条而 `total` 会报 1025。此前 `len(tags) != total` 直接失败，
+    并提示「调大 --limit 重采」——那是个做不到的动作，流程第 4 步从此永远卡死。
+    截断改由 `main` 用 `tag_search` 逐名补查候选，并明说覆盖不全；绝不据
+    「截断后的树里搜不到」判「不存在，可新建」（H18）。
     """
     sc = tool_data(client.tool("tag_tree", {"limit": limit}))
     tags = sc.get("tags") or []
     total = sc.get("total")
     if total is None:
         raise RuntimeError("tag_tree 回包缺 total 字段，无法判断是否截断")
-    if len(tags) != total:
-        raise RuntimeError(
-            f"标签树被截断（返回 {len(tags)} / total {total}），结论不可信；"
-            "调大 --limit 重采"
-        )
-    return [str(t) for t in tags], int(total)
+    names = [str(t) for t in tags]
+    return names, int(total), len(names) != int(total)
+
+
+def search_tag_names(client: FlomoClient, name: str, limit: int = 50) -> list[str]:
+    """按完整标签名现查（`tag_search` 是子串匹配，精确名命中可靠）。
+
+    回包 `tags` 是 `[{"name": "…"}]`；`tool_data` 已从 `content[].text` 兜底解码。
+    子串匹配可能带回同名的更长标签，但它们都是真实存在的标签，加进候选集合
+    只会补全兄弟清单，不会让「不存在」被误判成「存在」（存在性按逐字精确比）。
+    """
+    sc = tool_data(client.tool("tag_search", {"keywords": name, "limit": limit}))
+    out: list[str] = []
+    for t in (sc.get("tags") or []):
+        out.append(str(t.get("name", "")) if isinstance(t, dict) else str(t))
+    return [x for x in out if x]
 
 
 def inspect_tag(tag: str, tags: list[str]) -> dict:
@@ -140,12 +159,21 @@ def main(argv: list[str] | None = None, client=None) -> int:
             token, _src = load_token()
             client = FlomoClient(token)
             client.init()
-        tags, total = load_tree(client, limit)
+        tags, total, truncated = load_tree(client, limit)
     except (FlomoError, RuntimeError) as exc:
         print(f"[失败] 标签树未取到：{exc}", file=sys.stderr)
         return 1
 
-    print(f"[标签树] {total} 个（limit={limit}，条数与 total 相符）")
+    tree_count = len(tags)
+    if truncated:
+        print(f"[标签树] total {total}，服务端只返回 {tree_count} 条（封顶 1000，limit 不被接受）；"
+              "候选标签用 tag_search 逐名补查，同顶层兄弟清单可能不全")
+        for tag in tags_wanted:
+            for hit in search_tag_names(client, tag):
+                if hit not in tags:
+                    tags.append(hit)
+    else:
+        print(f"[标签树] {total} 个（limit={limit}，条数与 total 相符）")
     if pattern:
         try:
             rx = re.compile(pattern, re.I)
@@ -158,12 +186,16 @@ def main(argv: list[str] | None = None, client=None) -> int:
             print("   " + t)
         if len(hits) > GREP_SHOW:
             print(f"   …另 {len(hits) - GREP_SHOW} 个未列出（缩小 --grep 范围再看）")
+        if truncated:
+            print(f"   [注意] 树缺 {total - tree_count} 条，以上只覆盖前 {tree_count} 条；"
+                  "精确核单个标签请用 --tags（会逐名现查）")
         if not hits:
             print("   现有标签里没有匹配项；该新建还是换词再找，按 H18 判，不要据「搜不到」就建近义簇")
         if not tags_wanted:
             return 0
 
     bad = 0
+    unverifiable = 0
     for tag in tags_wanted:
         info = inspect_tag(tag, tags)
         if info["dup_of"]:
@@ -178,10 +210,16 @@ def main(argv: list[str] | None = None, client=None) -> int:
             bad += 1
             continue
         if info["exists"]:
-            print(f"✓ {tag}  已存在（同顶层 {len(info['siblings'])} 个二级）")
+            note = "（树截断，逐名现查确认）" if truncated and tag not in tags[:tree_count] else ""
+            print(f"✓ {tag}  已存在（同顶层 {len(info['siblings'])} 个二级）{note}")
         else:
-            hint = "该顶层存在，可直接新建此二级" if info["top_exists"] else "该顶层也不存在，须连同顶层一起新建"
-            print(f"✗ {tag}  不存在；{hint}")
+            if truncated:
+                unverifiable += 1
+                print(f"✗ {tag}  无法确认：服务端封顶 {tree_count}/{total} 条，逐名现查也未命中；"
+                      "到云端标签页人工核对后再定，不要据「搜不到」新建（H18）")
+            else:
+                hint = "该顶层存在，可直接新建此二级" if info["top_exists"] else "该顶层也不存在，须连同顶层一起新建"
+                print(f"✗ {tag}  不存在；{hint}")
             bad += 1
         if info["siblings"]:
             shown = info["siblings"][:SIBLING_SHOW]
@@ -189,6 +227,10 @@ def main(argv: list[str] | None = None, client=None) -> int:
             print(f"   同顶层二级：{', '.join(shown)}" + (f" …另 {more} 个" if more > 0 else ""))
 
     if bad:
+        if unverifiable:
+            print(f"\n[结论] {bad}/{len(tags_wanted)} 个标签未能确认（树截断且逐名现查未命中）；"
+                  "结论不可信，人工核对后再定")
+            return 1
         print(f"\n[结论] {bad}/{len(tags_wanted)} 个标签不可直接用，按上面提示调整后重跑")
         return 2
     print("\n[结论] 全部存在且严格两级，可直接写入首行标签段")
