@@ -65,6 +65,7 @@ _OPTS = [
     Opt("--min-chars", "min_chars", "int", low=1, default=DEFAULT_MIN_CHARS),
     Opt("--timeout", "timeout", "float", low=1, default=30.0),
     Opt("--via", "via", default="auto"),
+    Opt("--no-server", "no_server", "flag"),
     Opt("--print", "echo", "flag"),
     Opt("--batch", "batch", "flag"),
     Opt("--no-ledger", "no_ledger", "flag"),
@@ -497,7 +498,8 @@ class FetchError(Exception):
     """所有通道都没取到页面。消息里带每条通道各自的原因。"""
 
 
-def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str, str]:
+def fetch(url: str, timeout: float = 30.0, via: str = "auto",
+          allow_server: bool = True) -> tuple[str, str, str]:
     """下载页面，返回 (html, content_type, 通道说明)。只发 GET，不改任何远端状态。
 
     通道（`via`）：
@@ -529,6 +531,10 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
         reply = net_util.request(url, headers=headers, timeout=timeout, via=via)
     except urllib.error.HTTPError as exc:
         # 服务器已响应：通道没问题，再换通道只会掩盖真实原因。
+        # 但 403/429 是按出口 IP 拦的典型形态——这类错误换 UA、换参数都没用，
+        # 只能换出口。本机若配了远端通道，就在这一支上试一次（见 server_fetch）。
+        if allow_server and exc.code in (403, 429):
+            return _via_server(url, timeout, f"HTTP {exc.code}")
         raise FetchError(
             f"HTTP {exc.code}（服务器已响应，不是通道问题）"
         ) from exc
@@ -561,6 +567,23 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto") -> tuple[str, str,
             "或改用 --via auto 让脚本换出口，或在浏览器里过一次验证后重试"
         )
     return text, ctype, reply.channel
+
+
+def _via_server(url: str, timeout: float, why: str) -> tuple[str, str, str]:
+    """走远端服务器再取一次；取不到就抛 `FetchError`，把两段原因都带上。
+
+    刻意不在 `auto` 通道里静默回退：远端取回的是**阅读器排版后的正文**，与 HTML
+    抽取结果不是同一种东西，调用方需要知道这次不是原页，否则「页面有、正文没有」
+    这类章节缺口的判据会失真。
+    """
+    import server_fetch
+
+    try:
+        text, kind, channel = server_fetch.fetch(url, timeout)
+    except server_fetch.ServerFetchError as exc:
+        raise FetchError(f"{why}，本机有远端通道但没取到：{exc}") from exc
+    ctype = "text/html" if kind == "html" else "text/markdown; server"
+    return text, ctype, f"{channel}（本机{why}）"
 
 
 def ingest_paste(src: Path, ns: dict) -> int:
@@ -641,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
     min_chars = ns["min_chars"]
     timeout = ns["timeout"]
     via = ns["via"]
+    allow_server = not ns["no_server"]
     echo = ns["echo"]
     if not url.lower().startswith(("http://", "https://")):
         print(f"[失败] 不是 http(s) 链接：{url}", file=sys.stderr)
@@ -660,7 +684,7 @@ def main(argv: list[str] | None = None) -> int:
     full_url = arxiv_fulltext_url(url)
     if full_url:
         try:
-            f_page, f_ctype, f_net = fetch(full_url, min(timeout, 12.0), via)
+            f_page, f_ctype, f_net = fetch(full_url, min(timeout, 12.0), via, allow_server)
             f_body, _f_channel = extract(f_page)
             if "html" in (f_ctype or "").lower() and len(f_body) >= min_chars:
                 page, content_type, net_channel = f_page, f_ctype, f_net
@@ -676,16 +700,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[全文] {full_note}", file=sys.stderr)
     if not full_ok:
         try:
-            page, content_type, net_channel = fetch(url, timeout, via)
+            page, content_type, net_channel = fetch(url, timeout, via, allow_server)
         except FetchError as exc:
             print(f"[失败] 抓取未完成：{exc}", file=sys.stderr)
             return 1
-    if "html" not in (content_type or "").lower() and "<html" not in page[:2000].lower():
+    server_text = "markdown" in (content_type or "").lower()
+    if not server_text and "html" not in (content_type or "").lower() \
+            and "<html" not in page[:2000].lower():
         print(f"[失败] 响应不是 HTML（Content-Type: {content_type}）", file=sys.stderr)
         return 1
 
-    body, channel = extract(page)
-    meta = inspect(page)
+    if server_text:
+        # 远端阅读器给的是已经排好版的正文，没有再抽一遍的余地；
+        # 但「不是原页」这件事要显式打出来，别让读日志的人以为抽取成功了。
+        body, channel = page, "远端阅读器正文（非原页）"
+        meta = {"title": "", "published": "", "headings": []}
+        print("[提示] 本轮正文来自远端阅读器排版稿，页面级标题/章节缺口判据不适用",
+              file=sys.stderr)
+    else:
+        body, channel = extract(page)
+        meta = inspect(page)
     if len(body) < min_chars:
         print(
             f"[失败] 抽取仅 {len(body)} 字符（阈值 {min_chars}，通道：{channel}）——"
@@ -734,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[裁剪] 原 {raw_len} 字符 → {len(body)}：{'、'.join(cuts)}")
     else:
         print("[裁剪] 无首尾噪音（原样保留）")
-    gap = heading_gap(page, extracted)
+    gap = {} if server_text else heading_gap(page, extracted)
     for line in gap_warnings(gap):
         print(line)
     print(f"[文件] {out}")

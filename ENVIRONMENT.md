@@ -254,3 +254,11 @@ terminal 均报 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<工作区>)
 - 离线自检（不装插件也能验证插件逻辑与脚本链路，会真的打一次 tag_tree 只读）：
   `node _tmp/probe_plugin.mjs`。该探针是临时产物、不入库；要固化为常驻回归需另走
   脚本改动的配套用例流程。
+
+## 远端取页通道（本机被按 IP 拦时）
+
+- 触发：`fetch_article.py` 收到 403/429，且本机配了远端通道；此时经 SSH 到自备机器先取原页，失败再走阅读器代理（`r.jina.ai`），取回的正文会标注「远端阅读器正文」。
+- 配置：`.workbuddy/remote_fetch.json`（已 gitignore），字段 `host` / `port` / `user` / `password` 或 `key_path`；也可用 `FLOMO_REMOTE_HOST`、`FLOMO_REMOTE_USER`、`FLOMO_REMOTE_PASSWORD` 覆盖，避免口令落盘。
+- 依赖：`paramiko`（`pip install paramiko`）；未装时该通道报「本机没装 paramiko」，不影响其余通道。
+- 远端只执行只读 `curl`，不在那台机器落文件；单次取回上限 `max_bytes`（默认 512KB）。
+- 显式关掉：`fetch_article.py --no-server` 未提供时默认仅在 403/429 上启用；`server_fetch.py <url>` 可单独手工取页。
