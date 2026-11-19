@@ -364,8 +364,32 @@ def run_check_web_cases():
     GATE._check_web(_verify_file({"searched": True, "terms": [
         {"term": "某参数", "query": "q", "conclusion": "c", "in_body": ["正文里没有的句子"], "search_url": "https://example.com"}]}),
         WEB_BODY, b, n)
-    check("_check_web in_body 落点不在正文判阻塞",
-          any("在卡正文中不存在" in x for x in b), str(b))
+    check("_check_web in_body 落点与正文语义不一致判阻塞",
+          any("语义不一致" in x for x in b), str(b))
+
+    # 13b) 语义一致 ≠ 逐字相同：标点、语序、括号写法不同都算同一句话放行；
+    #      数字被改则按事实不同处理。这一条是缺陷修复的回归位。
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c",
+         "in_body": ["续航 WLTP 430 公里"], "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("_check_web in_body 语序与括号不同但语义一致则放行", b == [], str(b))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c",
+         "in_body": ["WLTP 续航 430 千米（官方）"], "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("_check_web in_body 加括号注释仍算同一句", b == [], str(b))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "query": "q", "conclusion": "c",
+         "in_body": ["WLTP 续航 500 公里"], "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("_check_web in_body 数值不同判语义不一致",
+          any("语义不一致" in x and "数字" in x for x in b), str(b))
 
     b, n = [], []
     GATE._check_web(_verify_file({"searched": True, "terms": [

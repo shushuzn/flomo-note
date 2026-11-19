@@ -51,8 +51,10 @@
 「搜到的东西写进卡了」——只落一份验证记录、正文却照抄原文，同样能骗过旧版闸门。
 故本脚本逐条核对落点，判定顺序：
 
-  1. `in_body`：调用方显式声明的正文落点片段。每段都必须是正文的真实子串，
-     且不得等于术语本身（否则是空转声明）；不符即阻塞。
+  1. `in_body`：调用方显式声明的正文落点片段。按**语义一致**判定，不要求逐字相同：
+     标点、空白、语序、引号与括号写法不同都算同一段话；但片段里的数字与拉丁专名
+     必须原样出现在正文（数值被改就是另一句事实，不能算落点）。片段不得等于术语
+     本身（否则是空转声明）；语义对不上即阻塞，并给出最接近的比例供修卡参考。
   2. 结论里能提取到**关键参数**（数字 + 单位，如 `430 公里` / `160 kW` / `31,200 欧元`，
      以及「五星」这类评级）时：至少一项须出现在正文，否则阻塞。
   3. 结论提取不到关键参数（纯命名类核实）时：术语本身的词块至少一个须出现在正文，
@@ -211,6 +213,68 @@ def _norm(text):
     return re.sub(r"[\s,，]", "", text or "").lower()
 
 
+# 语义比对还要抹掉标点、引号、括号与连接符：同一句话在正文里写成
+# 「基于最新 LES（前瞻专家调度）推理加速技术」，在验证记录里写成
+# 「基于 LES 前瞻专家调度加速技术」，说的是同一件事，逐字判会把后者拦下，
+ # 逼执行者把声明改写成正文的复制品——那一层比对就退化成「你有没有抄一遍」。
+_SEMANTIC_STRIP = re.compile(
+    r"[\s,，。、；;：:！!？?（）()\[\]【】「」『』“”\"'‘’—\-–~～…·/／|]+"
+)
+
+# 语义一致的最低「同字覆盖率」：声明里有多少字能在正文找到连续同字片段。
+# 只调换虚词、合并分句、改口语化说法也不影响它是同一句话；把「94.5%」改成
+# 「94%」这类事实改动由数字与拉丁专名比对单独拦下，不靠这一层。取 0.5 是因为
+# 同一事实常被改写成短句（「计算平台采用…芯片，算力达 …」→「平台 …，算力 …」），
+# 覆盖率再抬高就把正常改写重新逼回逐字抄写。
+_SEMANTIC_COVERAGE = 0.5
+
+# 最长连续同字段落的下限（字）。覆盖率可能由若干短片段凑够，全是「的」「与」
+# 这类碎片时不能算同一句话，故要求至少有一段是实打实的片段；取 4 是与
+# 「430公里」这类参数短语对齐的量级。
+_SEMANTIC_LONGEST = 4
+
+
+def _core(text):
+    """语义比对用核心串：去空白、标点、引号括号，统一小写。"""
+    return _SEMANTIC_STRIP.sub("", text or "").lower()
+
+
+def _coverage(core_a, core_b):
+    """core_a 的字有多少落在 core_b 的连续同字片段里，返回 (覆盖率, 最长片段长)。
+
+    用最长公共片段切分：连续同字优先，片段之间的差异（增删虚词、改语序、
+    换连接词）不计入覆盖率——这正是「语义一致」与「逐字相同」的差别所在。
+    """
+    if not core_a or not core_b:
+        return 0.0, 0
+    sm = difflib.SequenceMatcher(None, core_a, core_b, autojunk=False)
+    blocks = [b for b in sm.get_matching_blocks() if b.size >= 2]
+    covered = sum(b.size for b in blocks)
+    longest = max((b.size for b in blocks), default=0)
+    return covered / len(core_a), longest
+
+
+def _anchor_lands(anchor, body):
+    """`in_body` 声明与正文是否语义一致。
+
+    逐字包含只是其中一种情形；标点、语序、括号写法不同不算不一致。数字与拉丁
+    专名仍按归一化后逐字比对——它们是事实本体，换了就不是同一句。
+    """
+    core_a, core_b = _core(anchor), _core(body)
+    if not core_a:
+        return False, 1.0
+    if core_a in core_b:
+        return True, 1.0
+    digits = re.findall(r"\d+(?:\.\d+)?", anchor or "")
+    if any(d not in core_b for d in digits):
+        return False, 0.0
+    latin = re.findall(r"[A-Za-z][A-Za-z0-9_.\-]*", anchor or "")
+    if any(w.lower() not in core_b for w in latin):
+        return False, 0.0
+    coverage, longest = _coverage(core_a, core_b)
+    return (coverage >= _SEMANTIC_COVERAGE and longest >= _SEMANTIC_LONGEST), coverage
+
+
 def _evidence_tokens(text):
     """结论里的关键参数（数字 + 单位、星级）。"""
     return [m.group(0) for m in _EVIDENCE_RE.finditer(text or "")] + [
@@ -265,10 +329,18 @@ def _check_term_landed(item, body, blockers):
                     f"验证术语「{term}」的 in_body 落点「{a}」无信息量"
                     "（等于或包含于术语本身）——落点须是正文里承载该结论的具体表述"
                 )
-            elif na not in norm_body:
+                continue
+            landed, coverage = _anchor_lands(a, body)
+            if not landed:
                 ok = False
+                hint = (
+                    "数字或拉丁专名与正文不符"
+                    if coverage <= 0.0
+                    else f"与正文连续同字的部分仅覆盖 {coverage:.0%}"
+                )
                 blockers.append(
-                    f"验证术语「{term}」声明的 in_body 落点「{a}」在卡正文中不存在"
+                    f"验证术语「{term}」声明的 in_body 落点「{a}」与卡正文语义不一致"
+                    f"（{hint}）——落点须与正文里承载该结论的那句话讲同一件事"
                 )
         return _landed_record(term, ok, anchors=anchors)
 
