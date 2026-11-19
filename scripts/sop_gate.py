@@ -19,6 +19,7 @@
   python sop_gate.py --memo <正文路径> --skip-web --skip-reason "理由"  # 非术语卡，显式声明无需网络验证
   python sop_gate.py --memo <正文路径> --verify <JSON> --anchor-id <本卡id>  # 更新场景，指定复盘锚点
   python sop_gate.py --memo <正文路径> --verify <JSON> --allow-near-concept "理由"  # 疑似同名但确属不同对象
+  python sop_gate.py --memo <正文路径> --verify <JSON> --source-url <素材URL>  # 核对 search_url 不是拿原稿冒充检索
   python sop_gate.py --memo <正文路径> --verify <JSON> --out <凭证路径>      # 自定义凭证落盘位置
   python sop_gate.py --memo <正文路径> --allow-no-gate "<理由>"  # 仅限批量处理历史卡，须写明理由
 
@@ -86,6 +87,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_util import cli_entry
@@ -890,11 +892,63 @@ def _check_review(client, sig, blockers, notes, anchor_id=None):
     return {"anchor": anchor, "anchor_source": anchor_src, "recommended": [m.get("id") for m in recs]}
 
 
-def _check_web(verify_path, body, blockers, notes):
+# 第 2 步「真搜索」的证据只能是**外部检索**：搜索引擎的查询地址，或第三方来源页。
+# 素材原稿（本轮抓下来的那篇文章）不算——把素材 URL 抄进 search_url，凭证看起来
+# 齐全、实际一次检索都没做，正文仍是照抄原文。这是闸门必须机械区分的东西。
+_SEARCH_ENGINE_HOSTS = (
+    "baidu.com", "sogou.com", "bing.com", "google.com", "duckduckgo.com",
+    "so.com", "sm.cn", "yandex.com", "zhihu.com", "cnki.net", "arxiv.org",
+)
+
+
+def _host(url: str) -> str:
+    """取 URL 主机名（去 scheme/路径/端口，去掉 www. 前缀）。解析失败返回空串。"""
+    try:
+        return urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _is_engine(host: str) -> bool:
+    """主机名是否属于检索入口（含子域名，如 www.baidu.com / cn.bing.com）。"""
+    h = host[4:] if host.startswith("www.") else host
+    return any(h == e or h.endswith("." + e) for e in _SEARCH_ENGINE_HOSTS)
+
+
+def _same_host(a: str, b: str) -> bool:
+    """两个主机名是否同源（忽略 www. 前缀差异）。"""
+    if not (a and b):
+        return False
+    a = a[4:] if a.startswith("www.") else a
+    b = b[4:] if b.startswith("www.") else b
+    return a == b
+
+
+def _open_round_url() -> str:
+    """从账本取「最近一条已抓取未关账」轮的 url，作为本轮素材地址。
+
+    取不到就当没有：闸门不该因为读不到账本而阻塞（那会把「缺参数」变成
+    「卡有问题」），但会在 notes 里如实说明无法核对同源。
+    """
+    try:
+        data = json.loads(Path(".workbuddy/rounds.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    rounds = data.get("rounds") if isinstance(data, dict) else data
+    if not isinstance(rounds, list):
+        return ""
+    for r in reversed(rounds):
+        if isinstance(r, dict) and r.get("url") and not r.get("closed_at"):
+            return str(r["url"])
+    return ""
+
+
+def _check_web(verify_path, body, blockers, notes, source_url=None):
     """② 验证：读调用方的网络搜索留痕，校验术语覆盖**且结论已落进卡正文**。
 
-    两件事都做才叫完成：留痕证明「搜索做了」，落点校验证明「搜到的写进卡了」
-    （见 `_check_term_landed`）。只查前者会放过「留痕齐全、正文照抄原文」。
+    三件事都做才叫完成：留痕证明「搜索做了」（且证据来自外部检索而非素材本身）、
+    落点校验证明「搜到的写进卡了」（见 `_check_term_landed`）、
+    素材同源拦截证明「没有拿原稿 URL 冒充检索」。
     """
     if verify_path is None:
         blockers.append("未提供第 2 步验证记录（--verify）；术语卡必须现查，非术语卡须显式 --skip-web")
@@ -934,6 +988,16 @@ def _check_web(verify_path, body, blockers, notes):
         if not t.get("search_url"):
             blockers.append(f"术语「{term}」缺 search_url——必须提供真实搜索来源URL，禁止凭空写conclusion")
             continue
+        # 素材本站 URL 不算检索证据：抓原稿是第 1 步，第 2 步要的是「另外查过一遍」。
+        # 这一步只拦同源，不拦第三方媒体——用别的站点佐证同样算真检索。
+        src_host = _host(str(source_url or ""))
+        term_host = _host(str(t["search_url"]))
+        if _same_host(term_host, src_host):
+            blockers.append(
+                f"术语「{term}」的 search_url 指向素材本站（{term_host}）"
+                "——抓原稿不是检索留痕；须给出搜索引擎查询地址或第三方来源页"
+            )
+            continue
         if verdict == "refuted":
             # 改删卡内内容只能凭反证。这是本条最容易被滥用的方向：把「搜不到」
             # 写成 refuted，等于给删除盖一个看起来合规的章，事后无法分辨。
@@ -961,6 +1025,13 @@ def _check_web(verify_path, body, blockers, notes):
                                          tried=sorted(set(tried))))
             continue
         landed.append(_check_term_landed(t, body, blockers))
+    hosts = sorted({_host(str(t.get("search_url") or "")) for t in terms} - {""})
+    engine_n = sum(1 for h in hosts if _is_engine(h))
+    if source_url:
+        notes.append(
+            f"验证·检索来源 {len(hosts)} 个域（引擎 {engine_n} 个），"
+            f"已逐个排除与素材 {_host(str(source_url))} 同源"
+        )
     # 计数只看分支自己申报的 landed（见 `_landed_record`），不按键名猜——
     # 否则新增分支一改键名就静默漏计，汇总行会与凭证内容相反。
     unver = [r["term"] for r in landed if r.get("verdict") == "unverified"]
@@ -1016,6 +1087,9 @@ def main():
     ap.add_argument("--skip-reason", default="", help="跳过网络验证的理由（--skip-web 必填）")
     ap.add_argument("--out", help="凭证输出路径（默认 .sop_gate/<signature>.json）")
     ap.add_argument("--anchor-id", help="可选：本卡 id（更新场景下可作 memo_recommended 锚点）")
+    ap.add_argument("--source-url", default="",
+                    help="本轮素材（原稿）URL：用于核实 search_url 不是拿原稿冒充检索留痕；"
+                         "缺省时从 .workbuddy/rounds.json 最近未关账轮取。")
     ap.add_argument(
         "--allow-near-concept",
         metavar="REASON",
@@ -1048,7 +1122,8 @@ def main():
             web = {"web_skipped": True, "skip_reason": args.skip_reason}
             notes.append(f"验证·调用方显式声明无需网络验证（--skip-web，理由：{args.skip_reason}）")
     else:
-        web = _check_web(args.verify, content, blockers, notes)
+        src_url = args.source_url.strip() or _open_round_url()
+        web = _check_web(args.verify, content, blockers, notes, source_url=src_url)
 
     token, _src = load_token()
     client = FlomoClient(token)

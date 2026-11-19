@@ -309,6 +309,42 @@ def run_check_web_cases():
     check("_check_web 合法记录通过",
           b == [] and got["searched"] is True and got["term_count"] == 2, str(b))
 
+    # 6b) 素材本站 URL 冒充检索留痕 → 阻塞。「抓原稿」是第 1 步，第 2 步要的是另外查过一遍。
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓",
+         "search_url": "https://www.ithome.com/1/029/684.htm"}]}),
+        WEB_BODY, b, n, source_url="https://www.ithome.com/1/029/684.htm")
+    check("_check_web search_url 与素材同源判阻塞",
+          any("指向素材本站" in x for x in b), str(b))
+
+    # 6c) 同源判定忽略 www. 前缀差异（www 与非 www 是同一个站点）
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓",
+         "search_url": "https://ithome.com/1/029/684.htm"}]}),
+        WEB_BODY, b, n, source_url="https://www.ithome.com/1/029/684.htm")
+    check("_check_web 同源判定忽略 www. 前缀", any("指向素材本站" in x for x in b), str(b))
+
+    # 6d) 第三方外域（引擎或媒体）算真检索，不阻塞
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓",
+         "search_url": "https://www.sogou.com/web?query=x"}]}),
+        WEB_BODY, b, n, source_url="https://www.ithome.com/1/029/684.htm")
+    check("_check_web 外部域 search_url 通过", b == [], str(b))
+    check("_check_web 记录检索来源域与引擎计数",
+          any("检索来源" in x and "引擎 1 个" in x for x in n), str(n))
+
+    # 6e) 未给素材 URL 时不误判阻塞，但要如实说明核对不了
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某测试概念名", "query": "qa", "conclusion": "确认为该概念的标准称谓",
+         "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("_check_web 缺素材URL不阻塞",
+          b == [], str(b) + str(n))
+
     # 7) 非法 JSON → blocker
     tmp = Path(tempfile.mkdtemp()) / "bad.json"
     tmp.write_text("{不是 JSON", encoding="utf-8")
