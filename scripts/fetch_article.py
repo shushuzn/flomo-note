@@ -458,7 +458,7 @@ def _first(pattern: re.Pattern, html: str) -> str:
     return _normalize(html_mod.unescape(_TAG.sub("", m.group(1))))
 
 
-def inspect(html: str) -> dict:
+def inspect(html: str) -> dict[str, str]:
     """抽取页面元信息（标题 / 发布日期）。只用于打印，不进卡片。"""
     title = _first(_TITLE, html) or _first(_H1, html)
     published = ""
@@ -714,7 +714,9 @@ def main(argv: list[str] | None = None) -> int:
         # 远端阅读器给的是已经排好版的正文，没有再抽一遍的余地；
         # 但「不是原页」这件事要显式打出来，别让读日志的人以为抽取成功了。
         body, channel = page, "远端阅读器正文（非原页）"
-        meta = {"title": "", "published": "", "headings": []}
+        # 这个 dict 与 `inspect()` 同形即可；别塞未使用的键——多一个 `list` 值会把
+        # 整个 dict 的值类型推成 Sequence，下游取标题那步就不再是 str。
+        meta = {"title": "", "published": ""}
         print("[提示] 本轮正文来自远端阅读器排版稿，页面级标题/章节缺口判据不适用",
               file=sys.stderr)
     else:

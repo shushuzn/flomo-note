@@ -16,6 +16,7 @@
 
 COVERS = ("server_fetch", "fetch_article")
 
+import contextlib
 import importlib.util
 import os
 import sys
@@ -98,7 +99,7 @@ def case_direct_ok():
         calls.append(cmd)
         return 0, "<html>body</html>\n" + sf._CODE_MARK + "200", ""
 
-    text, kind, channel = sf.fetch("https://example.com/a", config=cfg, runner=runner)
+    _text, kind, channel = sf.fetch("https://example.com/a", config=cfg, runner=runner)
     check("类型是 html", kind == "html", kind)
     check("只发了一次", len(calls) == 1, str(len(calls)))
     check("通道写明原页", "原页" in channel, channel)
@@ -116,7 +117,7 @@ def case_reader_fallback():
             return 0, "Title: x\n\n正文\n" + sf._CODE_MARK + "200", ""
         return 0, "blocked\n" + sf._CODE_MARK + "403", ""
 
-    text, kind, channel = sf.fetch("https://example.com/a", config=cfg, runner=runner)
+    _text, kind, channel = sf.fetch("https://example.com/a", config=cfg, runner=runner)
     check("类型是 text", kind == "text", kind)
     check("两步都发过", len(calls) == 2, str(len(calls)))
     check("说明里保留原页状态", "403" in channel, channel)
@@ -159,10 +160,8 @@ def case_fetch_article_gate():
 
     sf.fetch, fa.net_util.request = spy, blocked
     try:
-        try:
+        with contextlib.suppress(fa.FetchError):
             fa.fetch("https://example.com/a", allow_server=False)
-        except fa.FetchError:
-            pass
         check("allow_server=False 时未触发远端", not called, str(called))
     finally:
         sf.fetch, fa.net_util.request = orig_sf, orig_req

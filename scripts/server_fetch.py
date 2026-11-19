@@ -120,7 +120,7 @@ def _curl(cfg: dict, target: str, timeout: int, runner) -> tuple[int, str, str]:
         + " -w " + shlex.quote("\\n" + _CODE_MARK + "%{http_code}")
         + " " + shlex.quote(target)
     )
-    rc, out, err = runner(cfg, cmd, timeout + 10)
+    _rc, out, err = runner(cfg, cmd, timeout + 10)
     code = 0
     if _CODE_MARK in out:
         body, _, tail = out.rpartition(_CODE_MARK)
