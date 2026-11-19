@@ -408,6 +408,34 @@ SWEEP_MAX_PAGES = 10
 NEAR_EXTRA_MAX = 6
 
 
+RETIRE_TAG_TEXT = "#待清理"
+
+
+def _find_same_concept_twin(client, concept, anchor_id):
+    """找云端除本卡外、逐字同名的另一张卡；命中返回 "id「概念名」"，否则 None。
+
+    更新场景原本因「本卡即候选」跳过同名判定，于是两张同标题卡各更新一次都能过闸，
+    并存状态长期留着。这里只补一条：同名且**仍带正文**的另一张存在就不许写云。
+    已挂 #待清理 的骨架不算并存（那是退场后的删除入口，正文按设计已清空）。
+    """
+    try:
+        memos, _trunc = _sweep_memos(client, {"keywords": concept}, max_pages=2)
+    except FlomoError:
+        return None
+    cur = _concept_identity(concept)
+    for m in memos:
+        if m.get("id") == anchor_id:
+            continue
+        sig = memo_signature(m.get("content"))
+        if not sig:
+            continue
+        if (sig["tagline"] or "").strip() == RETIRE_TAG_TEXT:
+            continue
+        if _concept_relation(cur, sig["concept"]) == "same":
+            return f"{m.get('id')}「{sig['concept']}」"
+    return None
+
+
 def _sweep_memos(client, params, max_pages=SWEEP_MAX_PAGES):
     """按日期游标翻页取卡，返回 (memos, truncated)。
 
@@ -614,6 +642,14 @@ def _check_dedup(client, sig, blockers, notes, tree=None, anchor_id=None,
         if old_concept and _concept_relation(_concept_identity(concept), old_concept) == "same":
             enforce = False
             notes.append("查重·更新场景且概念名未改，跳过同名判定（本卡即候选）")
+            # 但「跳过」只能跳本卡自身：云端若还并存另一张逐字同名的卡，
+            # 两张都带正文就属重复并存，更新时也必须拦下（双卡同名是事故形态）。
+            twin = _find_same_concept_twin(client, concept, anchor_id)
+            if twin:
+                blockers.append(
+                    f"同名双卡并存：云端除本卡外还有逐字同名卡 {twin}。"
+                    "两张同名卡不得继续并存——须把内容并进较全的一张，"
+                    "另一张用 retire.py 退场后再写云（H9/H23）。")
         elif not old_concept:
             notes.append("查重·更新场景但读不到原概念名，仍执行同名判定")
 
