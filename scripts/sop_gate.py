@@ -33,11 +33,19 @@
     "terms": [
       {"term": "隐式世界-动作模型", "query": "...", "conclusion": "确认为 ... 的标准称谓"},
       {"term": "Geely E5", "query": "...", "conclusion": "纯电动紧凑型 SUV，WLTP 续航 430 公里",
-       "in_body": ["WLTP 续航 430 公里"]}
+       "in_body": ["WLTP 续航 430 公里"]},
+      {"term": "某合金相", "verdict": "unverified", "query": "...", "search_url": "...",
+       "tried": ["中文名 + 相变温度", "英文名 + phase transition", "DOI 反查"],
+       "conclusion": "两轮检索无独立出处，按材料口径保留，不据此删减"}
     ]
   }
   说明：`--skip-web` 仅当卡片主体不是专业术语/机构/产品/模型/定理简称时可用，
   且会在凭证中留痕 `web_skipped=true`，便于事后审计。
+
+**`verdict` 三态（H29）**：缺省 `confirmed`。`refuted` 表示找到相反证据、可据以
+改删卡内内容，**必须**同时给 `counter_evidence`（相反原文与链接）——只写 `refuted`
+不给反证即阻塞；`unverified` 表示无结论，不要求正文落点，但 `tried` 须列至少两条
+不同查询，正文按材料口径保留。检索无果既不是反证，也不是删除依据。
 
 **结论必须落进正文（本闸门的新增阻塞项）**：留痕只证明「搜索做了」，不证明
 「搜到的东西写进卡了」——只落一份验证记录、正文却照抄原文，同样能骗过旧版闸门。
@@ -159,6 +167,14 @@ _TOKEN_RE = re.compile(
 )
 # 「本卡将新建该簇」时列几个同顶层最相近的现有二级供人判断（只作提示）。
 TAG_NEAR_SHOW = 3
+
+# 验证结论的三态（H29）。缺省按 confirmed 处理，保持旧留痕可用。
+# 存在这三档的理由：检索是抽样——受查询词、索引、语言、付费墙限制，「没搜到」
+# 与「事实不成立」之间隔着整整一类情况。旧留痕只有「搜到并写了」一种形态，
+# 于是执行者在搜不到时只有两条路：写一个自己不认的 conclusion，或者把卡里
+# 那段内容删到「与检索结果一致」。后者看着最干净，代价是卡片开始以检索能力
+# 为事实边界。故把「无结论」显式成一档：它不改内容，但要交代试过什么。
+_VERDICTS = ("confirmed", "refuted", "unverified")
 
 # 新建二级标签时的**语义近邻**候选：字符相似度对中文几乎无效
 # （`老龄` vs `社会保障` 相似度 0），故对常见易混主题显式给出该并进哪个既有簇。
@@ -832,22 +848,67 @@ def _check_web(verify_path, body, blockers, notes):
         blockers.append("验证记录 terms 为空——未记录任何术语核实结果")
     landed = []
     for t in terms:
-        if not (t.get("term") and t.get("conclusion")):
+        term = t.get("term")
+        if not (term and t.get("conclusion")):
             blockers.append(f"验证记录条目缺 term/conclusion：{t}")
             continue
+        verdict = (t.get("verdict") or "confirmed").strip()
+        if verdict not in _VERDICTS:
+            blockers.append(
+                f"术语「{term}」的 verdict 为 {verdict!r}——只认 "
+                f"{' / '.join(_VERDICTS)}（H29）"
+            )
+            continue
         if not t.get("search_url"):
-            blockers.append(f"术语「{t.get('term')}」缺 search_url——必须提供真实搜索来源URL，禁止凭空写conclusion")
+            blockers.append(f"术语「{term}」缺 search_url——必须提供真实搜索来源URL，禁止凭空写conclusion")
+            continue
+        if verdict == "refuted":
+            # 改删卡内内容只能凭反证。这是本条最容易被滥用的方向：把「搜不到」
+            # 写成 refuted，等于给删除盖一个看起来合规的章，事后无法分辨。
+            if not str(t.get("counter_evidence") or "").strip():
+                blockers.append(
+                    f"术语「{term}」标 refuted 却没给 counter_evidence（相反原文与链接）"
+                    "——检索无果不是反证，按 H29 不得据此改删"
+                )
+                continue
+            rec = _check_term_landed(t, body, blockers)
+            rec["verdict"] = "refuted"
+            landed.append(rec)
+            continue
+        if verdict == "unverified":
+            tried = [str(x).strip() for x in (t.get("tried") or []) if str(x).strip()]
+            if len(set(tried)) < 2:
+                blockers.append(
+                    f"术语「{term}」标 unverified，tried 须列至少 2 条不同查询"
+                    "（换词 / 换引擎 / 换语言 / 搜 DOI）——搜一次没中不等于无结论"
+                )
+                continue
+            # 无结论不要求正文落点（搜不到自然没得落），但也不是豁免通道：
+            # 正文按材料口径保留，试过什么进凭证，事后可核。
+            landed.append(_landed_record(term, True, verdict="unverified",
+                                         tried=sorted(set(tried))))
             continue
         landed.append(_check_term_landed(t, body, blockers))
-    # 计数只看分支自己申报的 landed（见 _landed_record），不按键名猜——
+    # 计数只看分支自己申报的 landed（见 `_landed_record`），不按键名猜——
     # 否则新增分支一改键名就静默漏计，汇总行会与凭证内容相反。
-    hit = sum(1 for r in landed if r.get("landed"))
+    unver = [r["term"] for r in landed if r.get("verdict") == "unverified"]
+    # 只计「反证成立且已落进正文」的那几条：挂了 refuted 却没落点的，已经
+    # 进 missed，再计一次会让「凭反证改删 N 条」虚高，审计时无法对账。
+    refuted = [r["term"] for r in landed
+               if r.get("verdict") == "refuted" and r.get("landed")]
+    hit = sum(1 for r in landed
+              if r.get("landed") and r.get("verdict") != "unverified")
     missed = [r["term"] for r in landed if not r.get("landed")]
     line = f"验证·已核实 {len(terms)} 个术语，其中 {hit} 条在正文有落点或已豁免"
+    if unver:
+        line += f"；无结论 {len(unver)} 条按材料口径保留（{'、'.join(unver[:3])}）"
+    if refuted:
+        line += f"；凭反证改删 {len(refuted)} 条"
     if missed:
         line += f"；未落点 {len(missed)} 条（{'、'.join(missed[:3])}）"
     notes.append(line)
-    return {"searched": data.get("searched"), "term_count": len(terms), "landed": landed}
+    return {"searched": data.get("searched"), "term_count": len(terms),
+            "landed": landed, "unverified": len(unver), "refuted": len(refuted)}
 
 
 def assemble_gate(content, sig, web, dedup, review, *, sig_key=None,

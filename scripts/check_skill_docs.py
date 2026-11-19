@@ -197,6 +197,9 @@ SKILL_ANCHORS = {
     "H26": (".mcp.json",),
     "H27": ("cleanup.py", ".cleanup_run"),
     "H28": ("check_skill_docs.py", "SKIP"),
+    # 「检索无果」曾被当成「事实不成立」，于是卡里能查到的一删了之。三态与
+    # `verdict: unverified` 是这条唯一可执行的部分，删了它剩下只是态度。
+    "H29": ("只有相反原文与链接", "verdict: unverified"),
 }
 # 流程各步的命令与选项：步骤标题丢了不会有人发现（下一步照样能读通），
 # 但「第 8 步的闸门是哪个脚本」这种信息只在这里出现一次。

@@ -388,6 +388,52 @@ def run_check_web_cases():
     check("_check_web not_in_body 显式豁免放行且留痕",
           b == [] and got["landed"][0]["exempt"], str(b) + str(got["landed"]))
 
+    # 17) H29 三态：检索无果既不是反证，也不是删除依据。
+    #     `refuted` 是唯一允许据此改删卡内内容的档，故必须附反证——只标档不附证
+    #     等于给删除盖章，事后与「真找到反证」无法区分；`unverified` 不许当豁免
+    #     通道，须交代试过什么，否则「搜一次没中」看起来与「确实没有」一样。
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "verdict": "refuted", "query": "q",
+         "conclusion": "材料写 430 公里，检索未见该值", "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("refuted 缺 counter_evidence 判阻塞",
+          any("检索无果不是反证" in x for x in b), str(b))
+
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某参数", "verdict": "refuted", "query": "q",
+         "conclusion": "官方口径为 480 公里",
+         "counter_evidence": "官网规格页写 480 公里 https://example.com/spec",
+         "in_body": ["WLTP 续航 430 公里"], "search_url": "https://example.com"}]}),
+        WEB_BODY, b, n)
+    check("refuted 带反证且正文有落点则放行并计 refuted",
+          b == [] and got["refuted"] == 1, str(b) + str(got["refuted"]))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某无出处术语", "verdict": "unverified", "query": "q",
+         "tried": ["只试了一次"], "conclusion": "无独立出处，按材料保留",
+         "search_url": "https://example.com"}]}), WEB_BODY, b, n)
+    check("unverified 只试一次判阻塞",
+          any("至少 2 条不同查询" in x for x in b), str(b))
+
+    b, n = [], []
+    got = GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某无出处术语", "verdict": "unverified", "query": "q",
+         "tried": ["中文名 + 相变温度", "英文名 + phase transition"],
+         "conclusion": "无独立出处，按材料口径保留，不据此删减",
+         "search_url": "https://example.com"}]}), WEB_BODY, b, n)
+    check("unverified 两路查询通过且不要求正文落点",
+          b == [] and got["unverified"] == 1 and got["landed"][0]["landed"] is True,
+          str(b) + str(got["landed"]))
+
+    b, n = [], []
+    GATE._check_web(_verify_file({"searched": True, "terms": [
+        {"term": "某术语", "verdict": "maybe", "query": "q",
+         "conclusion": "c", "search_url": "https://example.com"}]}), WEB_BODY, b, n)
+    check("verdict 非法取值判阻塞", any("只认" in x for x in b), str(b))
+
     # 15) 关键参数提取本身的口径（防回归）
     check("_evidence_tokens 不截断 kWh（前缀单位须长者在前）",
           GATE._evidence_tokens("电池 60.2 kWh") == ["60.2 kWh"],
