@@ -703,6 +703,65 @@ def test_lost_readings_counts_multiplicity():
           PB.lost_readings("同比 -12.70% 与 +3.27%", "同比 -12.70%"))
 
 
+def test_lost_points():
+    """整条要点消失是独立判据：读数判据只看数字，断口判据只看词中间，两条都漏。
+
+    真实形态：一条无数字的定性要点（「某实测用七张图让两人同框」）在改写时被删掉，
+    理由是「本轮材料没提、检索没撞见」。没有这条判据时 `content_loss_report` 返回空，
+    差异报告只打一行提示，一句「无事实净损失」就能收工。
+    """
+    loss = "- 溢出效应：风险下降不止留在本企业，还向供应链上游传导，形成链式稳定"
+    other = "- 企业异质性：风险感知高、议价能力弱、数字化转型程度低的企业平抑效果更明显"
+    # 回包归一化会吃掉「- 」里的空格，比较时按归一化后的形态认
+    check("要点：整条删除被报",
+          PB.lost_points(loss, other) == ["-溢出效应：风险下降不止留在本企业，"
+                                          "还向供应链上游传导，形成链式稳定"],
+          PB.lost_points(loss, other))
+    # 判据写对了但没接进报告等于没有：写入前只看 content_loss_report 这一个出口
+    rep = PB.content_loss_report(loss, other)
+    check("要点：并入 content_loss_report（写入前唯一出口）",
+          rep.get("lost_points") == PB.lost_points(loss, other) and bool(rep.get("lost_points")),
+          rep)
+    check("要点：两条并一条不算丢",
+          PB.lost_points("- 甲：市场分割下企业跨省采购难、跨区审批繁\n"
+                         "- 乙：物流调度慢，调整能力被削弱",
+                         "- 甲乙：市场分割下企业跨省采购难、跨区审批繁、物流调度慢，"
+                         "调整能力被削弱") == [],
+          PB.lost_points("- 甲：市场分割下企业跨省采购难、跨区审批繁\n"
+                         "- 乙：物流调度慢，调整能力被削弱",
+                         "- 甲乙：市场分割下企业跨省采购难、跨区审批繁、物流调度慢，"
+                         "调整能力被削弱"))
+    check("要点：挪进正文不算丢",
+          PB.lost_points("开头。\n\n要点：\n\n" + loss,
+                         "开头。风险下降不止留在本企业，还向供应链上游传导，形成链式稳定。"
+                         "\n\n要点：\n\n" + other) == [],
+          PB.lost_points("开头。\n\n要点：\n\n" + loss,
+                         "开头。风险下降不止留在本企业，还向供应链上游传导，形成链式稳定。"
+                         "\n\n要点：\n\n" + other))
+    check("要点：换个说法保留不算丢",
+          PB.lost_points("- 配置多元化：可替代的供应商与路径变多，关键环节不必押在少数来源上",
+                         "- 配置多元化：可替代的供应商与路径变多，关键环节不必押在少数来源"
+                         "上（多源替代）") == [],
+          PB.lost_points("- 配置多元化：可替代的供应商与路径变多，关键环节不必押在少数来源上",
+                         "- 配置多元化：可替代的供应商与路径变多，关键环节不必押在少数来源"
+                         "上（多源替代）"))
+    check("要点：打乱顺序不算丢",
+          PB.lost_points("- 甲：第一条内容写得足够长一些\n- 乙：第二条内容也写得足够长了",
+                         "- 乙：第二条内容也写得足够长了\n- 甲：第一条内容写得足够长一些") == [],
+          PB.lost_points("- 甲：第一条内容写得足够长一些\n- 乙：第二条内容也写得足够长了",
+                         "- 乙：第二条内容也写得足够长了\n- 甲：第一条内容写得足够长一些"))
+    # 来源行不是卡片内容，删它不触发（与读数判据同一口径）
+    check("要点：删来源行不算丢",
+          PB.lost_points("- 要点：某条足够长的内容\n来源：某报道，另有附录若干",
+                         "- 要点：某条足够长的内容") == [],
+          PB.lost_points("- 要点：某条足够长的内容\n来源：某报道，另有附录若干",
+                         "- 要点：某条足够长的内容"))
+    # 标签改写只留很短残片时不该报（词表外的形态靠人读，机器只管整条消失）
+    check("要点：过短残片不比",
+          PB.lost_points("- 定价：零售", "- 价格：零售价，另外补充说明若干") == [],
+          PB.lost_points("- 定价：零售", "- 价格：零售价，另外补充说明若干"))
+
+
 def test_misaligned_deletions():
     """断口判据：删除片段必须从行首或标点后开始，括号/引号要么整对删要么不删。"""
     before = "世界卫生组织数据显示全球每年约有320万人死亡，这些污染源于烹饪"
@@ -1334,6 +1393,7 @@ if __name__ == "__main__":
                test_readings_ignore_spaces_not_dates,
                test_readings_scale_equivalence,
                test_lost_readings_counts_multiplicity,
+               test_lost_points,
                test_misaligned_deletions,
                test_update_content_loss_blocks,
                test_update_fragment_blocks,

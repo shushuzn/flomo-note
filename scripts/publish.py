@@ -422,6 +422,67 @@ def lost_readings(before: str, after: str) -> list[str]:
                   if new.get(t, 0) + allow.get(t, 0) < n)
 
 
+_BULLET_RE = re.compile(r"^-\s*")
+# 要点内容对比口径：去掉标点、空白与 Markdown 元字符，只比字面内容。
+# 不这么做的话，「，」改「；」、加个括号都会让整条被判成「不见了」。
+_COMPACT_DROP = re.compile(r"[\s，；。：、,;:．.!！?？（）()《》〈〉“”\"'—–·…／/\\|`*~_【】\[\]-]+")
+# 要点短于此长度不比：标签改动（「定价」→「价格」）会留下很短的残片。
+MIN_POINT_CHARS = 8
+# 与草稿里任一句的相似度达到此值即视为「改写保留」。定得太高会把正常改写全拦成
+# 误报，人一旦习惯性加开关，这道闸门就没了；太低则真删的条目会被相似句掩护。
+POINT_KEEP_RATIO = 0.6
+
+
+def _compact(s: str) -> str:
+    return _COMPACT_DROP.sub("", s or "")
+
+
+def _point_payload(line: str) -> str:
+    """要点行的内容部分：去掉 `- ` 与「标签：」，只留标签之后的正文。
+
+    比内容不比字面：标签常改（「风险类型」→「类型」），改标签不等于删内容；
+    正文整条换掉才是真丢。
+    """
+    body = _BULLET_RE.sub("", line).strip()
+    m = re.match(r"^([^：:]{1,20})[：:]\s*(\S.+)$", body)
+    return m.group(2).strip() if m else body
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"[。！？；\n]+", FC._norm_body(text)) if s.strip()]
+
+
+def lost_points(before: str, after: str) -> list[str]:
+    """改前有、改后整条不见了的要点。
+
+    读数那条判据（`lost_readings`）只认数字，断口判据（`misaligned_deletions`）只认
+    「从词中间切开」——整条要点在行首被删，两条都看不见。于是「这条材料没提、我也没
+    检索到」就成了删存量内容的通行证：删掉的那条若是定性判断（无数字），闸门一句不报，
+    差异报告只打一行提示，人用「无事实净损失」带过即可收工。
+
+    判定按内容不按字面：与草稿里任一句的相似度过半即算改写保留；整条消失才算丢。
+    这一条对应 H29——删存量要有反证，不是「本轮没覆盖」。
+    """
+    old_lines, new_lines = _norm_lines(before), _norm_lines(after)
+    remain = set(new_lines)
+    cands = [_compact(s) for s in _sentences(after)]
+    out = []
+    for ln in old_lines:
+        if not _BULLET_RE.match(ln) or ln in remain or _SRC_LINE_RE.match(ln):
+            continue
+        pay = _compact(_point_payload(ln))
+        if len(pay) < MIN_POINT_CHARS:
+            continue
+        if any(pay in c for c in cands):
+            continue
+        best = max((difflib.SequenceMatcher(None, pay, c).ratio() for c in cands),
+                   default=0.0)
+        if best >= POINT_KEEP_RATIO:
+            continue
+        out.append(ln)
+    return out
+
+
 def _span_is_closed(span: str) -> bool:
     """删除片段是不是一整对括号（含引号）——括号内的删除不该被当成断口。"""
     span = span.strip()
@@ -557,18 +618,21 @@ def misaligned_deletions(before: str, after: str) -> list[tuple[str, str]]:
 
 
 def content_loss_report(before: str, after: str) -> dict:
-    """覆盖写前的内容丢失报告：读数少了哪些、断口在哪。空报告才算「没丢东西」。"""
+    """覆盖写前的内容丢失报告：读数少了哪些、整条要点没了哪些、断口在哪。空报告才算「没丢东西」。"""
     return {
         "lost_readings": lost_readings(before, after),
+        "lost_points": lost_points(before, after),
         "fragments": misaligned_deletions(before, after),
     }
 
 
 def _print_content_loss(rep: dict) -> None:
     _step("③' 内容丢失检查（改前快照 → 草稿）")
-    lost, frags = rep["lost_readings"], rep["fragments"]
+    lost, pts, frags = rep["lost_readings"], rep["lost_points"], rep["fragments"]
     for tok in lost:
         print(f"  - 读数「{tok}」在草稿里没有了", file=sys.stderr)
+    for ln in pts:
+        print(f"  - 要点整条消失：{ln}", file=sys.stderr)
     for prev, span in frags:
         print(f"  - 删除片段「{span}」从「{prev}」后面开始——起点落在词中间，"
               f"多半是正则或替换的起点错了", file=sys.stderr)
@@ -578,6 +642,11 @@ def _print_content_loss(rep: dict) -> None:
           "（读回全文的卡就地修属常规自修，见 SKILL.md H22b——自行确认后带开关重跑，"
           "不必停下来等授权）",
           file=sys.stderr)
+    if pts:
+        print("[阻塞] 「本轮材料没提」「我没检索到」不是删存量要点的理由（H29）："
+              "要么拿相反原文与链接来说明它错，要么保留。认领时逐条写清"
+              "「并入哪条 / 被哪条反证否定」，不接受一句「无事实净损失」",
+              file=sys.stderr)
 
 
 def _print_diff(rep: dict | None, limit: int = DIFF_SHOW) -> None:
@@ -790,19 +859,32 @@ def _confirm_target(run, memo_id: str, body: str, allow_rename: bool,
 
 
 def _precheck_target(run, memo_id: str, body: str, allow_rename: bool,
-                     prefix: str = "") -> int:
-    """批量预检期确认覆盖对象：取得到、且概念名对得上。
+                     prefix: str = "", allow_content_loss: bool = False) -> int:
+    """预检期确认覆盖对象：取得到、概念名对得上、草稿不比原卡少内容。
 
     批量把「任何一张不过就一张都不写」当成不变量，这一步就得连 id 一起管——否则 id 抄错
     要到写到那一张才暴露，而它前面几张已经进了云端，「一张都没写」的承诺就破了。这里只读
     不落快照：写入前 `_confirm_target` 还会再确认一次，那次才是止损点（中间可能有变动）。
+
+    内容丢失检查也放这里：写前才报的话，写云失败一次就白跑一轮；更要紧的是预检报告是
+    人真正会读的那一份——**删除只在写入日志里出现，等于没人看见**。
     """
     code, before, _truncated = _read_target(
         run, memo_id, "③ 覆盖对象预检 memo_batch_get", prefix)
     if code:
         return code
-    return _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename,
+    code = _check_identity(_head_lines(before, 2), _head_lines(body, 2), allow_rename,
                            before, body)
+    if code:
+        return code
+    if before:
+        loss = content_loss_report(before, body)
+        if loss["lost_readings"] or loss["lost_points"] or loss["fragments"]:
+            _print_content_loss(loss)
+            if not allow_content_loss:
+                return 7
+            print("[放行] 按 --allow-content-loss 预检放行，写入后仍须逐条认领上面这些丢失")
+    return 0
 
 
 def _record_last_id(memo_id: str) -> None:
@@ -998,7 +1080,7 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
         # 证伪（「少了哪个读数」），否则人只会学到「又红了，加个开关」。
         if before:
             loss = content_loss_report(before, body)
-            if loss["lost_readings"] or loss["fragments"]:
+            if loss["lost_readings"] or loss["lost_points"] or loss["fragments"]:
                 _print_content_loss(loss)
                 if not allow_content_loss:
                     res["code"] = 7
@@ -1272,7 +1354,9 @@ def run_batch(run, items: list[dict], *, skip_web: bool, dry_run: bool,
                 print(f"[失败] 第 {i}/{n} 张草稿读不出来：{exc}——本批一张都没写",
                       file=sys.stderr)
                 return 1
-            code = _precheck_target(run, it["update_id"], body, it["allow_rename"], prefix)
+            code = _precheck_target(run, it["update_id"], body, it["allow_rename"], prefix,
+                                    allow_content_loss=allow_content_loss
+                                    or it.get("allow_content_loss", False))
             if code:
                 print(f"[失败] 第 {i}/{n} 张的覆盖对象未过预检（{it['update_id']}）"
                       "——本批一张都没写", file=sys.stderr)
