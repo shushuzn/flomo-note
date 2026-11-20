@@ -255,11 +255,79 @@ def run_source_guards():
         check(f"{name} 内无写死的回环端口", not hits, hits)
 
 
+def run_server_fallback_cases():
+    """本机整条出网断掉时，远端通道必须被叫到（此前只在 403/429 分支才试）。
+
+    现实里的形态就是纽约时报那篇：代理 CONNECT 504、直连 Network unreachable，
+    两条本机通道都抬不起头，于是 403 分支永远走不到，自备的第三通道等于不存在。
+    """
+    real_request = FA.net_util.request
+    real_via = FA._via_server
+    calls = []
+
+    def boom(*_a, **_k):
+        raise FA.net_util.TransportError("代理隧道 504；直连不可达", request_sent=False)
+
+    def fake_via(url, timeout, why):
+        calls.append((url, why))
+        return "<html>远端</html>", "text/html", "远端 1.2.3.4·原页（本机出网不可用）"
+
+    FA.net_util.request = boom
+    FA._via_server = fake_via
+    try:
+        text, _ctype, channel = FA.fetch("https://example.invalid/x", allow_server=True)
+        check("本机出网全断时回退到远端通道", calls and "远端" in channel, channel)
+        check("回退理由写明本机出网不可用", "本机出网不可用" in calls[0][1], calls)
+        try:
+            FA.fetch("https://example.invalid/y", allow_server=False)
+            channel2 = "竟然取到了"
+        except FA.FetchError as exc:
+            channel2 = str(exc)
+        check("allow_server=False 时不回退远端", len(calls) == 1, (len(calls), channel2))
+    finally:
+        FA.net_util.request = real_request
+        FA._via_server = real_via
+
+
+def run_server_state_cases():
+    """远端取不到时，报错必须分清「未配置 / 已配置但没取到」，不许混说。"""
+    import server_fetch
+
+    real_fetch = server_fetch.fetch
+    real_load = server_fetch.load_config
+
+    def dead(*_a, **_k):
+        raise server_fetch.ServerFetchError("连不上远端")
+
+    server_fetch.fetch = dead
+    try:
+        server_fetch.load_config = lambda *a, **k: None
+        try:
+            FA._via_server("https://example.invalid/z", 5, "HTTP 403")
+            state = "未报错"
+        except FA.FetchError as exc:
+            state = "未配置" if "远端通道未配置" in str(exc) else str(exc)[:40]
+        check("没配远端时报「未配置」而不是「取不到」", state == "未配置", state)
+
+        server_fetch.load_config = lambda *a, **k: {"host": "h", "user": "u", "password": "p"}
+        try:
+            FA._via_server("https://example.invalid/z", 5, "HTTP 403")
+            state2 = "未报错"
+        except FA.FetchError as exc:
+            state2 = "已配置" if "已配置但未取到" in str(exc) else str(exc)[:40]
+        check("配了远端但没取到时报「已配置但未取到」", state2 == "已配置", state2)
+    finally:
+        server_fetch.fetch = real_fetch
+        server_fetch.load_config = real_load
+
+
 def main():
     base, stop = _serve()
     try:
         run_fetch_cases(base)
         run_netdoctor_cases(base)
+        run_server_fallback_cases()
+        run_server_state_cases()
     finally:
         stop()
     run_source_guards()

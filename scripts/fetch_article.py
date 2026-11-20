@@ -539,6 +539,11 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto",
             f"HTTP {exc.code}（服务器已响应，不是通道问题）"
         ) from exc
     except net_util.TransportError as exc:
+        # 本机出网整条断掉（代理隧道 504、直连 Network unreachable）时，403 分支永远
+        # 走不到，远端通道就成了摆设——实测纽约时报这一篇正是这种形态：代理 CONNECT
+        # 504、直连不可达，此前直接判死，等于自备的第三通道形同不存在。
+        if allow_server and via == "auto":
+            return _via_server(url, timeout, f"本机出网不可用（{exc}）")
         raise FetchError(str(exc)) from exc
     ctype = reply.headers.get("Content-Type", "")
     text = decode_html(reply.body, ctype)
@@ -569,6 +574,15 @@ def fetch(url: str, timeout: float = 30.0, via: str = "auto",
     return text, ctype, reply.channel
 
 
+def _remote_channel_state(server_fetch) -> str:
+    """把「远端通道为何没取到」分成三档：未配置 / 配置有误 / 已配置但未取到。"""
+    try:
+        cfg = server_fetch.load_config()
+    except server_fetch.ServerFetchError:
+        return "配置有误"
+    return "未配置" if cfg is None else "已配置但未取到"
+
+
 def _via_server(url: str, timeout: float, why: str) -> tuple[str, str, str]:
     """走远端服务器再取一次；取不到就抛 `FetchError`，把两段原因都带上。
 
@@ -581,7 +595,10 @@ def _via_server(url: str, timeout: float, why: str) -> tuple[str, str, str]:
     try:
         text, kind, channel = server_fetch.fetch(url, timeout)
     except server_fetch.ServerFetchError as exc:
-        raise FetchError(f"{why}，本机有远端通道但没取到：{exc}") from exc
+        # 不许把「没配」说成「取不到」：容器复位会抹掉 .workbuddy/remote_fetch.json
+        # （它在 gitignore 里），此时通道根本没存在过，日志得能看出是哪一种。
+        why_not = _remote_channel_state(server_fetch)
+        raise FetchError(f"{why}；远端通道{why_not}：{exc}") from exc
     ctype = "text/html" if kind == "html" else "text/markdown; server"
     return text, ctype, f"{channel}（本机{why}）"
 

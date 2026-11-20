@@ -160,7 +160,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **本节管**顺序与每步完成判据；**不管**规则本身（细则查第二节）。标「阻塞」的步骤未完成不得进下一步。
 
 ### 1. 抓取
-`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。403/429 且配好远端通道时自动经服务器取页（原页→阅读器），正文标注来源。**粘贴全文**走 `--from-file <文件> --slug <名>`：同样落盘开账，键 `paste://<名>`，关账与报告都用它。arXiv `abs` 页只算摘要：有 HTML 先读 HTML，没有再读 PDF；只有摘要时清单标「摘要级」，正文不写摘要读数。只给主题词时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，词块须在正文出现）。
+`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。403/429、以及本机整条出网断掉（代理隧道失败 / 直连不可达）时，都自动经远端服务器再取一次（原页→阅读器），正文标注来源；远端没配时报「未配置」、配了没取到报「已配置但未取到」，不混说。**粘贴全文**走 `--from-file <文件> --slug <名>`：同样落盘开账，键 `paste://<名>`，关账与报告都用它。arXiv `abs` 页只算摘要：有 HTML 先读 HTML，没有再读 PDF；只有摘要时清单标「摘要级」，正文不写摘要读数。只给主题词时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，词块须在正文出现）。
 
 ### 2. 验证
 专业术语须真搜索标准名称与定义：**环境搜索优先，不可用时用 `search_web.py` 兜底**；留痕 verify.json 写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。检索无果见 H29。
