@@ -136,6 +136,7 @@ flomo-note/
 | `covers.py` | 「脚本有没有用例」的唯一解析：读用例里的 `COVERS` 声明。闸门（`check_skill_docs`）与控制台 `has_test` 列共用这一份——两处各写一份会出现「闸门说有覆盖、页面说没有」这种相反结论 |
 | `check_skill_docs.py` | 内容纪律自检（日期 / 叙事）+ 五项跨文件结构检查（README 清单、用例命名、交叉引用、命令行选项、脚本-用例覆盖声明） |
 | `check_version.py` | 版本号三处一致的唯一校验：`pyproject.toml` 的 `[project].version`、`CHANGELOG.md` 首条、git 标签 `vX.Y.Z`。静态三条（版本形态、首条相等、条目不重复且新在上）随用例跑；`--tag` 追加标签存在性、可达性与版本倒挂，**只在发版时用**——CI 是浅检出（fetch-depth 1），检出里没有标签，把它塞进 CI 只会得到一条假红 |
+| `skill_sync.py` | 版本自愈：技能目录装在容器可写层，容器重启会把本地 `pull` 的成果连同工作树一起退回镜像里那份浅克隆的旧提交，而旧脚本不会报错、只按旧细则跑。CLI 入口每次开工先做一次「只读检查 + 仅快进」：本地脏或领先就一个字不动，取不到远端只提示不阻塞，900 秒内不重复取网。`--check` 只报落后、`--force` 忽略时间戳 |
 | `run_tests.sh` | 跑 `tests/` 下全部用例与上述自检；CI 与本地共用这一条命令 |
 | `run_ci.sh` | 本地复现 CI 的四个阶段（ruff → 用例 → mypy → pytest+覆盖率），命令与 `ci.yml` 逐条对齐、由 `tests/test_run_ci.py` 挡漂移。缺开发期工具时非 0 退出而非静默少跑一道 |
 | `run_audit.sh` / `audit_skill.sh` | 技能文档结构审计（`run_audit.sh` 包好环境，勿手搓后者） |

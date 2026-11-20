@@ -10,8 +10,11 @@
 顺手写成 `from flomo_client import Opt`，耦合就长回来，且同样不报错。故把四条约束
 做成用例，让「退回去」变成红的：
 
-  1. **叶子层**：`cli_util.py` 不 import 任何项目内模块（能只靠标准库回答的事，
-     就不该把别人拖进来）。
+  1. **叶子层（一处例外）**：`cli_util.py` 的模块级依赖只有标准库；唯一获准的项目内
+     依赖是 `skill_sync`，且必须**函数内惰性导入**。理由：每个脚本开跑前都要确认
+     自己在当前版本上（容器重启会把技能目录退回镜像里的旧提交），而入口只有一个；
+     放宽成「随便 import」就退回原来那种没人看得见的耦合，故把例外收窄成一条可核的
+     形状——模块级没有它、函数里才出现、且 `skill_sync` 自己只依赖标准库。
   2. **无环**：项目内 import 图不得成环。环一出现，两个模块就没法单独改、单独测。
   3. **借道云端必须真用云端**：import 了 `flomo_client` 的模块，必须用到它**独有的**
      API（名单由两个模块的顶层定义相减得出，不手抄）。只借 `Opt`/`cli_entry` 这类
@@ -92,13 +95,43 @@ def _defined_names(tree):
     return names
 
 
+LEAF_ALLOWANCE = "skill_sync"
+
+
+def _module_level_imports(tree):
+    """只看模块顶层的 import：函数体里的惰性导入不算「模块级依赖」。"""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
 def run_leaf_layer():
-    """1) cli_util 是叶子：不 import 任何项目内模块。"""
+    """1) cli_util 是叶子：模块级不 import 任何项目内模块，函数级只许 skill_sync 一个。"""
     known = _modules()
     tree = _tree(known["cli_util"])
-    imports = _local_imports(tree, known)
-    check("cli_util.py 不 import 任何项目内模块", not imports,
-          "；".join(f"{m}->{n}" for m, n, _ in imports))
+    top = _module_level_imports(tree) & set(known)
+    check("cli_util.py 模块级不 import 任何项目内模块", not top,
+          "；".join(sorted(top)))
+
+    lazy = [n for m, n, _node in _local_imports(tree, known) if m == LEAF_ALLOWANCE]
+    stray = [f"{m}->{n}" for m, n, _node in _local_imports(tree, known)
+             if m != LEAF_ALLOWANCE]
+    check(f"cli_util.py 函数内只惰性导入 {LEAF_ALLOWANCE}", not stray,
+          "；".join(stray))
+    check(f"cli_util.py 确实在函数里用了 {LEAF_ALLOWANCE}（否则例外名存实亡）",
+          bool(lazy), "未导入")
+
+    src = known[LEAF_ALLOWANCE].read_text(encoding="utf-8")
+    third_party = sorted(_module_level_imports(_tree(known[LEAF_ALLOWANCE])) & set(known))
+    check(f"{LEAF_ALLOWANCE}.py 只依赖标准库（不反向拖人）", not third_party,
+          "；".join(third_party))
+    check(f"{LEAF_ALLOWANCE}.py 不出现云端通道的符号",
+          "FlomoClient" not in src and "load_token" not in src)
 
     # 它的用途就是「纯本地脚本不必牵出云端」：自己反过来不能依赖任何人
     src = known["cli_util"].read_text(encoding="utf-8")

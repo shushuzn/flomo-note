@@ -8,6 +8,8 @@ description: Use when the user sends a link, asks to save an article, clip a web
 > **唯一细则源**，须在 20000 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
 >
 > **先读后做**：每轮开工先完整读本文件，禁凭记忆复刻命令。
+>
+> **版本自愈**：技能目录装在容器可写层，容器重启会退回镜像里的旧提交（旧脚本不报错，只是按旧细则跑）。所有 CLI 入口开跑前已自动快进，看到 `[同步] …已快进` 属正常，不必再手工 `pull`；若提示取不到远端，按它给的那条命令补一次再继续。
 
 ## 一、根本纪律（三条）
 

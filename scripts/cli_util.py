@@ -14,9 +14,17 @@
 一样的漏（末尾选项被报成「未知参数」、同一选项给两次静默取后者）；`UsageError` 的
 分流也会散落进每个 `main`。故收成一份，各脚本只写自己的 `Opt(...)` 声明表。
 """
+import os
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, TypeVar
+
+# 本文件所在目录进 sys.path：`_ensure_fresh` 要惰性导入 `skill_sync`（同目录兄弟）。
+# 各脚本自己也会插一遍，这里再插是为了让「直接 import cli_util」的调用方同样能用。
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
 _NumT = TypeVar("_NumT", int, float)
 
@@ -169,9 +177,39 @@ def parse_options(argv: Sequence[str], spec: Sequence[Opt], *,
     return values, positionals
 
 
+def _ensure_fresh() -> None:
+    """入口自愈：跑任何脚本前，先确认本地代码是当前版本（`skill_sync`）。
+
+    为什么放在入口而不是各脚本里：技能目录装在容器的可写层，容器重启就退回镜像里
+    那份旧提交（本地 `pull` 的成果随之丢失），而旧脚本**不会报错**——只是按旧细则
+    跑。二十几个脚本各写一遍必然漏，入口是唯一都会被经过的地方。
+
+    三条自我约束，缺一条就该被这条规则挡下：
+      · **惰性导入**：`skill_sync` 只在真的要用时才 import，`cli_util` 的模块级依赖
+        仍然只有标准库（分层用例核这一条）；
+      · **失败即放过**：同步是辅助动作，取不到远端、目录不是仓库、git 不存在，都
+        只返回、不抛——旧版本能跑完的活不该因为同步失败停住；
+      · **不在用例里跑**：`test_*.py` 与 pytest 进程一律不碰网络（离线用例的前提）。
+    """
+    if os.environ.get("FLOMO_SKIP_SYNC") == "1" or os.environ.get("CI"):
+        return
+    argv0 = os.path.basename(sys.argv[0] or "")
+    if argv0.startswith("test_") or "pytest" in sys.modules:
+        return
+    try:
+        from skill_sync import ensure_current
+    except Exception:  # noqa: BLE001 —— 自愈是辅助动作，导入失败只能放过，不能拦住本轮
+        return
+    try:
+        ensure_current()
+    except Exception:  # noqa: BLE001 —— 同上：取不到远端或 git 缺失都只放过
+        return
+
+
 def cli_entry(main: Callable[[], Any], *,
               errors: tuple[type[BaseException], ...], code: int = 1,
-              prefix: str = "[失败]", usage_code: int = 2) -> Any:
+              prefix: str = "[失败]", usage_code: int = 2,
+              sync: bool = True) -> Any:
     """CLI 入口的统一出口：跑 `main`，把**预期内**的失败转成退出码。
 
     所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是可预期
@@ -184,7 +222,11 @@ def cli_entry(main: Callable[[], Any], *,
     是因为默认值会让这层重新耦合回云端，而耦合一旦免费就没人再想它该不该在；必填的
     另一个好处是漏写会在调用处当场 TypeError，不会退化成运行时的 traceback——那正是
     本函数要消灭的东西。
+
+    `sync=True` 时先做一次版本自愈（见 `_ensure_fresh`）；用例与 CI 里自动跳过。
     """
+    if sync:
+        _ensure_fresh()
     try:
         return main()
     except UsageError as e:
