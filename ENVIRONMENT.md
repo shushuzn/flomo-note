@@ -71,6 +71,32 @@ python scripts/git_tunnel.py --print-hosts
 - 注意：`sed -i` 对 `/etc/hosts` 无效（bind mount 无法重命名），**须用 Python 读→改→整体重写**。
 - 候选段位的可达性会随时段整体波动（常成段一起失效），故不在本文件记录「哪段通」：`ROUTES` 只放当前更可能通的快照，候选全失败时隧道自动回落系统 DNS 兜底。
 
+### 技能副本与镜像基线
+
+技能目录有两份，功能相同、位置不同，判错会静默按旧细则跑：
+
+| 位置 | 性质 | 说明 |
+|---|---|---|
+| `/runtime/user_skills/flomo-note` | 镜像内副本 | 随镜像构建固定，容器重启后回到该提交；可能缺后续脚本 |
+| `/home/user/flomo-note` | 持久副本 | 挂在持久卷上，跨容器重启保留，是规范工作副本 |
+| `~/.doubao/agent_mode/workspace/.user_skills/flomo-note` | 技能入口 | 指向持久副本的软链，技能加载走这条 |
+
+```bash
+python3 scripts/baseline_check.py          # 打印副本路径、HEAD、判定
+python3 scripts/baseline_check.py --json   # 供脚本读取
+```
+
+判定四态：`ok`（持久副本且与本地上游引用同提交）、`behind`（落后于上游引用）、`overlay`（跑的是镜像内副本）、`no-git`。除 `ok` 外退出码非 0，写云前必须先修副本。
+
+恢复持久副本（入口软链被重置或副本损坏时）：
+
+```bash
+cp -a /runtime/user_skills/flomo-note /home/user/flomo-note
+ln -sfn /home/user/flomo-note ~/.doubao/agent_mode/workspace/.user_skills/flomo-note
+```
+
+镜像基线本身（`/runtime` 那层）由平台构建产出，仓内改动无法回写——仓内只能保证「持久副本永远是最新的」，镜像层重建需平台侧重新打包该技能目录。
+
 ### 推送方式选择
 
 按稳定性排序，逐级尝试：
