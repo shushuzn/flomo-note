@@ -38,12 +38,13 @@ import round_ledger  # noqa: E402
 import verify_card  # noqa: E402
 
 # 明细行：`概念名：id，标签，实测 N 字`
-# 标签允许一个或多个 `#顶层/二级`，以空格分隔；全角逗号与半角都收。
+# 标签允许一个或多个 `顶层/二级`，以空格分隔；`#` 可带可不带（SKILL 第四节的示例不带），
+# 全角逗号与半角都收。
 # 概念名本身可能含全角冒号（如 `Dots：OpenAI 常驻型个人智能体`），
 # 故名字段按贪婪匹配、由右侧的 id 反向定位最后一个冒号；不能用 [^：] 排除冒号。
 DETAIL = re.compile(
     r"^(?P<name>[^\n]{1,80})：\s*(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
-    r"(?P<tags>#[^\s，,]+(?:[ 　]#[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
+    r"(?P<tags>#?[^\s，,]+(?:[ 　]#?[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
 )
 
 # 分段标题：整行只有「新建」或「更新」（可带冒号）。必须整行匹配——
@@ -236,11 +237,12 @@ def main(argv=None) -> int:
         if row_m["name"].strip() != second:
             errors.append(f"{rid} 概念名不符：报告「{row_m['name']}」/ 云端「{second}」")
             ok = False
-        got_tags = set(re.findall(r"#[^\s]+", row_m["tags"]))
-        if got_tags != want_tags:
+        got_tags = {t.lstrip("#") for t in re.findall(r"#?[^\s]+", row_m["tags"])}
+        if got_tags != {t.lstrip("#") for t in want_tags}:
             errors.append(f"{rid} 标签不符：报告 {sorted(got_tags)} / 云端 {sorted(want_tags)}")
             ok = False
-        elif row_m["tags"].split() != first.split():
+        elif [t.lstrip("#") for t in row_m["tags"].split()] != \
+                [t.lstrip("#") for t in first.split()]:
             notes.append(f"{rid} 标签一致但书写顺序与云端不同")
         if int(row_m["n"]) != int(want_n or -1):
             errors.append(f"{rid} 字数不符：报告 {row_m['n']} / 云端实测 {want_n}")
