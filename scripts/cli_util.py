@@ -188,7 +188,8 @@ def _ensure_fresh() -> None:
       · **惰性导入**：`skill_sync` 只在真的要用时才 import，`cli_util` 的模块级依赖
         仍然只有标准库（分层用例核这一条）；
       · **失败即放过**：同步是辅助动作，取不到远端、目录不是仓库、git 不存在，都
-        只返回、不抛——旧版本能跑完的活不该因为同步失败停住；
+        只返回、不抛——只读命令该跑完；写云的拦截由 `cli_entry(write=True)` 另做，
+        因为「旧版跑只读」与「旧版写云」的代价不是一回事；
       · **不在用例里跑**：`test_*.py` 与 pytest 进程一律不碰网络（离线用例的前提）。
     """
     if os.environ.get("FLOMO_SKIP_SYNC") == "1" or os.environ.get("CI"):
@@ -209,7 +210,7 @@ def _ensure_fresh() -> None:
 def cli_entry(main: Callable[[], Any], *,
               errors: tuple[type[BaseException], ...], code: int = 1,
               prefix: str = "[失败]", usage_code: int = 2,
-              sync: bool = True) -> Any:
+              sync: bool = True, write: bool = False) -> Any:
     """CLI 入口的统一出口：跑 `main`，把**预期内**的失败转成退出码。
 
     所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是可预期
@@ -224,9 +225,22 @@ def cli_entry(main: Callable[[], Any], *,
     本函数要消灭的东西。
 
     `sync=True` 时先做一次版本自愈（见 `_ensure_fresh`）；用例与 CI 里自动跳过。
+
+    `write=True` 是给**会落云端账**的命令用的（`publish` / `exit_confirm` / `retire`）：
+    版本没确认（取不到远端、快进失败、本地脏、本地领先）就拒绝执行并退出 8，不再往下跑。
+    只读命令不传它——旧版跑只读还能靠人复核，旧版写云只在事后人工回滚。
     """
     if sync:
         _ensure_fresh()
+    if write:
+        try:
+            from skill_sync import write_guard
+        except Exception:  # noqa: BLE001 —— 取不到实现时不额外拦，主流程照旧
+            write_guard = None  # type: ignore[assignment]
+        if write_guard is not None:
+            blocked = write_guard()
+            if blocked:
+                return blocked
     try:
         return main()
     except UsageError as e:

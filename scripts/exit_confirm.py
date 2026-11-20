@@ -79,6 +79,11 @@ def _nearby_runs(page_text: str, term: str, limit: int = 3) -> list[str]:
 
 
 def main():
+    # 关账同样是写云端账的动作：版本没确认就停住，别把旧判据写进账本（退出码 8）。
+    from skill_sync import write_guard
+    blocked = write_guard()
+    if blocked:
+        return blocked
     ap = argparse.ArgumentParser()
     ap.add_argument("--objects", default="", help="逗号分隔的对象清单（退出模式必填）")
     ap.add_argument("--url", required=True,

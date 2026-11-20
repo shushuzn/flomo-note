@@ -171,4 +171,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(cli_entry(main, errors=(FlomoError,), prefix="[失败] 退场未能完成：", usage_code=2))
+    sys.exit(cli_entry(main, errors=(FlomoError,), prefix="[失败] 退场未能完成：", usage_code=2, write=True))

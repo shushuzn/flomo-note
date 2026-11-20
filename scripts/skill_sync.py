@@ -13,7 +13,9 @@
 
   · 只快进，不重置：本地有未提交改动就跳过（不覆盖正在改的文件）；
   · 本地有未推送提交就跳过（不吞掉提交，也不替你 push）；
-  · 取不到远端（离线、TLS、限流）只提示、不阻塞——旧版本能跑完的活不该因为同步失败停住；
+  · 取不到远端（离线、TLS、限流）只提示、不阻塞——**只读命令**照跑；写云命令另走
+    `write_guard`，版本没确认就拒写：只读跑旧版最多多一步补救，写云跑旧版是把错格式
+    直接落到云端账上，两种代价不能同一条规矩；
   · 同一进程会话内至多做一次网络往返（落 `.git/flomo_skill_sync` 时间戳，默认 900 秒）。
   · 取的不是最新那一跳而是整段缺失历史：浅克隆里 `fetch --depth=1` 只拿一个孤立提交，
     祖先关系因此不成立，`merge --ff-only` 会报「unrelated histories」——这条实测过。
@@ -32,6 +34,12 @@ from pathlib import Path
 STAMP_NAME = "flomo_skill_sync"
 DEFAULT_TTL = 900
 DEFAULT_TIMEOUT = 25
+# 这些状态说明「本地代码就是远端当前那一版」：读过远端且没有落后、就是最新、或
+# 同一容器内刚确认过。其余状态（offline / stuck / dirty / ahead）都意味着**没确认**，
+# 写云命令必须停下来（见 `write_guard`）。
+VERIFIED = frozenset({"current", "updated", "skip"})
+WRITE_BLOCKED = "8"
+WRITE_BYPASS_ENV = "FLOMO_ALLOW_STALE_WRITE"
 
 
 def repo_root(start: str | Path | None = None) -> Path | None:
@@ -125,7 +133,8 @@ def ensure_current(start: str | Path | None = None, *,
         _touch(stamp, "offline", local)
         if not quiet:
             first = out.splitlines()[0] if out else "未知原因"
-            print(f"[同步] 取不到远端，按本地版本继续（{first}）；需要时手工跑 "
+            print(f"[同步] 取不到远端，按本地版本继续（{first}）；只读命令不受影响，写云会拒写"
+                  f"（{WRITE_BYPASS_ENV}=1 可放行）；需要时手工跑 "
                   f"`git -C {root} pull --ff-only origin master`", file=sys.stderr)
         return "offline"
 
@@ -165,6 +174,34 @@ def ensure_current(start: str | Path | None = None, *,
         print(f"[同步] 环境退回旧提交，已快进 {local[:7]} → {remote[:7]}（落后 {behind} 个提交）",
               file=sys.stderr)
     return "updated"
+
+
+def write_guard(start: str | Path | None = None, *, quiet: bool = False) -> int:
+    """写云类命令的版本闸门：`0` 可写，`8` 版本未确认、拒写。
+
+    为什么只拦写云：容器复位后目录退回镜像里的旧提交，旧脚本不报错、只是按旧细则跑。
+    读命令照着旧版跑，最坏是多一步补救；写云照着旧版跑，是把错格式、旧闸门直接落到
+    云端账上（`lost_points` 被旧判据放过、标签层级写错、报告结构写错），事后只能人工
+    回滚。故取不到远端、快进失败、本地脏、本地领先这四种「没确认」状态下，写云停住；
+    只读照旧放行。
+
+    `no-repo` 不拦：不是仓库就没有「退回旧提交」这条路，拦下来只会让非 git 安装方式
+    彻底不能写卡。逃生口 `FLOMO_ALLOW_STALE_WRITE=1` 保留给人明确自担风险的场合。
+    """
+    if os.environ.get(WRITE_BYPASS_ENV) == "1":
+        if not quiet:
+            print(f"[提示] 已跳过版本闸门（{WRITE_BYPASS_ENV}=1），本轮按本地版本写云",
+                  file=sys.stderr)
+        return 0
+    status = ensure_current(start)
+    if status in VERIFIED or status == "no-repo":
+        return 0
+    if not quiet:
+        print(f"[阻塞] 版本未确认（{status}）：本轮代码可能不是当前那一版，写云命令拒绝执行\n"
+              f"  确认当前版本：python3 scripts/skill_sync.py --force --check\n"
+              f"  取不到远端时先修网络再重试；确需按本地版本写，设 {WRITE_BYPASS_ENV}=1 自担风险",
+              file=sys.stderr)
+    return int(WRITE_BLOCKED)
 
 
 def main(argv: list[str] | None = None) -> int:

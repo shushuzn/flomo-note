@@ -167,6 +167,66 @@ def test_offline_does_not_block(tmp):
     status, _o, err = run(work, ttl=0)
     check("取不到远端：状态 offline 且不抛", status == "offline", status)
     check("取不到远端：给出可照抄的补救命令", "pull --ff-only origin master" in err, err)
+    check("取不到远端：提示里点明写云会拒写", "写云会拒写" in err, err)
+
+
+def test_write_guard_blocks_unverified(tmp):
+    """写云闸门：版本没确认就拒写（退出码 8），确认过的放行。
+
+    只读照跑、写云停住，是这次修的重点——旧版跑只读还能靠人复核，旧版写云只在事后
+    人工回滚，两种代价不能同一条规矩。
+    """
+    _src, _bare, work = build(tmp)
+    fresh_env(tmp)
+    code_ok = SS.write_guard(work, quiet=True)
+    check("仓库是最新：写云放行（0）", code_ok == 0, code_ok)
+
+    git(work, "remote", "set-url", "origin", (tmp / "no-such-repo").as_uri())
+    stamp = fresh_env(tmp)
+    stamp.unlink(missing_ok=True)  # 时间戳一过期就跳过取远端，这里要连「跳过」一起排除
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = SS.write_guard(work)
+    check("取不到远端：写云拒写（8）", code == 8, code)
+    check("拒写时给出可照抄的确认命令", "--force --check" in err.getvalue(), err.getvalue())
+    check("拒写时点名逃生口", SS.WRITE_BYPASS_ENV in err.getvalue(), err.getvalue())
+
+    os.environ[SS.WRITE_BYPASS_ENV] = "1"
+    try:
+        code = SS.write_guard(work, quiet=True)
+        check("逃生口打开：写云放行", code == 0, code)
+    finally:
+        os.environ.pop(SS.WRITE_BYPASS_ENV, None)
+
+
+def test_cli_entry_write_blocks(tmp):
+    """`cli_entry(write=True)` 在版本未确认时直接返回 8，且不跑 main。"""
+    from cli_util import cli_entry
+    real = SS.ensure_current
+    ran = []
+    try:
+        SS.ensure_current = lambda *a, **k: "offline"
+        old = sys.argv[0]
+        sys.argv[0] = "publish.py"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = cli_entry(lambda: ran.append(1) or 0, errors=(), write=True)
+        check("写云入口在 offline 下返回 8", code == 8, code)
+        check("写云入口在 offline 下没跑 main", not ran, ran)
+        check("写云入口打了一行阻塞说明", "[阻塞] 版本未确认" in err.getvalue(), err.getvalue())
+
+        SS.ensure_current = lambda *a, **k: "current"
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = cli_entry(lambda: ran.append(2) or 0, errors=(), write=True)
+        check("版本确认后写云入口正常跑 main", code == 0 and ran == [2], (code, ran))
+
+        SS.ensure_current = lambda *a, **k: "offline"
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = cli_entry(lambda: ran.append(3) or 0, errors=())
+        check("只读入口在 offline 下照跑", code == 0 and 3 in ran, (code, ran))
+    finally:
+        SS.ensure_current = real
+        sys.argv[0] = old
 
 
 def test_stamp_ttl_skips_network(tmp):
@@ -206,7 +266,8 @@ def test_cli_entry_skips_in_tests(_tmp):
 def main():
     tests = [test_not_a_repo, test_behind_fast_forwards, test_shallow_depth_one_is_not_enough,
              test_dirty_is_left_alone, test_ahead_is_not_reset, test_up_to_date_is_silent,
-             test_offline_does_not_block, test_stamp_ttl_skips_network,
+             test_offline_does_not_block, test_write_guard_blocks_unverified,
+             test_cli_entry_write_blocks, test_stamp_ttl_skips_network,
              test_dry_run_only_reports, test_cli_entry_skips_in_tests]
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
