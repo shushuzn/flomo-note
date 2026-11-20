@@ -294,6 +294,34 @@ def main(argv=None) -> int:
                     f"这些{kind}卡的数据行没写在本段里：{'、'.join(misfiled)}"
                     f"——一句话在本段、明细行却在别段，按段读就成了另一类卡")
 
+    # ---- 3b. 每张卡成组：一句话之后**紧接**该卡数据行 ----
+    # 第四节要求「概念名 + 一句读者能懂的话，紧接该卡数据行」。此前只校验
+    # 「明细行落在哪一段」，各段把一句话列成一坨、数据行统一收在末尾也能全过——
+    # 那种排版读起来正好相反：先看五句介绍，再对着五行 id 去找谁是谁。
+    lines_all = text.split("\n")
+    for row in detail_rows:
+        ln = row_ln.get(row["id"])
+        if ln is None:
+            continue
+        prev = None
+        for i in range(ln - 1, -1, -1):
+            if lines_all[i].strip():
+                prev = lines_all[i].strip()
+                break
+        bm = BULLET.match(prev or "")
+        if not bm:
+            errors.append(
+                f"「{row['name']}」的数据行前面不是它自己那句话——"
+                "每张卡必须成组：一句话紧接该卡数据行")
+            continue
+        body = bm.group("body").strip()
+        sep = "：" if "：" in body else ":"
+        head, found, _tail = body.rpartition(sep)
+        if not found or head.strip() != row["name"].strip():
+            errors.append(
+                f"「{row['name']}」的数据行跟在了另一张卡的话后面"
+                f"（前面一句是「{body[:20]}」）")
+
     # ---- 4. 说明段长度 ----
     limit = _prose_limit(max(1, len(ids)))
     if plen > limit:

@@ -122,12 +122,36 @@ def _run_all() -> int:
         "建了 2 张卡。\n\n"
         "新建：\n"
         "- 蓝图（Blueprints）：引擎里搭逻辑的节点图，这轮记它与 Verse 的分工。\n"
-        "- Verse：新语言，这轮记它的类型系统与场景图接法。\n\n"
         "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "- Verse：新语言，这轮记它的类型系统与场景图接法。\n"
         "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
     )
     rc = _run(good)
     check("明细齐全且对账一致时放行", rc == 0, f"退出码 {rc}")
+
+    # 2a. 一句话列成一坨、数据行统一收在末尾 → 必须拦（第四节要的是逐卡成组）
+    stacked = (
+        "建了 2 张卡。\n\n"
+        "新建：\n"
+        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
+        "- Verse：新语言，记它的类型系统。\n\n"
+        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
+    )
+    rc = _run(stacked)
+    check("一句话堆在前、数据行收在末尾被拦", rc == 1, f"退出码 {rc}")
+
+    # 2c. 数据行跟在另一张卡的话后面 → 必须拦（成组连错对象）
+    swapped = (
+        "建了 2 张卡。\n\n"
+        "新建：\n"
+        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
+        "- Verse：新语言，记它的类型系统。\n"
+        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
+    )
+    rc = _run(swapped)
+    check("数据行接在别张卡的话后面被拦", rc == 1, f"退出码 {rc}")
 
     # 2d. 执行侧步骤不外发（H6g）：把对象清单抖进报告 → 必须拦
     _prepare(list(CARDS)[:2])
@@ -207,11 +231,11 @@ def _run_all() -> int:
         "建了 3 张卡，更新 1 张。\n\n"
         "新建：\n"
         "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
-        "- Verse：新语言，记它的类型系统。\n\n"
-        "更新：\n"
-        "- 场景图：补了新的渲染管线，删掉旧的两行。\n\n"
         "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
-        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字\n"
+        "- Verse：新语言，记它的类型系统。\n"
+        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字\n\n"
+        "更新：\n"
+        "- 场景图：补了新的渲染管线，删掉旧的两行。\n"
         "场景图：MjY0MTIzNTQw，#产业/游戏，实测 512 字"
     )
     rc = _run(mixed)
