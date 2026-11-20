@@ -744,6 +744,31 @@ def check_skill_anchors(root: Path) -> list[str]:
     return errs
 
 
+def check_load_gate(root: Path) -> list[str]:
+    """第七层：加载条款——「先读后做」必须写进文件头部，且可被检查拦住。
+
+    事故形态：技能细则早已改过（第四节换成逐卡成组、闸门新增开关），执行侧却
+    按记忆里的旧版跑，命令语法与报告格式全错，而文档自检 0 错 0 警——因为
+    「文档里的规则」和「实际照哪一版执行」之间没有任何判据。这条把「开工先整份
+    读本文件」写死在头部前 40 行，删掉即报错，压长度时也不会静默消失。
+    """
+    p = root / "SKILL.md"
+    if not p.is_file():
+        return []
+    # 同 check_skill_anchors：只有本仓库（SKILL.md 与 AGENTS.md 同目录）才有这条义务
+    if not (root / "AGENTS.md").is_file():
+        return []
+    head_lines = p.read_text(encoding="utf-8", errors="replace").split("\n")[:40]
+    head = "\n".join(head_lines)
+    if "先读后做" not in head:
+        return ["SKILL.md: 头部 40 行内缺「先读后做」加载条款——不写它，执行侧可以"
+                "凭记忆跑旧版命令与旧版报告格式，文档自检照样全绿"]
+    if "完整读" not in head:
+        return ["SKILL.md: 加载条款缺「完整读」——只读片段等于没加载，细则中段"
+                "（第四节格式、闸门开关）正是漏得最多的部分"]
+    return []
+
+
 def _anchor_misses(label, tokens, statement, text, scoped=False):
     """`text` 是判「还在不在」的射程：条目按全篇、流程步骤按该步正文（`scoped`）。"""
     out = []
@@ -803,6 +828,8 @@ def main(argv=None):
     errs += check_skill_size(root)
     # 第六层：记号——压长度时最先掉的不是句子而是脚本名 / 选项名，全文照样通顺
     errs += check_skill_anchors(root)
+    # 第七层：加载条款——文档写对了不等于照它执行，头部必须明写「先读后做」
+    errs += check_load_gate(root)
 
     if not args.quiet:
         for m in dict.fromkeys(exempts):

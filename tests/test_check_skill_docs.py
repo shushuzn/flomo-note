@@ -701,6 +701,52 @@ def run_anchor_case():
     return ok
 
 
+def run_load_gate_case():
+    """加载条款：头部「先读后做」被删 / 被压掉，必须报错。
+
+    这条守卫针对的事故不是「文档写错」，而是「文档对了但没人照它跑」：
+    细则改了、执行侧仍按记忆跑旧版，格式与命令全错而自检全绿。夹具取真实
+    SKILL.md 副本，并断言变异真的生效，避免目标句将来被改写后用例变空操作。
+    """
+    ok = True
+    src = (HERE.parent / "SKILL.md").read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        skill = root / "SKILL.md"
+        (root / "AGENTS.md").write_text("# 维护约定\n", encoding="utf-8")
+        skill.write_text(src, encoding="utf-8")
+
+        base = CD.check_load_gate(root)
+        ok &= base == []
+        print(f"{'PASS' if not base else 'FAIL'}  本仓库 SKILL.md 头部有加载条款")
+        for m in base:
+            print("      ERR :", m)
+
+        assert "先读后做" in src, "加载条款已改写，本用例失效"
+        mut = src.replace("先读后做", "先做后读")
+        assert mut != src, "变异未生效"
+        skill.write_text(mut, encoding="utf-8")
+        errs = CD.check_load_gate(root)
+        hit = any("先读后做" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  删掉「先读后做」条款被判错")
+        for m in errs:
+            print("      ERR :", m)
+
+        # 只写「读」不写「完整读」：读片段照样漏第四节格式与闸门开关
+        assert "完整读" in src, "加载条款已改写，本用例失效"
+        skill.write_text(src.replace("完整读", "读"), encoding="utf-8")
+        errs = CD.check_load_gate(root)
+        hit = any("完整读" in m for m in errs)
+        ok &= hit
+        print(f"{'PASS' if hit else 'FAIL'}  加载条款退化成「读」被判错")
+
+        # 外部目录（无 AGENTS.md）不适用本仓库义务，不得误报
+        (root / "AGENTS.md").unlink()
+        ok &= CD.check_load_gate(root) == []
+    return ok
+
+
 if __name__ == "__main__":
     results = [run_case(*c) for c in CASES]  # 不用 all() 短路，需跑完全部用例
     results.append(run_real_tree_case())
@@ -712,6 +758,7 @@ if __name__ == "__main__":
     results.append(run_coverage_case())
     results.append(run_size_case())
     results.append(run_anchor_case())
+    results.append(run_load_gate_case())
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
     sys.exit(0 if all(results) else 1)

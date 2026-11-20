@@ -5,12 +5,14 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 # flomo 卡片笔记（云端）
 
-> **唯一细则源**，须在 10000 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
+> **唯一细则源**，须在 10800 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
+>
+> **先读后做**：每轮开工先完整读本文件，禁凭记忆复刻命令。
 
 ## 一、根本纪律（三条）
 
 1. **只读直接做，写云免确认**。只读工具无需请示；`memo_create` / `memo_update` / `tag_rename` 在自检 EXIT=0 后直接写，不展示等批。标签建议也当轮做完再报。唯一例外是两卡互不覆盖、同为顶层对象的多义合并——才问方向；其余合并当轮做（H9）。
-   - 禁凭判断跳过写卡：抓取成功且能提炼出事实、数据或观点就必须写；仅抓取彻底失败且无替代来源才可跳过并说明。
+   - 禁凭判断跳过写卡：能提炼事实、数据或观点就必须写；仅彻底失败且无替代来源才可跳过并说明。
    - 材料是事件报道、财报、通告、观点文时，把其中的概念提出来当卡的主体（H6c），不判「这不是概念」退回。
    - 禁把执行者该做的推回用户：粒度、拆分、格式自己定。复盘中认定可建的新卡，查重后直接建。
 2. **来源实实在在**。带来源的卡，URL 必须真抓且读回正文逐条对照才能落笔；摘要、记忆、按域名推演不算。取材阶段抓不到且无外链可追才禁写云，卡内已有口径不因检索无果删（H29）。
@@ -22,7 +24,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **本节管** H1–H24 的全部硬限；**不管**顺序（第三节）、格式（第四节）、参考与文档治理（第五节）。
 
-定位：读卡 H1/H2；调工具 H3–H6；概念名 H6b/H6d；材料非概念 H6c；同名 H6e；拆卡 H7；同事件 H8–H11；正文写什么 H12/H13；格式 H14–H16；标签 H17/H18；图片 H19；改卡 H20–H24。
+定位：读卡 H1/H2；调工具 H3–H6；概念名 H6b/H6d；材料 H6c；同名 H6e；拆卡 H7；同事件 H8–H11；正文写什么 H12/H13；格式 H14–H16；标签 H17/H18；图片 H19；改卡 H20–H24。
 
 ### A. 读写工具与概念定义
 
@@ -30,7 +32,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 **H2 · 字数只认实测。** 取全文长度或 `word_count`，禁按截断内容估算，无实测写「未实测」。
 
-**H3 · flomo 调用一律走脚本、逐次调用。** `python scripts/flomo_client.py <tool> --file <json>`；每个关键词单独调用并读该次原始返回，禁塞进临时脚本或循环合并成一份结果。查重走 `dedup.py`、标签走 `tagcheck.py`，每次返回独立成块；列表回包加 `--brief`，不写内联解析。
+**H3 · flomo 调用一律走脚本、逐次调用。** `python scripts/flomo_client.py <tool> --file <json>`；每个关键词单独调用并读该次原始返回，禁塞进临时脚本或循环合并。查重走 `dedup.py`、标签走 `tagcheck.py`，每次返回独立成块；列表回包加 `--brief`，不写内联解析。
 
 **H4 · 返回值是包裹结构。** 数据在 `structuredContent`（或解析 `content[].text`）；直接取 `result["memos"]` 永远取不到，会造成「查重通过、其实没查到」。查重结论以程序解析为准，不靠肉眼扫打印。
 
@@ -142,7 +144,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **本节管**顺序与每步完成判据；**不管**规则本身（细则查第二节）。标「阻塞」的步骤未完成不得进下一步。
 
 ### 1. 抓取
-`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。403/429 且配好远端通道时自动经服务器取页（原页→阅读器），正文标注来源。**粘贴全文**（直接给正文、无链接）走 `--from-file <文件> --slug <名>`：同样落盘开账，键 `paste://<名>`，关账与报告都用它。arXiv `abs` 页只算摘要：有 HTML 先读 HTML，没有再读 PDF；只有摘要时对象清单标「摘要级」，正文不写摘要外读数。只给主题词时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，词块须在正文出现）。
+`python scripts/fetch_article.py <url>`，抓完读回全文；抓到即开账，同批多链接加 `--batch`。403/429 且配好远端通道时自动经服务器取页（原页→阅读器），正文标注来源。**粘贴全文**走 `--from-file <文件> --slug <名>`：同样落盘开账，键 `paste://<名>`，关账与报告都用它。arXiv `abs` 页只算摘要：有 HTML 先读 HTML，没有再读 PDF；只有摘要时清单标「摘要级」，正文不写摘要读数。只给主题词时禁索要链接：`python scripts/source_hunt.py "<词>"` 自行检索取源（逐条真抓，词块须在正文出现）。
 
 ### 2. 验证
 专业术语须真搜索标准名称与定义：**环境搜索优先，不可用时用 `search_web.py` 兜底**；留痕 verify.json 写进正文；非术语卡用 `--skip-web --skip-reason "理由"`。检索无果见 H29。
