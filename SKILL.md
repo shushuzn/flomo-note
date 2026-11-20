@@ -5,7 +5,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 # flomo 卡片笔记（云端）
 
-> **唯一细则源**，须在 10800 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
+> **唯一细则源**，须在 20000 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
 >
 > **先读后做**：每轮开工先完整读本文件，禁凭记忆复刻命令。
 
