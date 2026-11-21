@@ -200,11 +200,26 @@ def _run_all() -> int:
     rc = _run(extra)
     check("混入非本轮 id 被拦", rc == 1, f"退出码 {rc}")
 
-    # 7. 说明段超限（2 张卡上限 360 字）→ 必须拦
-    long_prose = "字" * 361
+    # 7. 说明段超限（2 张卡上限 150 字）→ 必须拦
+    long_prose = "字" * 151
     rc = _run(long_prose + "\n\n新建：\n- 蓝图（Blueprints）：一句话。\n- Verse：一句话。\n\n"
               + good.split("\n\n")[-1])
     check("说明段超字数上限被拦", rc == 1, f"退出码 {rc}")
+
+    # 7b. 逐卡那句话超过 40 字 → 必须拦（报告不许复述卡片内容）
+    _prepare(list(CARDS)[:2])
+    fat_line = "这" * 41
+    rc = _run(good.replace("引擎里搭逻辑的节点图，这轮记它与 Verse 的分工。", fat_line))
+    check("单卡一句话超过 40 字被拦", rc == 1, f"退出码 {rc}")
+
+    # 7c. 明细行之后再追加补充说明 → 必须拦（尾部说明没有边界，会长成流水账）
+    rc = _run(good + "\n\n补充一句：这两张卡都跟同一篇报道有关。")
+    check("明细行后的补充说明被拦", rc == 1, f"退出码 {rc}")
+
+    # 7d. 一行「异常：…」是合法收尾 → 放行
+    _prepare(list(CARDS)[:2])
+    rc = _run(good + "\n\n异常：VT 一直没回，按原文放行。")
+    check("一行异常收尾放行", rc == 0, f"退出码 {rc}")
 
     # 8. 退出轮（无卡）：明细为空、只写说明段 → 放行
     _prepare([], outcome="exit")

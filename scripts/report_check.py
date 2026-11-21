@@ -64,9 +64,18 @@ LEAK_WORDS = ("对象清单", "术语核验", "查重命中", "查重结果", "�
               "请你选择", "由你决定", "需要你确认")
 
 
+# 每张卡那句话的上限。报告的作用是让人对上 id，不是替代卡片本身：
+# 一句话超过 40 字就会开始复述卡片内容，读者要么去读卡、要么被这段挤掉注意力。
+SENTENCE_LIMIT = 40
+
+
 def _prose_limit(n: int) -> int:
-    """SKILL 的报告口径：1 张 ≤300 字，每多一张 +60 字。"""
-    return 300 + 60 * max(0, n - 1)
+    """SKILL 的报告口径：1 张 ≤120 字，每多一张 +30 字。
+
+    旧口径是 300 + 60×n，等于允许逐卡写上百字的复述——报告越写越长，
+    真正要对账的 id 与字数被埋掉。收紧到「开头一句 + 逐卡一句」的量。
+    """
+    return 120 + 30 * max(0, n - 1)
 
 
 def _cjk_len(text: str) -> int:
@@ -165,6 +174,14 @@ def main(argv=None) -> int:
                     f"「{current}」段的这一条不是「概念名：一句」的写法：{body[:24]}")
             else:
                 sections[current].append(parts[0].strip())
+                # 一句话的篇幅上限：超了就是在拿报告复述卡片（第四节只许
+                # 「一句读者能懂的话」）。此前没有任何判据，报告逐轮变长。
+                tlen = _cjk_len(parts[1])
+                if tlen > SENTENCE_LIMIT:
+                    errors.append(
+                        f"「{parts[0].strip()}」那句话 {tlen} 字，超过上限 "
+                        f"{SENTENCE_LIMIT} 字——一句话只讲这张卡记了什么，"
+                        f"细节归卡片")
             continue
         if s:
             prose_lines.append(s)
@@ -322,10 +339,31 @@ def main(argv=None) -> int:
                 f"「{row['name']}」的数据行跟在了另一张卡的话后面"
                 f"（前面一句是「{body[:20]}」）")
 
+    # ---- 3c. 明细行之后不再有补充说明 ----
+    # 报告尾部的「另外说明」是最容易无限膨胀的一块：它不受逐卡那句话的长度约束，
+    # 又被算进说明段总长，久而久之整篇变成流水账。只允许一行「异常：」。
+    if detail_rows:
+        tail = [ln.strip() for ln in text.split("\n")[max(row_ln.values()) + 1:]
+                if ln.strip()]
+        prose_tail = [ln for ln in tail
+                      if not SECTION.match(ln) and not DETAIL.match(ln)]
+        extra = [ln for ln in prose_tail if not ln.startswith("异常")]
+        abnormal = [ln for ln in prose_tail if ln.startswith("异常")]
+        if extra:
+            errors.append(
+                f"明细行之后还有补充说明「{extra[0][:20]}」——数据行之后只允许"
+                f"一行「异常：…」，其余内容都归卡片")
+        if len(abnormal) > 1:
+            errors.append("「异常」写了两行以上——异常只写闸门开关与逐条认领，一行说完")
+        for ln in abnormal:
+            if _cjk_len(ln) > SENTENCE_LIMIT:
+                errors.append(
+                    f"「异常」这一行 {_cjk_len(ln)} 字，超过上限 {SENTENCE_LIMIT} 字")
+
     # ---- 4. 说明段长度 ----
     limit = _prose_limit(max(1, len(ids)))
     if plen > limit:
-        errors.append(f"说明段 {plen} 字，超过上限 {limit} 字（1 张 300 字，每多一张 +60）")
+        errors.append(f"说明段 {plen} 字，超过上限 {limit} 字（1 张 120 字，每多一张 +30）")
     if plen == 0:
         errors.append("没有说明段——报告不能只剩明细行")
 
