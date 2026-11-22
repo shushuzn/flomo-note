@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -120,6 +121,7 @@ def main(argv=None) -> int:
     ap.add_argument("--report", help="报告文本文件路径")
     ap.add_argument("--text", help="直接给报告文本（与 --report 二选一）")
     ap.add_argument("--url", required=True, help="本轮素材链接，用于从账本取已建卡 id")
+    ap.add_argument("--emit", help="校验通过后把可原样发出的报告写到该路径，并打印指纹")
     args = ap.parse_args(argv)
 
     if not args.report and not args.text:
@@ -370,6 +372,16 @@ def main(argv=None) -> int:
             print(f"  - {e}", file=sys.stderr)
         print("\n改完再发。逐卡明细必须与账本 id 一一对应，字数从云端回读取。", file=sys.stderr)
         return 1
+
+    if args.emit:
+        # 报告是唯一由人手写再发出去的一段：校验过的文本与真正发出的文本是两份东西，
+        # 中间任何改写（把「概念：一句话」写成「概念是……」、省掉冒号、调换标签顺序）
+        # 都不会被上一轮校验看见。故校验通过后由脚本落一份「可原样发送」的定稿，
+        # 末条回复照抄它，不再手写。
+        out = Path(args.emit)
+        out.write_text(text.rstrip() + "\n", encoding="utf-8")
+        digest = hashlib.sha256(out.read_bytes()).hexdigest()[:12]
+        print(f"[可原样发送] {out}（指纹 {digest}）——末条回复逐字复制，不改写")
 
     print(f"\n[报告校验] 全过：{len(detail_rows)} 条明细对账一致"
           f"（新建 {len(created_ids)} / 更新 {len(updated_ids)}），说明段 {plen}/{limit} 字")

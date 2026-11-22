@@ -96,6 +96,11 @@ def _run(text):
     return report_check.main(["--text", text, "--url", URL])
 
 
+def _run_emit(text, path):
+    import report_check
+    return report_check.main(["--text", text, "--url", URL, "--emit", str(path)])
+
+
 def main() -> int:
     global _LEDGER_ENV
     _LEDGER_ENV = os.environ.get("FLOMO_ROUND_LEDGER")
@@ -289,6 +294,22 @@ def _run_all() -> int:
     # 9e. 只有更新、只写「更新」段 → 放行
     rc = _run(empty_new.replace("新建：\n\n", ""))
     check("只更新时只写更新段即放行", rc == 0, f"退出码 {rc}")
+
+    # 10. 校验通过后落一份定稿：内容与校验文本逐字相同，供末条回复照抄
+    _prepare(list(CARDS)[:2])
+    emit = Path(tempfile.mkdtemp(prefix="rc_emit_")) / "send.txt"
+    rc = _run_emit(good, emit)
+    same = rc == 0 and emit.exists() and emit.read_text(encoding="utf-8").strip() == good
+    check("--emit 落定稿且与校验文本逐字一致", same, f"退出码 {rc}")
+
+    # 10b. 省掉冒号（写成「享界是……」）→ 必须拦：这正是发出文本被改写后的形态
+    rc = _run(good.replace("- 蓝图（Blueprints）：", "- 蓝图（Blueprints）是"))
+    check("省掉概念名后的冒号被拦", rc == 1, f"退出码 {rc}")
+
+    # 10c. 校验不通过时不落定稿：定稿只在全过之后生成
+    emit2 = Path(tempfile.mkdtemp(prefix="rc_emit_")) / "send.txt"
+    rc = _run_emit(good.replace("实测 444 字", "实测 445 字"), emit2)
+    check("校验不过时不留定稿", rc == 1 and not emit2.exists(), f"退出码 {rc}")
 
     print(f"\n{sum(RESULTS)}/{len(RESULTS)} 通过")
     return 0 if all(RESULTS) else 1

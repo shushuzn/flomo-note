@@ -198,7 +198,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ## 四、收尾输出
 
-**报告校验（阻塞）**：`scripts/report_check.py --url <链接> --text "<全文>"` 不过不出稿。它查结构与对账，不查话说得对不对——话得自己写对。
+**报告校验（阻塞）**：`scripts/report_check.py --url <链接> --text "<全文>" --emit _tmp/report_<slug>.send.txt` 不过不出稿；通过后末条回复**逐字复制定稿**，不另写一版（H30）。它查结构与对账，不查话说得对不对——话得自己写对。
 
 自然语言报，说明段上限 120 字（每加一张 +30）；**每张卡那句话 ≤40 字**，超过就是在拿报告复述卡片。不出现字段表、管道符串、工具名、失败码；不写命中数、抓取过程、原文复述与分卡论证。
 
@@ -358,5 +358,6 @@ description: Use when the user sends a link, asks to save an article, clip a web
 **H25 · 文档改动走独立流程。** 修订一律等用户指令；**commit 与 push 用同一次 `scripts/push_skill.sh "msg"` 完成，禁裸 `git commit`**，随后 `git ls-remote` 核对；禁手搓 git 命令。复盘建议的落点只能是云端卡片。
 **H26 · 笔记只在云端。** 本地不落盘任何卡片正文；`.mcp.json`（含 token）不提交。
 **H27 · 收尾强制清理（不等确认）。** 列名 → 打包 `.workbuddy/trash/` → 断言完整 → 删除 → 复核为 0，走 `scripts/cleanup.py`；`--verify` 与清理共用基准（`.workbuddy/.cleanup_run`）；不得删当轮素材（H24）。
+**H30 · 报告照抄定稿，不改写。** 报告校验通过后须落一份定稿（`report_check.py --emit`），末条回复逐字复制它——概念名后的冒号、那句话、id、标签顺序、字数都不许重排或改写。手写一份「意思一样」的版本等于绕过校验：校验过的文本与实际发出的文本是两份东西（H26）。
 **H29 · 检索无果不是删除依据。** 三态：证实 / 证伪 / 无结论。只有相反原文与链接才可改删卡内内容，无结论按材料口径保留；「一手没提」按 H10 并列，仅明确否认算反证。无果记 `verdict: unverified` 与已试查询，卡照写。**整条要点消失即拦**（`lost_points`）：删存量须有取代或反证，重写带 `--allow-content-loss` 认领。
 **H28 · 文档禁写日期与事件。** 理由只作抽象陈述；`ENVIRONMENT.md` 只写「是什么」。已落到 `check_skill_docs.py`（日期 ERR、叙事词 WARN 全文档受扫；仅协议 / 版本常量行豁免，逐条打印 SKIP）。
