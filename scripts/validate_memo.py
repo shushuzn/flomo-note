@@ -1002,6 +1002,8 @@ _REL_HARD = re.compile(
 _REL_SOFT = re.compile(
     r"(?:今年|本年|本月|下月|上月|本季度|近期|近日|本周|上周|昨天|昨日|今天)"
 )
+# 否定态 / 计划态表述：写着「还没发布」，下个月就可能被推翻（H32）。
+_STALE_PRED = re.compile(r"(?:尚未|未官宣|未发布|未上线|尚未推出|还没发布)")
 _YEAR_IN = re.compile(r"20\d{2}\s*年")
 _SENT_SPLIT = re.compile(r"[。；;！!？?\n]")
 
@@ -1032,6 +1034,10 @@ def _check_relative_time(lines):
             if sm and not _YEAR_IN.search(sent) and "截至" not in sent and "发布时" not in sent:
                 warn(f"第 {i} 行「{sm.group(0)}」是相对时间词，整句没有年份——"
                      f"读者过几个月无法判断它指哪一年，改写为绝对时点")
+            pm = _STALE_PRED.search(sent)
+            if pm and not _YEAR_IN.search(sent) and "截至" not in sent:
+                warn(f"第 {i} 行「{pm.group(0)}」是否定态表述且没有时点——这种句子下个月就可能被推翻，"
+                     f"补「截至 20XX 年 X 月」，覆写本卡时逐条核对它是否已经发生（H32）")
 
 
 def _check_template_echo(content, lines):
