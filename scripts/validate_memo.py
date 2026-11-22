@@ -1004,6 +1004,11 @@ _REL_SOFT = re.compile(
 )
 # 否定态 / 计划态表述：写着「还没发布」，下个月就可能被推翻（H32）。
 _STALE_PRED = re.compile(r"(?:尚未|未官宣|未发布|未上线|尚未推出|还没发布)")
+# 时点前缀被当成保留旧状态的挡箭牌：括号里写个发布年月，后面照旧挂着旧排名。
+# 补时点只解决「读者不知道哪年」，不解决「这条已经不是现状」——状态型事实只写最新值（H31）。
+_STALE_KEEP = re.compile(
+    r"(?:发布时|[当][时]|彼时)[^。；\n]{0,40}?(?:排名|分数|价格|额度|档位|仅剩|落后|持平)"
+)
 _YEAR_IN = re.compile(r"20\d{2}\s*年")
 _SENT_SPLIT = re.compile(r"[。；;！!？?\n]")
 
@@ -1034,6 +1039,11 @@ def _check_relative_time(lines):
             if sm and not _YEAR_IN.search(sent) and "截至" not in sent and "发布时" not in sent:
                 warn(f"第 {i} 行「{sm.group(0)}」是相对时间词，整句没有年份——"
                      f"读者过几个月无法判断它指哪一年，改写为绝对时点")
+            km = _STALE_KEEP.search(sent)
+            if km:
+                warn(f"第 {i} 行用「{km.group(0)[:24]}」把旧状态留在正文——时点前缀只说明哪年的值，"
+                     f"不说明它今天还成立；价格 / 排名 / 额度 / 档位这类状态型事实只写最新值，"
+                     f"历史值并入「演进」并写明已被谁取代（H31）")
             pm = _STALE_PRED.search(sent)
             if pm and not _YEAR_IN.search(sent) and "截至" not in sent:
                 warn(f"第 {i} 行「{pm.group(0)}」是否定态表述且没有时点——这种句子下个月就可能被推翻，"
