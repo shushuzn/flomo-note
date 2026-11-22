@@ -913,6 +913,127 @@ def _check_event_source(lines):
                 f"请删除括号内来源后只留概念名")
 
 
+# 括号署名与时效快照（5.11 / 5.12）。
+# 真实漏检：一张长卡通篇带「（2026-09 新智元）」「（SemiAnalysis测算）」「社区工具 NerfTrack 估算」
+# 「知乎用户 … 复编译通过」，质检 0 错——5.6 只认载体词，5.8 只认带机构后缀或已知媒体清单的
+# 来源主体，「括号里一个日期加一个短名」两头都不落。另一类是同源的「过期信息」：把发布当月的
+# 状态写成常态（「当前版本拒绝…」「计划今年年底…」），读者无法判断这句话哪年成立。
+_MEDIA_NAME = re.compile(
+    r"(?:新智元|机器之心|智东西|雷峰网|虎嗅|钛媒体|量子位|InfoQ|少数派|差评|爱范儿|"
+    r"SemiAnalysis|TestingCatalog|Hacker\s*News|Reddit|Twitter|推特|雪球|掘金)"
+)
+# 「量子位」「知乎」在别处有实义（超导量子位、知乎专栏），裸词不判；只判括号内与
+# 「用户 / 网友 / 专栏」这类明确指人的形态。
+_MEDIA_PERSON = re.compile(
+    r"(?:量子位|知乎|微博|Reddit|Hacker\s*News)\s*(?:用户|网友|答主|博主|专栏|帖子)"
+)
+# 括号内以日期起头：一个年月加一个短名，后面还跟着「某机构 发布」也算署名（两处都判）。
+_DATE_PREFIX = re.compile(
+    r"^\s*20\d{2}\s*[-–—./年]\s*(?:\d{1,2}\s*月?)?\s*"
+    r"(?:[-–—./]\s*\d{1,2}\s*日?)?\s*[，,\s]*"
+)
+# 日期后面跟着的若是动作 / 版本描述，那是内容里的时点，不是署名。
+_DATE_REMAINDER_OK = re.compile(
+    r"^(?:发布|上线|推出|生效|实施|修订|改版|版|赛季|财年|起|至今|以来|之前|之后|前后)"
+)
+_ATTRIB_TAIL = re.compile(r"(?:测算|估算|统计|分析|披露|挖出|整理|盘点|实测)$")
+
+
+def _check_bracket_signature(lines):
+    """5.11) 括号署名（ERR）：括号里写谁报道、谁测算、谁实测，一律不写。
+
+    H15 判据不变，此处只补形态：来源主体的形态不止「某社 / 某网站 / 某公众号」，
+    还有「日期 + 媒体名」「机构名 + 测算」这两种括号署名，旧正则全放行。
+    """
+    for i, ln in enumerate(lines[2:], start=3):
+        if not ln.strip() or URL_IN_LINE.search(ln):
+            continue
+        bracket_hit = False
+        for grp in BRACKET_RE.findall(ln):
+            inner = grp.strip("（）()").strip()
+            if not inner:
+                continue
+            hit = _MEDIA_NAME.search(inner)
+            if hit:
+                err(f"第 {i} 行括号内是媒体/机构署名「{grp.strip()}」——卡片只写概念与事实本身，"
+                    f"不写在括号里标注谁报道、谁整理（H15）。删掉括号内的署名，只留时点或内容")
+                bracket_hit = True
+                continue
+            if _MEDIA_PERSON.search(inner):
+                err(f"第 {i} 行括号内是平台署名「{grp.strip()}」——不交代内容取自哪个平台/哪位用户，"
+                    f"改写为「有独立复现」「社区实测」即可（H15）")
+                bracket_hit = True
+                continue
+            # 年区间（`（2026—2030年）`）是内容里的时间跨度，不是署名。
+            if re.search(r"20\d{2}\s*[-–—~至到]\s*20\d{2}", inner):
+                continue
+            m = _DATE_PREFIX.match(inner)
+            if m and m.end() < len(inner):
+                rest = inner[m.end():].strip()
+                if rest and not _DATE_REMAINDER_OK.match(rest) and len(rest) <= 14:
+                    err(f"第 {i} 行括号内是「日期 + 名称」署名「{grp.strip()}」——"
+                        f"只保留时点（年月），名称删掉（H15）")
+                    bracket_hit = True
+                    continue
+            if _ATTRIB_TAIL.search(inner) and len(inner) <= 16 and not re.search(r"20\d{2}", inner):
+                err(f"第 {i} 行括号内写测算 / 统计的执行者「{grp.strip()}」——"
+                    f"改写为方法本身（如「按标准 API 价折算的测算」），不署执行机构（H15）")
+                bracket_hit = True
+                continue
+        # 行内（非括号）的同类形态：媒体名 + 动作词、平台用户、首字母大写工具名 + 估算。
+        # 一行只报一次：同一处署名常同时命中三条正则，报三遍会让人以为有三处问题。
+        if bracket_hit:
+            continue
+        inline = (re.search(
+            r"(?:新智元|机器之心|智东西|SemiAnalysis|TestingCatalog|Hacker\s*News)"
+            r"\s*(?:测算|估算|统计|披露|挖出|整理|盘点|报道|发现)", ln)
+            or _MEDIA_PERSON.search(ln)
+            or re.search(r"(?<![A-Za-z])[A-Z][A-Za-z0-9]{2,}\s*(?:估算|测算|统计)", ln))
+        if inline:
+            err(f"第 {i} 行以「{inline.group(0)}」交代出处——卡片不写谁测算、谁披露、哪个平台"
+                f"的用户复现（H15），只写方法与结论")
+
+
+_REL_HARD = re.compile(
+    r"(?:目前|当前|如今|现在)\s*(?:已|仍|尚|还)"
+    r"|(?:目前|当前|如今|现在)(?:的)?(?:版本|状态|进展|情况|价格|额度|政策|排名|分数|水平|能力)"
+    r"|最新(?:版本|数据|进展|情况|消息|状态)"
+)
+_REL_SOFT = re.compile(
+    r"(?:今年|本年|本月|下月|上月|本季度|近期|近日|本周|上周|昨天|昨日|今天)"
+)
+_YEAR_IN = re.compile(r"20\d{2}\s*年")
+_SENT_SPLIT = re.compile(r"[。；;！!？?\n]")
+
+
+def _check_relative_time(lines):
+    """5.12) 时效快照（ERR）：把某月状态写成常态的句子必须带绝对时点。
+
+    卡片会被反复读到几年后。写「当前版本拒绝生成漏洞利用代码」，读者无从知道这是发布当月的
+    状态还是今天的状态——这不是措辞问题，是把会过期的判断伪装成不会过期的事实。
+    """
+    # 整卡已经判错时不再叠加时效提示：门已经关上，再加一条措辞建议只是噪音。
+    if ERR:
+        return
+    # 已判错的行同样跳过。
+    flagged = {int(m.group(1)) for e in ERR if (m := re.match(r"^第 (\d+) 行", e))}
+    for i, ln in enumerate(lines[2:], start=3):
+        if not ln.strip() or i in flagged:
+            continue
+        for sent in _SENT_SPLIT.split(ln):
+            if not sent.strip():
+                continue
+            hm = _REL_HARD.search(sent)
+            if hm and not _YEAR_IN.search(sent) and "截至" not in sent:
+                err(f"第 {i} 行「{hm.group(0)}」把某时点的状态写成现状，且整句没有年份——"
+                    f"补绝对时点（「截至 20XX 年 X 月」或「发布时」），否则这张卡过几个月就是错的")
+                continue
+            sm = _REL_SOFT.search(sent)
+            if sm and not _YEAR_IN.search(sent) and "截至" not in sent and "发布时" not in sent:
+                warn(f"第 {i} 行「{sm.group(0)}」是相对时间词，整句没有年份——"
+                     f"读者过几个月无法判断它指哪一年，改写为绝对时点")
+
+
 def _check_template_echo(content, lines):
     """5.7) 模板前缀回显（ERR）：「结论先行」等 SKILL 条目名不得回显进正文。"""
     # 5.7) 模板前缀回显检测（ERR）
@@ -1168,9 +1289,11 @@ def check(content):
     _check_status_line(lines)             # 5.5) 旧格式状态行
     _check_carrier(lines)                 # 5.6) 载体元信息
     _check_event_source(lines)            # 5.8) 事件来源信息
+    _check_bracket_signature(lines)       # 5.11) 括号署名
     _check_template_echo(content, lines)  # 5.7) 模板前缀回显
     _check_concept_slice(lines)           # 5.8) 概念名切片限定
     _check_concept_roundup(lines)         # 5.9) 清单 / 汇总口径的概念名
+    _check_relative_time(lines)           # 5.12) 时效快照
     _check_abstract_dep(lines)            # 6) 摘要依赖
     _check_deixis(lines)                  # 7) 材料指示词
     _check_bullet_label(lines)            # 8) 空要点标签
