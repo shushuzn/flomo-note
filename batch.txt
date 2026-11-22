@@ -1,4 +1,0 @@
-/home/user/flomo-note/_tmp/rh_after.txt | - | MjU0ODI0OTU2 | - | skipweb:见材料 无需外部检索 | near:本条为黎曼猜想卡增量更新 补社区核验与梅纳德评价 不另建同源卡
-/home/user/flomo-note/_tmp/cards_maynard/mn.txt | - | - | - | skipweb:见材料 无需外部检索 | near:近菲尔兹奖得主联合声明 那是一份声明 此卡指梅纳德本人
-/home/user/flomo-note/_tmp/cards_maynard/lean.txt | - | - | - | skipweb:见材料 无需外部检索 | near:近Mathlib 那是数学库本体 此卡指对本次证明的机器核验
-/home/user/flomo-note/_tmp/cards_maynard/understand.txt | - | - | - | skipweb:见材料 无需外部检索 | near:近形式化五级阶梯 那是验证分级 此卡指人类理解这一层门槛
