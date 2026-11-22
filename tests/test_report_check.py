@@ -121,10 +121,10 @@ def _run_all() -> int:
     good = (
         "建了 2 张卡。\n\n"
         "新建：\n"
-        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图，这轮记它与 Verse 的分工。\n"
-        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
-        "- Verse：新语言，这轮记它的类型系统与场景图接法。\n"
-        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
+        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图，这轮记它与 Verse 的分工。"
+        "MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "- Verse：新语言，这轮记它的类型系统与场景图接法。"
+        "MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
     )
     rc = _run(good)
     check("明细齐全且对账一致时放行", rc == 0, f"退出码 {rc}")
@@ -139,19 +139,18 @@ def _run_all() -> int:
         "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
     )
     rc = _run(stacked)
-    check("一句话堆在前、数据行收在末尾被拦", rc == 1, f"退出码 {rc}")
+    check("一张卡拆成两行（旧写法）被拦", rc == 1, f"退出码 {rc}")
 
     # 2c. 数据行跟在另一张卡的话后面 → 必须拦（成组连错对象）
     swapped = (
         "建了 2 张卡。\n\n"
         "新建：\n"
-        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
+        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。MzY0MTIzNTAw，#产业/游戏，实测 444 字\n"
         "- Verse：新语言，记它的类型系统。\n"
-        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
         "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字"
     )
     rc = _run(swapped)
-    check("数据行接在别张卡的话后面被拦", rc == 1, f"退出码 {rc}")
+    check("条目里不带本卡 id 被拦", rc == 1, f"退出码 {rc}")
 
     # 2d. 执行侧步骤不外发（H6g）：把对象清单抖进报告 → 必须拦
     _prepare(list(CARDS)[:2])
@@ -174,8 +173,8 @@ def _run_all() -> int:
     colon_name = (
         "建了 1 张卡。\n\n"
         "新建：\n"
-        "- Dots：常驻智能体：这轮记它的常驻形态。\n\n"
-        "Dots：常驻智能体：MjY0MTIzNTUw，#AI/智能体，实测 600 字"
+        "- Dots：常驻智能体：这轮记它的常驻形态。"
+        "MjY0MTIzNTUw，#AI/智能体，实测 600 字"
     )
     rc = _run(colon_name)
     check("概念名含冒号时明细仍可解析", rc == 0, f"退出码 {rc}")
@@ -196,13 +195,13 @@ def _run_all() -> int:
     check("概念名不符被拦", rc == 1, f"退出码 {rc}")
 
     # 6. 明细里混入不属于本轮的 id → 必须拦
-    extra = good + "\n别的卡：MjYwMDAwMDAw，#产业/游戏，实测 300 字"
+    extra = good + "\n- 别的卡：混进来的另一张。MjYwMDAwMDAw，#产业/游戏，实测 300 字"
     rc = _run(extra)
     check("混入非本轮 id 被拦", rc == 1, f"退出码 {rc}")
 
     # 7. 说明段超限（2 张卡上限 150 字）→ 必须拦
     long_prose = "字" * 151
-    rc = _run(long_prose + "\n\n新建：\n- 蓝图（Blueprints）：一句话。\n- Verse：一句话。\n\n"
+    rc = _run(long_prose + "\n\n新建：\n"
               + good.split("\n\n")[-1])
     check("说明段超字数上限被拦", rc == 1, f"退出码 {rc}")
 
@@ -231,10 +230,8 @@ def _run_all() -> int:
     same_name = (
         "建了 2 张卡。\n\n"
         "新建：\n"
-        "- 蓝图（Blueprints）：甲卡的读法。\n"
-        "- 蓝图（Blueprints）：乙卡的读法。\n\n"
-        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
-        "蓝图（Blueprints）：MjY0MTIzNTYw，#产业/游戏，实测 320 字"
+        "- 蓝图（Blueprints）：甲卡的读法。MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "- 蓝图（Blueprints）：乙卡的读法。MjY0MTIzNTYw，#产业/游戏，实测 320 字"
     )
     rc = _run(same_name)
     check("两张卡同名严格拦下", rc == 1, f"退出码 {rc}")
@@ -245,13 +242,11 @@ def _run_all() -> int:
     mixed = (
         "建了 3 张卡，更新 1 张。\n\n"
         "新建：\n"
-        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。\n"
-        "蓝图（Blueprints）：MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
-        "- Verse：新语言，记它的类型系统。\n"
-        "Verse：MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字\n\n"
+        "- 蓝图（Blueprints）：引擎里搭逻辑的节点图。MjY0MTIzNTAw，#产业/游戏，实测 444 字\n"
+        "- Verse：新语言，记它的类型系统。"
+        "MjY0MTIzNTMw，#科技/编程语言 #产业/游戏，实测 479 字\n\n"
         "更新：\n"
-        "- 场景图：补了新的渲染管线，删掉旧的两行。\n"
-        "场景图：MjY0MTIzNTQw，#产业/游戏，实测 512 字"
+        "- 场景图：补了新的渲染管线，删掉旧的两行。MjY0MTIzNTQw，#产业/游戏，实测 512 字"
     )
     rc = _run(mixed)
     check("新建与更新分段写时放行", rc == 0, f"退出码 {rc}")
@@ -261,22 +256,23 @@ def _run_all() -> int:
     check("混合轮不分段被拦", rc == 1, f"退出码 {rc}")
 
     # 9c. 更新卡写进「新建」段 → 必须拦（等于把改动说成新建）
-    misplaced = mixed.replace("- 场景图：补了新的渲染管线，删掉旧的两行。\n", "")
+    upd_line = next(ln for ln in mixed.split("\n") if ln.startswith("- 场景图"))
+    misplaced = mixed.replace(upd_line + "\n", "")
     misplaced = misplaced.replace(
-        "- Verse：新语言，记它的类型系统。\n",
-        "- Verse：新语言，记它的类型系统。\n- 场景图：补了新的渲染管线，删掉旧的两行。\n")
+        "- Verse：新语言，记它的类型系统。",
+        "- Verse：新语言，记它的类型系统。\n" + upd_line)
     rc = _run(misplaced)
     check("更新卡写进新建段被拦", rc == 1, f"退出码 {rc}")
 
     # 9c2. 一句话写在「更新」段、明细行却留在「新建」段 → 必须拦
     #      段落层面名字与条数都对得上，只有按段读卡才露馅——真实发过的形态
     lines = mixed.split("\n")
-    detail_line = next(ln for ln in lines if ln.startswith("场景图："))
-    lines = [ln for ln in lines if not ln.startswith("场景图：")]
+    detail_line = next(ln for ln in lines if ln.startswith("- 场景图"))
+    lines = [ln for ln in lines if not ln.startswith("- 场景图")]
     idx_update = lines.index("更新：")
     lines.insert(idx_update, detail_line)
     rc = _run("\n".join(lines))
-    check("更新卡明细行留在新建段被拦", rc == 1, f"退出码 {rc}")
+    check("更新卡整行抄进新建段被拦", rc == 1, f"退出码 {rc}")
 
     # 9d. 只有更新的一轮写了空「新建」段 → 必须拦
     _prepare(["MjY0MTIzNTQw"], updated=["MjY0MTIzNTQw"])
@@ -284,8 +280,8 @@ def _run_all() -> int:
         "更新 1 张卡。\n\n"
         "新建：\n\n"
         "更新：\n"
-        "- 场景图：补了新的渲染管线，删掉旧的两行。\n\n"
-        "场景图：MjY0MTIzNTQw，#产业/游戏，实测 512 字"
+        "- 场景图：补了新的渲染管线，删掉旧的两行。"
+        "MjY0MTIzNTQw，#产业/游戏，实测 512 字"
     )
     rc = _run(empty_new)
     check("空的新建段被拦", rc == 1, f"退出码 {rc}")

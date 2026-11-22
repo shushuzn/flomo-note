@@ -1,0 +1,11 @@
+# arXiv 2412.11235 极大子式一般化链接的符号幂
+/home/user/flomo-note/_tmp/cards_link/link.txt | - | - | - | skipweb:链接定义见原文无需外部检索 | near:链接在理想语境为专名，与网络链接等卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/glink.txt | - | - | - | skipweb:一般化链接由原文构造无需外部检索 | near:一般化链接与链接卡为特例与原型关系但对象不同
+/home/user/flomo-note/_tmp/cards_link/minors.txt | - | - | - | skipweb:极大子式定义见原文无需外部检索 | near:极大子式理想为专名，与 2-阶子式理想等卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/groebner.txt | - | - | - | skipweb:Gröbner 退化为一般手法无需外部检索 | near:Gröbner 退化为一般手法，与 Gröbner 基猜想等卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/rees.txt | - | - | - | skipweb:Rees 代数构造见原文无需外部检索 | near:Rees 代数与 Rees 赋值卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/gr.txt | - | - | - | skipweb:关联分次环构造见原文无需外部检索 | near:关联分次环与赋值分次环卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/frational.txt | - | - | - | skipweb:F 有理定义见原文无需外部检索 | near:F 有理与准 F 正则等卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/fsplit.txt | - | - | - | skipweb:滤链定义见原文无需外部检索 | near:F 分裂滤链与准 F 分裂卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/mfmc.txt | - | - | - | skipweb:该性质定义见原文无需外部检索 | near:最大流最小割性质与最小割问题卡属不同对象
+/home/user/flomo-note/_tmp/cards_link/sympow.txt | - | MjY2NjM2OTE3 | - | skipweb:更新段补相等判据无需外部检索 | -

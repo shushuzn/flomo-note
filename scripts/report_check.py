@@ -13,8 +13,8 @@
   4. 校验说明段的字数上限（1 张 ≤300 字，每多一张 +60 字，与 SKILL 报告口径一致）；
   5. 校验「新建」「更新」两段分写：账本 `updated` 之外的 id 按新建算，两段各自
      列出的概念名必须与对应 id 集合一致——混在一段里说「建了 4 张卡」会被拦；
-  6. 逐卡交错排版时，数据行必须跟它那句话同段——更新卡的小句在「更新」段、
-     明细行却留在「新建」段，名字与条数都查不出来，只有这一条能拦。
+  6. 一张卡只占一行（`- 概念：一句话。id，标签，实测 N 字`）——此前是一句话
+     一行、数据行一行，读者看到的就是「一个卡片分两点」；拆成两行按旧写法拒。
 
 用法：
   python scripts/report_check.py --report _tmp/report.txt --url https://mp.weixin.qq.com/s/xxx
@@ -37,13 +37,18 @@ import flomo_client as FC  # noqa: E402
 import round_ledger  # noqa: E402
 import verify_card  # noqa: E402
 
-# 明细行：`概念名：id，标签，实测 N 字`
-# 标签允许一个或多个 `顶层/二级`，以空格分隔；`#` 可带可不带（SKILL 第四节的示例不带），
-# 全角逗号与半角都收。
-# 概念名本身可能含全角冒号（如 `Dots：OpenAI 常驻型个人智能体`），
-# 故名字段按贪婪匹配、由右侧的 id 反向定位最后一个冒号；不能用 [^：] 排除冒号。
-DETAIL = re.compile(
+# 旧的明细行：`概念名：id，标签，实测 N 字` 单独占一行。
+# 它只用于**识别并拒绝**旧的两行写法（一张卡拆成「一句话」+「数据行」两行）。
+LEGACY_DETAIL = re.compile(
     r"^(?P<name>[^\n]{1,80})：\s*(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
+    r"(?P<tags>#?[^\s，,]+(?:[ 　]#?[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
+)
+
+# 明细行的右侧尾巴：`id，标签，实测 N 字`。左侧（概念名 + 那句话）在代码里
+# 按「最后一个句号之后即 id」倒着切——概念名本身可能含全角冒号
+# （如 `Dots：常驻智能体`），一句话里也可能出现顿号与括号。
+DETAIL_TAIL = re.compile(
+    r"(?P<id>[A-Za-z0-9]{8,})\s*[，,]\s*"
     r"(?P<tags>#?[^\s，,]+(?:[ 　]#?[^\s，,]+)*)\s*[，,]\s*实测\s*(?P<n>\d+)\s*字\s*$"
 )
 
@@ -52,8 +57,29 @@ DETAIL = re.compile(
 # 被切成两段。
 SECTION = re.compile(r"^(新建|更新)\s*[：:]?$")
 
-# 分段里的条目：`- 概念名：一句读者能懂的话`
+# 分段里的条目：`- 概念名：一句读者能懂的话。id，标签，实测 N 字`
 BULLET = re.compile(r"^[-*]\s+(?P<body>.+)$")
+
+
+def _split_bullet(body: str) -> dict | None:
+    """把「一卡一行」的条目切成 概念名 / 那句话 / id / 标签 / 字数。
+
+    一张卡只占一行：`- 概念：一句话。id，标签，实测 N 字`。此前是两行
+    （一句话一行、数据行一行），读者看到的就是「一张卡分两点」，同一张卡被
+    写成两条并列事实。切法：先从右侧剥掉 id 尾巴，再把剩下的「概念：一句话。」
+    按最后一个冒号断开；名字里自带冒号也不会被切错。
+    """
+    m = DETAIL_TAIL.search(body)
+    if not m:
+        return None
+    head = body[:m.start()].strip()
+    if head.endswith("。"):
+        head = head[:-1].rstrip()
+    name, found, say = head.rpartition("：")
+    if not found or not name.strip() or not say.strip():
+        return None
+    return {"name": name.strip(), "say": say.strip(), "id": m.group("id"),
+            "tags": m.group("tags"), "n": m.group("n")}
 
 # 报告只回答「建了什么」，不回答「我怎么做的」（H6g）。
 # 左侧是执行侧中间产物：对象清单、术语核验、查重命中、闸门读数都属内部步骤，
@@ -143,18 +169,9 @@ def main(argv=None) -> int:
     current = None
     for ln_no, line in enumerate(text.split("\n")):
         s = line.strip()
-        m = DETAIL.match(s)
+        m = SECTION.match(s)
         if m:
-            # 明细行另外记下它落在哪一段、在第几行：一句话在「更新」段、数据行
-            # 却写在「新建」段，两张卡就错位了，读的人按段找卡会找不到。
-            g = m.groupdict()
-            detail_rows.append(g)
-            row_sec[g["id"]] = current
-            row_ln[g["id"]] = ln_no
-            continue
-        sm = SECTION.match(s)
-        if sm:
-            current = sm.group(1)
+            current = m.group(1)
             if current in seen_section:
                 # 只报重复，不清空已收集的条目：清空会把前面的条目一起丢掉，
                 # 随后又误报一条「段缺这些卡」，同一处写错变成两条互相矛盾的提示。
@@ -162,26 +179,38 @@ def main(argv=None) -> int:
             seen_section.add(current)
             continue
         bm = BULLET.match(s)
-        if bm and current:
-            body = bm.group("body").strip()
-            # 概念名本身可能含冒号（如 `Dots：OpenAI 常驻型个人智能体`）；
-            # 分段条目是「概念名：一句」，故按最后一个冒号切，前面整体当概念名。
-            sep = "：" if "：" in body else ":"
-            head, found, tail = body.rpartition(sep)
-            parts = [head, tail] if found and head.strip() and tail.strip() else []
-            if len(parts) < 2 or not parts[0].strip():
-                errors.append(
-                    f"「{current}」段的这一条不是「概念名：一句」的写法：{body[:24]}")
-            else:
-                sections[current].append(parts[0].strip())
-                # 一句话的篇幅上限：超了就是在拿报告复述卡片（第四节只许
-                # 「一句读者能懂的话」）。此前没有任何判据，报告逐轮变长。
-                tlen = _cjk_len(parts[1])
-                if tlen > SENTENCE_LIMIT:
+        if bm:
+            if current is None:
+                errors.append(f"这一条没落在「新建」或「更新」段里：{s[:24]}")
+                continue
+            g = _split_bullet(bm.group("body").strip())
+            if g is None:
+                if LEGACY_DETAIL.match(s):
                     errors.append(
-                        f"「{parts[0].strip()}」那句话 {tlen} 字，超过上限 "
-                        f"{SENTENCE_LIMIT} 字——一句话只讲这张卡记了什么，"
-                        f"细节归卡片")
+                        f"「{current}」段用回了旧的两行写法（一张卡拆成小句行 + "
+                        f"数据行）：一张卡只写一行，格式为「- 概念：一句话。id，"
+                        f"标签，实测 N 字」——{s[:20]}")
+                else:
+                    errors.append(
+                        f"「{current}」段这条没有带本卡的 id 与字数："
+                        f"一张卡一行，句子后面空一行就是另一张卡了——{s[:24]}")
+                continue
+            detail_rows.append(g)
+            row_sec[g["id"]] = current
+            row_ln[g["id"]] = ln_no
+            sections[current].append(g["name"])
+            # 一句话的篇幅上限：超了就是在拿报告复述卡片（第四节只许
+            # 「一句读者能懂的话」）。此前没有任何判据，报告逐轮变长。
+            tlen = _cjk_len(g["say"])
+            if tlen > SENTENCE_LIMIT:
+                errors.append(
+                    f"「{g['name']}」那句话 {tlen} 字，超过上限 "
+                    f"{SENTENCE_LIMIT} 字——一句话只讲这张卡记了什么，细节归卡片")
+            continue
+        if LEGACY_DETAIL.match(s):
+            errors.append(
+                f"明细行单独占了一行：一张卡只写一行「- 概念：一句话。id，标签，"
+                f"实测 N 字」，不要拆成两行——{s[:20]}")
             continue
         if s:
             prose_lines.append(s)
@@ -190,11 +219,6 @@ def main(argv=None) -> int:
     plen = _cjk_len(prose)
     # 每张卡的明细行落在哪一段（没有段标题时为 None，另行由「缺段」判据拦下）
     detail_section = row_sec
-    # 报告的两种合法排版：逐卡「一句话 + 数据行」交错，或各段的小句写完后
-    # 把数据行统一收在末尾。末尾那一段没有后续小句，故只有「后面还有小句」
-    # 的数据行才谈得上落在哪一段——否则末尾整块会全部被误判成错位。
-    bullet_lns = [i for i, ln in enumerate(text.split("\n")) if BULLET.match(ln.strip())]
-    last_bullet_ln = max(bullet_lns) if bullet_lns else -1
     detail_ln = row_ln
 
     # ---- 1. 条数与 id 集合 ----
@@ -301,43 +325,14 @@ def main(argv=None) -> int:
             # 抓不住该改哪一处；条数只在剩下的情形（同一张卡写两遍）才有信息量。
             elif len(block) != len(want_names):
                 errors.append(f"「{kind}」段写了 {len(block)} 条，账上是 {len(want_names)} 张")
-            # 数据行必须跟它那句话在同一段：把更新卡的明细留在「新建」段，
-            # 段落层面看不出错（名字与条数都对得上），但按段读卡就会把更新说成新建。
+            # 每条明细行自带它那句话，故「卡片落在哪一段」就等于「它那一行在哪一段」：
+            # 把更新卡整行抄进「新建」段，按段读就会把改写说成新建。
             misfiled = [cloud_names.get(i, i) for i in want_ids
-                        if detail_section.get(i) != kind
-                        and detail_ln.get(i, 10**6) < last_bullet_ln]
+                        if detail_section.get(i) != kind]
             if misfiled:
                 errors.append(
-                    f"这些{kind}卡的数据行没写在本段里：{'、'.join(misfiled)}"
-                    f"——一句话在本段、明细行却在别段，按段读就成了另一类卡")
-
-    # ---- 3b. 每张卡成组：一句话之后**紧接**该卡数据行 ----
-    # 第四节要求「概念名 + 一句读者能懂的话，紧接该卡数据行」。此前只校验
-    # 「明细行落在哪一段」，各段把一句话列成一坨、数据行统一收在末尾也能全过——
-    # 那种排版读起来正好相反：先看五句介绍，再对着五行 id 去找谁是谁。
-    lines_all = text.split("\n")
-    for row in detail_rows:
-        ln = row_ln.get(row["id"])
-        if ln is None:
-            continue
-        prev = None
-        for i in range(ln - 1, -1, -1):
-            if lines_all[i].strip():
-                prev = lines_all[i].strip()
-                break
-        bm = BULLET.match(prev or "")
-        if not bm:
-            errors.append(
-                f"「{row['name']}」的数据行前面不是它自己那句话——"
-                "每张卡必须成组：一句话紧接该卡数据行")
-            continue
-        body = bm.group("body").strip()
-        sep = "：" if "：" in body else ":"
-        head, found, _tail = body.rpartition(sep)
-        if not found or head.strip() != row["name"].strip():
-            errors.append(
-                f"「{row['name']}」的数据行跟在了另一张卡的话后面"
-                f"（前面一句是「{body[:20]}」）")
+                    f"这些{kind}卡写在了别的段里：{'、'.join(misfiled)}"
+                    f"——按段读就成了另一类卡")
 
     # ---- 3c. 明细行之后不再有补充说明 ----
     # 报告尾部的「另外说明」是最容易无限膨胀的一块：它不受逐卡那句话的长度约束，
@@ -345,8 +340,7 @@ def main(argv=None) -> int:
     if detail_rows:
         tail = [ln.strip() for ln in text.split("\n")[max(row_ln.values()) + 1:]
                 if ln.strip()]
-        prose_tail = [ln for ln in tail
-                      if not SECTION.match(ln) and not DETAIL.match(ln)]
+        prose_tail = [ln for ln in tail if not SECTION.match(ln)]
         extra = [ln for ln in prose_tail if not ln.startswith("异常")]
         abnormal = [ln for ln in prose_tail if ln.startswith("异常")]
         if extra:
