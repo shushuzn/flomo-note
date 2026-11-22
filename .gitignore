@@ -61,3 +61,7 @@ pelican-pedals/
 
 # 覆盖率数据：`coverage run` 的产物，数字每次现算，历史值没有意义。
 .coverage
+
+# 批量清单的落点：publish.py 收的是外部路径，谁在仓库根写一份 batch.txt 都属临时件，
+# 上一轮误落库的根目录清单已清出（它每次被重写都会混进无关提交）。
+/batch.txt
