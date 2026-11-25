@@ -12,9 +12,12 @@
 
 COVERS = ("flomo_client", "cli_util",)
 
+import contextlib
 import importlib.util
 import json
+import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -726,6 +729,143 @@ def run_usage_cases():
                   ("JSON" in msg or "用法" in msg or "文件" in msg)
                   and "token" not in msg.lower(), msg.strip()[:90])
 
+def run_write_limit_cases():
+    """写卡并行上限 5 张：超过就排队，排不到空位必须明确报「已达并行上限」。
+
+    为什么值得用例：服务端的第 6 个并发写会被拒，而这种拒绝和「卡片内容有问题」
+    在报错文本上几乎不可分——不在这里兜住，就会被反复重发，最后整批流程失败。
+    用例钉三件：上限数是 5、占满后不再打请求而是报上限、调用结束（含异常）槽位必回收。
+    """
+    import tempfile as _tempfile
+
+    old_dir = os.environ.get("FLOMO_WRITE_SLOTS_DIR")
+    old_timeout = os.environ.get("FLOMO_WRITE_LOCK_TIMEOUT")
+    tmp = _tempfile.mkdtemp(prefix="flomo-slots-")
+    os.environ["FLOMO_WRITE_SLOTS_DIR"] = tmp
+    try:
+        check("写卡并行上限是 5 张", FC.WRITE_PARALLEL_LIMIT == 5, FC.WRITE_PARALLEL_LIMIT)
+
+        held = [FC.acquire_write_slot("memo_create") for _ in range(5)]
+        check("5 个槽位可同时持有", len({p.name for p in held}) == 5, held)
+
+        os.environ["FLOMO_WRITE_LOCK_TIMEOUT"] = "0.4"
+        one_called = []
+        real_post = FC.FlomoClient._post
+
+        def boom(self, *a, **k):
+            one_called.append(1)
+            return None
+
+        FC.FlomoClient._post = boom
+        try:
+            err = None
+            try:
+                FC.FlomoClient(token="x").tool("memo_create", {"content": "a"})
+            except FC.FlomoError as exc:
+                err = exc
+            check("占满 5 个槽位时第 6 个写请求不发出",
+                  not one_called, f"实际发出 {len(one_called)} 次")
+            check("排不到空位时报「已达并行上限」而不是含糊失败",
+                  bool(err) and "并行上限" in str(err), str(err))
+            check("报错里给出处置方向（改单进程串行）",
+                  bool(err) and "串行" in str(err), str(err))
+        finally:
+            FC.FlomoClient._post = real_post
+            os.environ.pop("FLOMO_WRITE_LOCK_TIMEOUT", None)
+
+        for p in held:
+            FC.release_write_slot(p)
+        check("手工释放后槽位清空", not any(p.exists() for p in held), "仍残留")
+
+        # 正常路径：写工具调用结束后槽位必须回收（成功、异常都要回收）
+        called = []
+
+        def fake_post(self, *a, **k):
+            called.append(1)
+            return {"structuredContent": {"id": "m1"}}
+
+        FC.FlomoClient._post = fake_post
+        try:
+            FC.FlomoClient(token="x").tool("memo_create", {"content": "a"})
+            check("成功写入后槽位已回收",
+                  not list(Path(tmp).glob("slot-*.lock")), "仍有残留")
+
+            def raise_post(self, *a, **k):
+                called.append(1)
+                raise FC.ServerRefusal("拒绝", status=429, body="x")
+
+            FC.FlomoClient._post = raise_post
+            with contextlib.suppress(FC.FlomoError):
+                FC.FlomoClient(token="x").tool("memo_update", {"id": "m1", "content": "a"})
+            check("写失败（服务端拒绝）后槽位也回收",
+                  not list(Path(tmp).glob("slot-*.lock")), "仍有残留")
+
+            # 读工具不占槽：占满 5 个仍能读（此处仍用假 _post，绝不碰真网络）
+            FC.FlomoClient._post = fake_post
+            held2 = [FC.acquire_write_slot("memo_create") for _ in range(5)]
+            try:
+                FC.FlomoClient(token="x").tool("memo_search", {"keywords": "x"})
+                check("读工具不受写卡并行上限影响", len(called) >= 3, called)
+            finally:
+                for p in held2:
+                    FC.release_write_slot(p)
+        finally:
+            FC.FlomoClient._post = real_post
+    finally:
+        FC.clear_rate_limit() if hasattr(FC, "clear_rate_limit") else None
+        if old_dir is None:
+            os.environ.pop("FLOMO_WRITE_SLOTS_DIR", None)
+        else:
+            os.environ["FLOMO_WRITE_SLOTS_DIR"] = old_dir
+        if old_timeout is not None:
+            os.environ["FLOMO_WRITE_LOCK_TIMEOUT"] = old_timeout
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def run_refusal_cases():
+    """服务端拒绝（HTTP 4xx/5xx，含 429）：报原文、不重试、不换关键词继续打。
+
+    官方 MCP 文档没有任何限流条款，响应头也没有 Retry-After 字段，
+    所以这里**不许**编造「等 N 秒」的时长，只把状态码与原文交出去。
+    """
+    class Boom:
+        def __init__(self):
+            self.calls = 0
+
+        def tool(self, name, arguments=None):
+            self.calls += 1
+            raise FC.ServerRefusal("服务端拒绝本次调用（HTTP 429）", status=429, body="slow down")
+
+    boom = Boom()
+    err = None
+    try:
+        FC._exact_content_dup(boom, BODY)
+    except FC.ServerRefusal as exc:
+        err = exc
+    check("写前查重遇到服务端拒绝即中止", isinstance(err, FC.ServerRefusal), type(err).__name__)
+    check("被拒后不换第二个关键词再打（只发 1 次）", boom.calls == 1, boom.calls)
+
+    class Always:
+        def __init__(self):
+            self.calls = 0
+
+        def tool(self, name, arguments=None):
+            self.calls += 1
+            raise FC.FlomoError("MCP error: boom")
+
+    al = Always()
+    err2 = None
+    try:
+        FC._exact_content_dup(al, BODY)
+    except FC.FlomoError as exc:
+        err2 = exc
+    check("查重没查成时不允许当作「无重复」放行", isinstance(err2, FC.FlomoError), type(err2).__name__)
+    check("查重未完成只用 1 次调用（不再逐个关键词撞）", al.calls == 1, al.calls)
+    check("查重未完成的提示写明不写云",
+          bool(err2) and "不写云" in str(err2), str(err2))
+    check("ServeRefusal 保留状态码与原文供人工判断限额",
+          err is not None and err.status == 429 and "slow down" in err.body, str(err))
+
 
 if __name__ == "__main__":
     run_norm_cases()
@@ -739,6 +879,8 @@ if __name__ == "__main__":
     run_parse_options_cases()
     run_error_contract_cases()
     run_usage_cases()
+    run_write_limit_cases()
+    run_refusal_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)

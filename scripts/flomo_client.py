@@ -34,11 +34,13 @@ FLOMO_TOKEN（.mcp.json 是配置事实源；env 仅在不存该文件时后备�
 命令行参数写错（`--limit abc`）另有 `UsageError`（`FlomoError` 子类），由入口按用法码
 退出——不要让它和「调用失败」共用一个退出码，用户会去查网络。
 """
+import contextlib
 import itertools
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -119,6 +121,115 @@ class CloudUnreachable(FlomoError):
         self.request_sent = bool(request_sent)
 
 
+class ServerRefusal(FlomoError):
+    """服务端**明确拒绝**这次调用（任意 4xx/5xx，含 429）。
+
+    与 `CloudUnreachable` 分开：通道故障换出口再试有意义，服务端拒绝则
+    **换通道、换参数、换关键词都不会改变结果**——拒绝已经到达并生效。
+
+    本类刻意不带「等 N 秒」这类推算：flomo 官方文档（MCP 一页）没有限流条款，
+    实测响应头也没有 `RateLimit-*` / `Retry-After` 字段，凭空算一个等待时长
+    只会把「服务端说了什么」换成「我们猜了什么」。故只保留两件确定的事：
+    `status`（服务端给的状态码）与 `body`（服务端原文），供人工判断是不是限额、
+    限额窗口多长。**不做自动重试，也不写任何冷却期状态**——没有依据的等待
+    比不等待更误导人。
+    """
+
+    def __init__(self, message: str, *, status: int, body: str) -> None:
+        super().__init__(message)
+        self.status = int(status)
+        self.body = body
+
+
+WRITE_PARALLEL_LIMIT = 5
+"""写卡并行上限：服务端同时只接受 5 张卡在写，第 6 个并发写会被拒。
+
+为什么在客户端排队而不是靠调用方自觉：批量脚本本身是串行的一条条写，
+但同轮里并行起多个 `publish.py` 进程（或人手工多开）就会一下子打出 5 个以上
+写请求，服务端按这个上限拒掉其中一部分——而拒绝混在「HTTP 4xx / MCP error」
+里，读起来像卡片内容有问题，于是被反复重发。并发数由这里统一兜住：
+超过上限的写请求在本地排队等空位，等不到就**明确报「已达并行上限」**，
+不把请求打上去换一个含混的拒绝。
+"""
+
+
+def _write_lock_dir() -> Path:
+    """写槽目录：环境变量优先，用例可挪到临时目录，互不干扰。"""
+    env = os.environ.get("FLOMO_WRITE_SLOTS_DIR")
+    return Path(env) if env else (PROJECT_ROOT / ".workbuddy" / "write_slots")
+
+
+def _lock_timeout() -> float:
+    try:
+        return max(0.1, float(os.environ.get("FLOMO_WRITE_LOCK_TIMEOUT", "120")))
+    except ValueError:
+        return 120.0
+
+
+def _lock_stale() -> float:
+    try:
+        return max(10.0, float(os.environ.get("FLOMO_WRITE_LOCK_STALE", "600")))
+    except ValueError:
+        return 600.0
+
+
+def acquire_write_slot(tool: str) -> Path:
+    """占一个写卡槽位（最多 `WRITE_PARALLEL_LIMIT` 个），返回槽位文件路径。
+
+    用 `O_CREAT|O_EXCL` 建文件做互斥，不用 flock：仓库也会在 Windows 上跑，
+    `fcntl` 那边不存在，靠文件创建原子性两边都成立。残留槽位（进程被 kill）
+    由 mtime 判为过期后回收，否则一次异常退出会把一个槽位永久占住。
+    等不到空位时不硬打请求，直接报「已达并行上限」。
+    """
+    directory = _write_lock_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise FlomoError(f"写槽目录建不出来（{directory}）：{exc}") from None
+    started = time.time()
+    last_note = 0.0
+    while True:
+        for index in range(WRITE_PARALLEL_LIMIT):
+            path = directory / f"slot-{index}.lock"
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    if time.time() - path.stat().st_mtime > _lock_stale():
+                        path.unlink()
+                        continue
+                except OSError:
+                    pass
+                continue
+            except OSError as exc:
+                raise FlomoError(f"写槽占不住（{path}）：{exc}") from None
+            try:
+                os.write(fd, f"{os.getpid()}|{tool}|{int(time.time())}".encode())
+            finally:
+                os.close(fd)
+            return path
+        waited = time.time() - started
+        if waited > _lock_timeout():
+            raise FlomoError(
+                f"已达 flomo 写卡并行上限（{WRITE_PARALLEL_LIMIT} 张），等了 {int(waited)} 秒"
+                f"仍无空位，本次「{tool}」未发出——不要拆成更多并行进程去挤，"
+                f"把写卡改成单进程串行（`publish.py --batch` 本身就是一条条写）；"
+                f"若是别的进程异常退出留下的槽位，删除 {directory} 下对应的 lock 文件"
+            )
+        if waited - last_note >= 10:
+            last_note = waited
+            sys.stderr.write(
+                f"[排队] 写卡并发已满（服务端上限 {WRITE_PARALLEL_LIMIT} 张），"
+                f"已等 {int(waited)} 秒，等空位后继续…\n"
+            )
+        time.sleep(0.25)
+
+
+def release_write_slot(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
 class FlomoClient:
     _headers: dict[str, str]
     _session: str | None
@@ -151,7 +262,19 @@ class FlomoClient:
                 idempotent=idempotent,
             )
         except urllib.error.HTTPError as e:
-            raise FlomoError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')}") from None
+            body_txt = e.read().decode("utf-8", "replace")
+            tool = ""
+            params = payload.get("params")
+            if isinstance(params, dict):
+                tool = str(params.get("name") or "")
+            raise ServerRefusal(
+                f"服务端拒绝本次调用（HTTP {e.code}）"
+                f"{'，被拒的是 ' + tool if tool else ''}——"
+                f"不要换通道、换关键词或原地重试，那不会改变结果；"
+                f"也不要把这次失败当成「没有命中」继续往下写。"
+                f"服务端原文：{body_txt[:300] or '（空响应体）'}",
+                status=e.code, body=body_txt,
+            ) from None
         except net_util.TransportError as exc:
             raise CloudUnreachable(
                 f"云端不可达：{exc}（环境代理：{net_util.proxy_label()}）",
@@ -222,9 +345,17 @@ class FlomoClient:
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments or {}},
         }
-        # 只有**读**工具允许在通道失败时换出口重发；写工具一律不重发
-        # （判定与「不幂等」同源，见 WRITE_TOOLS 的注释）。
-        return self._post(payload, idempotent=name not in WRITE_TOOLS)
+        # 写工具先排队占槽：服务端写卡并行上限是 5 张，超出的请求会被拒，
+        # 而那种拒绝对外和「卡片内容有问题」长得一样，回到这里排队更诚实。
+        if name in WRITE_TOOLS:
+            slot = acquire_write_slot(name)
+            try:
+                # 写工具一律不重发（判定与「不幂等」同源，见 WRITE_TOOLS 的注释）。
+                return self._post(payload, idempotent=False)
+            finally:
+                release_write_slot(slot)
+        # 读工具允许在通道失败时换出口重发：重复读没有副作用。
+        return self._post(payload, idempotent=True)
 
     def tools_list(self) -> Any:
         """列出云端 MCP 暴露的全部工具（协议层元信息，不读任何卡片数据）。
@@ -371,17 +502,31 @@ def _exact_content_dup(client: FlomoClient, content: str) -> str | None:
     sig = memo_signature(content)
     if not sig:
         return None
+    failed: list[str] = []
     for keyword in concept_keywords(content, limit=4):
         try:
             res = client.tool("memo_search", {"keywords": keyword, "limit": 20})
-        except (FlomoError, SystemExit):
-            continue
+        except ServerRefusal:
+            raise
+        except (FlomoError, SystemExit) as exc:
+            # **当场停**，不换下一个关键词再撞一次：服务端拒绝说明这次调用已被
+            # 拒（可能是限额、可能是别的），再打只会更糟；吞掉更糟——那就成了
+            # 「查重没做、却报查重通过」，幂等保护无声失效，接着写出重复卡。
+            failed.append(f"{keyword}（{exc}）")
+            break
         for m in _result_memos(res):
             mid = m.get("id")
             if not mid:
                 continue
             if memo_signature(m.get("content")) == sig:
                 return mid
+    if failed:
+        # 一个关键词都没查成：此时「没找到同名卡」不成立，不能放行写云。
+        raise FlomoError(
+            "幂等查重未能完成：" + "；".join(failed[:3])
+            + "——无法确认云端是否已有同签名卡片，本次不写云；"
+              "服务端原文见上面那条失败信息，别改正文绕过查重"
+        )
     return None
 
 

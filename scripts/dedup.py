@@ -34,7 +34,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from cli_util import Opt, UsageError, cli_entry, force_utf8, parse_options  # noqa: E402
-from flomo_client import FlomoClient, FlomoError, _result_memos, load_token  # noqa: E402
+from flomo_client import (  # noqa: E402
+    FlomoClient,
+    FlomoError,
+    ServerRefusal,
+    _result_memos,
+    load_token,
+)
 
 BATCH_LIMIT = 10  # 服务端 memo_batch_get 单次上限，超过即整批报错
 
@@ -219,6 +225,13 @@ def main(argv: list[str] | None = None, client=None) -> int:
                     client, f"标签 {idx}/{total}：{tag}", {"tag": tag, "limit": limit}
                 )
                 collect(memos, seen)
+    except ServerRefusal as exc:
+        # 服务端明确拒绝（含限额类）：换关键词、换通道、原地重试都不会改变结果，
+        # 所以整轮就停在这里。**必须显式说停**——此前这句只写「未完成」，
+        # 读的人会顺手再跑一遍、或换个关键词接着打，把拒绝当成偶发。
+        print(f"[失败] 服务端拒绝，查重已停止（不重试、不换关键词）：{exc}", file=sys.stderr)
+        print("[注意] 本轮没有查重结论，禁止据此判定或写云；服务端原文见上", file=sys.stderr)
+        return 1
     except FlomoError as exc:
         print(f"[失败] 查重调用未完成：{exc}", file=sys.stderr)
         print("[注意] 查重没跑完不等于无命中，禁止据此进入判定或写云", file=sys.stderr)
