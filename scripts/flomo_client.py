@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -141,6 +142,17 @@ class ServerRefusal(FlomoError):
         self.body = body
 
 
+class RateLimited(ServerRefusal):
+    """服务端限流拒绝（HTTP 429）：本机在同一秒里发出的请求超过了每秒 5 次的上限。
+
+    **单列一类是为了不让它被当成「卡片有问题」**：429 与内容、关键词、通道都无关，
+    只与并发有关——重发、换关键词、换通道全都无效，等一秒再发就会过。
+    出现它只有两种可能：①本地仍有两个进程/会话在同时打同一个 token；
+    ②别的客户端（网页端、别的会话）也在用这个 token。先查清楚哪一个，再单独重跑。
+    客户端已按 `RATE_SAFE_PER_SECOND` 次/秒节流（见 `wait_turn`），正常单进程链路不该撞上它。
+    """
+
+
 WRITE_PARALLEL_LIMIT = 5
 """写卡并行上限：服务端同时只接受 5 张卡在写，第 6 个并发写会被拒。
 
@@ -151,6 +163,90 @@ WRITE_PARALLEL_LIMIT = 5
 超过上限的写请求在本地排队等空位，等不到就**明确报「已达并行上限」**，
 不把请求打上去换一个含混的拒绝。
 """
+
+
+RATE_LIMIT_PER_SECOND = 5
+"""服务端硬限：同一 token 每秒最多 5 次请求（实测 6 个并发请求即有 3 个被 429 拒）。
+
+为什么要在客户端节流：服务端按「每秒 5 次」硬限，**没有余量也没有 Retry-After**，
+而本地一旦出现并发（两个 publish / dedup 与 verify 同时跑、或一次批量里多进程并起），
+请求叠在同一秒里就会有一半被拒，回包却只写 `rate limit exceeded`，
+读起来像云端抽风、于是原地重试——越重试越挤。节流放在发送前统一兜住：
+每个进程都先到同一个时间表上领一个发送时刻，全机合计不超过 `RATE_SAFE_PER_SECOND` 次/秒。
+"""
+
+RATE_SAFE_PER_SECOND = 4
+"""本地自我约束的次数/秒：留 1 次余量给并发进程与重发，不贴着服务端上限跑。"""
+
+
+def _rate_dir() -> Path:
+    """节流状态目录：环境变量优先，用例可挪到临时目录。"""
+    env = os.environ.get("FLOMO_RATE_DIR")
+    return Path(env) if env else (PROJECT_ROOT / ".workbuddy" / "rate")
+
+
+_RATE_MUTEX = threading.Lock()
+
+
+def _rate_gap() -> float:
+    try:
+        rps = float(os.environ.get("FLOMO_MAX_RPS", str(RATE_SAFE_PER_SECOND)))
+    except ValueError:
+        rps = float(RATE_SAFE_PER_SECOND)
+    rps = min(max(rps, 1.0), float(RATE_LIMIT_PER_SECOND))
+    return 1.0 / rps
+
+
+def wait_turn() -> float:
+    """领一个发送时刻并等到它，返回实际等待秒数。
+
+    跨进程用「文件互斥 + 共享时间表」实现：`pacing.lock` 由 `O_CREAT|O_EXCL` 抢占，
+    读到上一次的发送时刻后把本次时刻写成 `max(now, last+gap)`，释放互斥再 sleep。
+    这样两个进程即使同时醒来也不会同时发——各自拿到相隔 gap 的位次。
+    互斥文件残留（进程被 kill）按 30 秒判过期回收；抢不到锁超过 30 秒就放行，
+    宁可短时超速也不要卡死整条链（超速最多换一次 429，卡死是整轮写不了）。
+    """
+    gap = _rate_gap()
+    directory = _rate_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return 0.0  # 状态目录建不出来就退化为不节流，不因此阻断调用
+    state = directory / "last.json"
+    mutex = directory / "pacing.lock"
+    deadline = time.time() + 30
+    with _RATE_MUTEX:
+        while True:
+            try:
+                fd = os.open(mutex, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except FileExistsError:
+                with contextlib.suppress(OSError):
+                    if time.time() - mutex.stat().st_mtime > 30:
+                        mutex.unlink()
+                        continue
+                if time.time() > deadline:
+                    return 0.0
+                time.sleep(0.005)
+            except OSError:
+                return 0.0
+        send_at = time.time()
+        try:
+            now = time.time()
+            last = 0.0
+            with contextlib.suppress(OSError, ValueError, KeyError):
+                last = float(json.loads(state.read_text(encoding="utf-8"))["last"])
+            send_at = max(now, last + gap)
+            state.write_text(json.dumps({"last": send_at, "pid": os.getpid()}), encoding="utf-8")
+        finally:
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                mutex.unlink()
+    delay = send_at - time.time()
+    if delay > 0:
+        time.sleep(delay)
+        return delay
+    return 0.0
 
 
 def _write_lock_dir() -> Path:
@@ -249,6 +345,9 @@ class FlomoClient:
         headers = dict(self._headers)
         if with_session and self._session:
             headers["Mcp-Session-Id"] = self._session
+        # 发送前先到共享时间表上领一个位次：服务端每秒只收 5 次，本地并发进程
+        # 各自醒来时若不排队，就会在同一秒里撞成 429（拒绝长得像内容问题）。
+        wait_turn()
         data = json.dumps(payload).encode("utf-8")
         # 出网走 net_util：代理端口每次会话重新分配，裸调 urlopen 会让「端口没对上」
         # 表现为整轮写卡失败，而且抛的是 URLError——`except FlomoError` 接不住，
@@ -267,6 +366,15 @@ class FlomoClient:
             params = payload.get("params")
             if isinstance(params, dict):
                 tool = str(params.get("name") or "")
+            if e.code == 429:
+                raise RateLimited(
+                    f"服务端限流（HTTP 429）{'，被拒的是 ' + tool if tool else ''}——"
+                    f"同一 token 每秒最多 5 次请求，本机这一秒里发出的超过了上限。"
+                    f"这与卡片内容、关键词、通道都无关，重发和换词都不会改变结果；"
+                    f"先确认没有第二个进程或会话在同时打同一个 token，"
+                    f"再等一秒单独重跑。服务端原文：{body_txt[:200] or '（空响应体）'}",
+                    status=429, body=body_txt,
+                ) from None
             raise ServerRefusal(
                 f"服务端拒绝本次调用（HTTP {e.code}）"
                 f"{'，被拒的是 ' + tool if tool else ''}——"

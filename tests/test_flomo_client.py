@@ -14,6 +14,7 @@ COVERS = ("flomo_client", "cli_util",)
 
 import contextlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -822,6 +823,82 @@ def run_write_limit_cases():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def run_rate_limit_cases():
+    """每秒 5 次硬限：请求必须排队，不许同时打上去换成 429。
+
+    实测：4 个并发请求里就有 1 个被 429 拒，6 个里 3 个被拒——服务端只认
+    「每秒 5 次」，且没有 Retry-After。所以本地必须在发送前排队：这里用假
+    `_post` 的发送时刻验证相邻两次间隔不小于 1/4 秒（本地自留 1 次余量）。
+    """
+    import tempfile as _tempfile
+
+    old_dir = os.environ.get("FLOMO_RATE_DIR")
+    old_rps = os.environ.get("FLOMO_MAX_RPS")
+    tmp = _tempfile.mkdtemp(prefix="flomo-rate-")
+    os.environ["FLOMO_RATE_DIR"] = tmp
+    os.environ["FLOMO_MAX_RPS"] = "4"
+    try:
+        check("本地节流次数低于服务端上限", FC.RATE_SAFE_PER_SECOND < FC.RATE_LIMIT_PER_SECOND,
+              f"{FC.RATE_SAFE_PER_SECOND}/{FC.RATE_LIMIT_PER_SECOND}")
+        gap = FC._rate_gap()
+        check("节流间隔按 4 次/秒算", abs(gap - 0.25) < 1e-9, gap)
+
+        stamps = []
+        real_post = FC.FlomoClient._post
+
+        def fake_post(self, payload, with_session=True, idempotent=True):
+            stamps.append(__import__("time").monotonic())
+            return None
+
+        FC.FlomoClient._post = fake_post
+        try:
+            # 直接调 wait_turn 再记时刻：等价于 _post 发送前的排队
+            for _ in range(6):
+                FC.wait_turn()
+                stamps.append(__import__("time").monotonic())
+        finally:
+            FC.FlomoClient._post = real_post
+        intervals = [b - a for a, b in itertools.pairwise(stamps)]
+        check("连续 6 次发送两两间隔 ≥ 0.25 秒（不含首尾）",
+              all(x >= gap - 0.02 for x in intervals), [round(x, 3) for x in intervals])
+
+        # 429 必须单独成类：它跟内容无关，混进 ServerRefusal 会被当成卡片问题
+        check("429 有独立异常类型 RateLimited", issubclass(FC.RateLimited, FC.ServerRefusal))
+        # 假 net_util 抛 HTTP 429，验证分类与提示
+        class FakeHTTP( __import__("urllib.error", fromlist=["HTTPError"]).HTTPError):
+            pass
+
+        def fake_request(url, **kwargs):
+            raise __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+                url, 429, "Too Many Requests",
+                {"Content-Type": "application/json"},
+                __import__("io", fromlist=["BytesIO"]).BytesIO(b'{"error":"rate limit exceeded"}'),
+            )
+
+        real_request = FC.net_util.request
+        FC.net_util.request = fake_request
+        try:
+            FC.wait_turn()
+            client = FC.FlomoClient("t")
+            err = None
+            try:
+                client.tool("memo_search", {"keywords": "x", "limit": 1})
+            except FC.RateLimited as exc:
+                err = exc
+        finally:
+            FC.net_util.request = real_request
+        check("429 落成 RateLimited 并保留状态码", err is not None and err.status == 429,
+              getattr(err, "status", None))
+        check("429 的提示写明与卡片内容无关、不许重发",
+              bool(err) and "无关" in str(err) and "重发" in str(err), str(err)[:80])
+    finally:
+        for key, val in (("FLOMO_RATE_DIR", old_dir), ("FLOMO_MAX_RPS", old_rps)):
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
+
+
 def run_refusal_cases():
     """服务端拒绝（HTTP 4xx/5xx，含 429）：报原文、不重试、不换关键词继续打。
 
@@ -881,6 +958,7 @@ if __name__ == "__main__":
     run_usage_cases()
     run_write_limit_cases()
     run_refusal_cases()
+    run_rate_limit_cases()
     print("---")
     print("全部通过" if all(RESULTS) else "存在失败用例")
     sys.exit(0 if all(RESULTS) else 1)
