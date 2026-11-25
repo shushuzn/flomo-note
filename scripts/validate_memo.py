@@ -489,6 +489,13 @@ def _check_status_line(lines):
         m = META_STATUS_LINE_RE.match(s)
         if not m:
             continue
+        label = m.group(0).strip().rstrip("：:")
+        if re.fullmatch(r"(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
+                        r"(?:当前|进展|最新|追踪|更新|既往)?状态", label):
+            err(f"第 {i} 行是卡片级状态行「{label}：」——正文只写概念本身，"
+                f"不写这张卡的进度 / 评审 / 核验状态（H15）。整行删除；"
+                f"确属概念属性就写成带对象的要点（如「运行状态：并网」），不要留裸状态标签")
+            continue
         if i < last_line_no - 1:
             continue  # 非末尾行：视为正文要点，不报
         tail = re.split(r"[：:]", s, maxsplit=1)[-1].strip()
@@ -496,6 +503,25 @@ def _check_status_line(lines):
             continue  # 冒号后是长论述：视为正文，不报
         warn(f"第 {i} 行疑似旧格式状态行（卡片格式硬限：无来源行、无状态行）——匹配到「{m.group(0).strip()}」；"
              f"若这是正文要点可忽略，若确为卡片级状态行请删除该行，把信息融入正文对应要点或直接省略")
+
+
+def _check_ascii_subscript(lines):
+    """5.13) ASCII 下标（ERR）：`ω_F` `B_r` `O_F` 回读会被转义成反斜杠。
+
+    flomo 把下划线按 Markdown 转义存起来，云端正文因此显示成「ω\\_F」——读者看到的是
+    反斜杠，而本地草稿是干净的，逐字比对照样通过。H14 要求纯文本、公式用 Unicode，
+    故正文出现「拉丁/希腊/数学字母 + 下划线 + 字」一律判错，改用 Unicode 下标或中文表述。
+    """
+    pat = re.compile(r"[A-Za-z0-9\u0370-\u03ff\u2200-\u22ff]_[A-Za-z0-9\u0370-\u03ff]+")
+    for i, ln in enumerate(lines[2:], start=3):
+        s = URL_IN_LINE.sub(" ", ln)
+        m = pat.search(s)
+        if not m:
+            continue
+        err(f"第 {i} 行含 ASCII 下标「{m.group(0)}」——云端会把下划线转义成反斜杠，"
+            f"正文显示为「{m.group(0).replace('_', chr(92) + '_')}」。"
+            f"公式用 Unicode 下标或写成中文（「n 的 9/4 次方」「ω 关于域 F 的值」），"
+            f"不要用下划线拼下标（H14）")
 
 
 def _check_carrier(lines):
@@ -799,7 +825,16 @@ def _check_event_source(lines):
         r"(?<![\u4e00-\u9fff])"
         r"(?:(?:该|这|本|此)(?:篇|项)?)?"
         r"(?:论文|文章|文献|本文|研究报告|研究|作者团队|研究团队)"
-        r"\s*(?:采用|使用|用|提出|证明|构造|建立|给出|发现|认为|指出|研究|报道|称)"
+        r"\s*(?:采用|使用|用|提出|证明|构造|建立|给出|发现|认为|指出|研究|报道|称"
+        r"|补出|推出|得到|回答|解决)"
+    )
+    # 日期 + 载体：`某机构 + 年月日 + 的论文 + 谓语`——主语被「日期 + 的论文」
+    # 拆成了定语，source_agent 的「论文 + 谓语」接不上（中间隔着日期）。日期加载体名
+    # 是署名形态而不是事件时间：事件只说「某日发布」，不会把自己的载体写成主语。
+    # 故只认「日期 + 的 + 论文/预印本/报告/文章」，不认单独的日期。
+    source_attrib_date = re.compile(
+        r"20\d{2}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?\s*的\s*"
+        r"(?:论文|预印本|手稿|报告|研究文章|文章)"
     )
     source_label = re.compile(
         r"^\s*(?:[-*~\u2022]\s*)?(?:\d{1,2}[.、)]\s*)?"
@@ -826,7 +861,8 @@ def _check_event_source(lines):
             continue
         hit = None
         for probe in (source_lead, source_bare, source_subj, source_act,
-                      source_media, source_lead_short, source_anon, source_agent):
+                      source_media, source_lead_short, source_anon, source_agent,
+                      source_attrib_date):
             m = probe.search(s)
             if not m:
                 continue
@@ -1303,6 +1339,7 @@ def check(content):
     _check_inline_hash(lines)             # 4.5) 正文脏标签
     _check_placeholders(content)          # 5) 占位词
     _check_status_line(lines)             # 5.5) 旧格式状态行
+    _check_ascii_subscript(lines)         # 5.13) ASCII 下标（云端转义）
     _check_carrier(lines)                 # 5.6) 载体元信息
     _check_event_source(lines)            # 5.8) 事件来源信息
     _check_bracket_signature(lines)       # 5.11) 括号署名
