@@ -275,7 +275,7 @@ def run_server_fallback_cases():
     FA.net_util.request = boom
     FA._via_server = fake_via
     try:
-        text, _ctype, channel = FA.fetch("https://example.invalid/x", allow_server=True)
+        _text, _ctype, channel = FA.fetch("https://example.invalid/x", allow_server=True)
         check("本机出网全断时回退到远端通道", calls and "远端" in channel, channel)
         check("回退理由写明本机出网不可用", "本机出网不可用" in calls[0][1], calls)
         try:

@@ -12,7 +12,6 @@
 COVERS = ("baseline_check",)
 
 import importlib.util
-import os
 import shutil
 import subprocess
 import sys

@@ -85,6 +85,24 @@ fi
 shift || true
 FILES=("$@")
 
+# ---- 0. 本地 CI 门禁：未过不得提交、不得推送 ----
+# 为什么放在认证之前：CI 红的时候不该先去拨隧道、换 token——那既浪费一次重试，
+# 也会让人误以为失败原因是网络。红就当场停在这里，一个字都别往远端送。
+# 判据只有一份：跑 scripts/run_ci.sh（其内容与 .github/workflows/ci.yml 由
+# tests/test_run_ci.py 比对）。本脚本不另写规则，只负责「没过就不许走」。
+CI_SCRIPT="${FLOMO_PUSH_CI:-scripts/run_ci.sh}"
+if [ ! -f "$CI_SCRIPT" ]; then
+  echo "[push] 错误：找不到本地 CI 入口 $CI_SCRIPT——没有门禁就不推。" >&2
+  exit 5
+fi
+echo "[push] 本地 CI 门禁：$CI_SCRIPT（未过则不提交、不推送）"
+if ! bash "$CI_SCRIPT"; then
+  echo "[push] 本地 CI 未过——已中止，未提交、未推送。先修红再重跑本脚本。" >&2
+  exit 5
+fi
+echo "[push] 本地 CI 全过，继续提交/推送"
+
+
 # 推什么、核什么，只在这一处决定。分支与标签共用后面的两条通道逻辑，
 # 若各自写一遍 ref，改了一处漏了另一处就会变成「推的是分支、核的是标签」。
 PUSH_REF="HEAD"

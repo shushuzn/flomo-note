@@ -221,7 +221,6 @@ def main(argv=None) -> int:
     plen = _cjk_len(prose)
     # 每张卡的明细行落在哪一段（没有段标题时为 None，另行由「缺段」判据拦下）
     detail_section = row_sec
-    detail_ln = row_ln
 
     # ---- 1. 条数与 id 集合 ----
     if len(detail_rows) != len(ids):

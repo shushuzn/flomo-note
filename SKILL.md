@@ -364,7 +364,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 ### 技能文档治理（与写卡执行无关）
 
-**H25 · 文档改动走独立流程。** 修订一律等用户指令；**commit 与 push 用同一次 `scripts/push_skill.sh "msg"` 完成，禁裸 `git commit`**，随后 `git ls-remote` 核对；禁手搓 git 命令。复盘建议的落点只能是云端卡片。
+**H25 · 文档改动走独立流程。** 修订一律等用户指令；**commit 与 push 用同一次 `scripts/push_skill.sh "msg"` 完成，禁裸 `git commit`**，随后 `git ls-remote` 核对；禁手搓 git 命令。**推送前必须先过本地 CI**：`push_skill.sh` 自己跑 `scripts/run_ci.sh`，任一道红就中止，不提交、不推送；「本地全绿」只认这个入口的四道阶段（ruff / 离线回归 / mypy / pytest+覆盖率），只跑 `run_tests.sh` 不算。复盘建议的落点只能是云端卡片。
 **H26 · 笔记只在云端。** 本地不落盘任何卡片正文；`.mcp.json`（含 token）不提交。
 **H27 · 收尾强制清理（不等确认）。** 列名 → 打包 `.workbuddy/trash/` → 断言完整 → 删除 → 复核为 0，走 `scripts/cleanup.py`；`--verify` 与清理共用基准（`.workbuddy/.cleanup_run`）；不得删当轮素材（H24）。
 **H30 · 报告照抄定稿，不改写。** 报告校验通过后须落一份定稿（`report_check.py --emit`），末条回复逐字复制它——概念名后的冒号、那句话、id、标签顺序、字数都不许重排或改写。手写一份「意思一样」的版本等于绕过校验：校验过的文本与实际发出的文本是两份东西（H26）。
