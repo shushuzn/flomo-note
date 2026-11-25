@@ -1338,7 +1338,9 @@ def _check_person_case(lines):
     if individual and cname_idx is not None:
         cname = lines[cname_idx].strip()
         person_like = re.fullmatch(r"[\u4e00-\u9fa5·]{2,4}", cname)
-        institutional = re.search(r"处分|纪律|监察|条例|规定|办法|罪|程序|审查|监督", cname)
+        institutional = re.search(
+            r"处分|纪律|监察|条例|规定|办法|罪|程序|审查|监督|"
+            r"党籍|党纪|警告|察看|撤职|政务|法|纪", cname)
         if person_like and not institutional:
             err(f"第 {cname_idx + 1} 行概念名「{cname}」是个人，正文却是个案处分通报"
                 f"（命中「{individual.group(0)}」）——单个自然人的处分个案不建人物卡（H6h）："
