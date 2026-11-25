@@ -1315,6 +1315,47 @@ def _check_bullet_label(lines):
                  f"「为什么消失」），而不是换一个同样空泛的词。用词不设禁用清单，写清是什么即可")
 
 
+def _check_person_case(lines):
+    """9) 人名剥离检验（H6h）：个案通报不许写成人物卡，人名头衔成串时提示剥离复核。
+
+    由来：一条「某市人大社会委原副主任委员被开除党籍」的通稿，卡面写成当事人姓名，
+    要点逐句复述「丧失理想信念 / 违规收受礼金 / 干预工程承包」——把人名划掉，
+    剩下的任何一份落马通报都有，读者拿不到可检索的概念、条文或机制。
+    问题不在措辞，而在对象选错：材料的主体是处分行为与依据，不是这个自然人。
+
+    本条只判两件机器判得出的事：
+      ① 概念名是个人姓名（2–4 个汉字，无制度性限定词），正文却是**个案处分动作**
+         （被开除党籍 / 被双开 / 取消退休待遇 / 移送检察机关）→ ERR；
+      ② 正文头衔词（委员 / 主任 / 馆长 / 冠军 …）与言说署名（某人表示 / 某人坦言）
+         合计 ≥3 处 → WARN，提示按 H6h 剥离后复核，不阻断写云。
+    阈值取 4：活动、会议类材料有两三处介绍属常态，成串才说明卡是靠人名串起来的。
+    """
+    cname_idx = concept_name_index(lines)
+    body = "\n".join(ln for ln in lines if ln.strip())
+    # ① 个案处分通报人格化
+    individual = re.search(
+        r"被开除党籍|被开除公职|被双开|取消其退休待遇|移送检察机关|决定给予.{0,8}处分", body)
+    if individual and cname_idx is not None:
+        cname = lines[cname_idx].strip()
+        person_like = re.fullmatch(r"[\u4e00-\u9fa5·]{2,4}", cname)
+        institutional = re.search(r"处分|纪律|监察|条例|规定|办法|罪|程序|审查|监督", cname)
+        if person_like and not institutional:
+            err(f"第 {cname_idx + 1} 行概念名「{cname}」是个人，正文却是个案处分通报"
+                f"（命中「{individual.group(0)}」）——单个自然人的处分个案不建人物卡（H6h）："
+                f"当事人姓名不进概念名、不进正文；要成卡就写处分种类、法定依据与后果"
+                f"（如「开除党籍」处分、受贿罪的构成），不搬个案情节；"
+                f"剥离人名后撑不起一张卡就按 H6c 退出")
+    # ② 人名 / 头衔成串
+    titles = re.findall(r"(?:委员|主任|馆长|教授|校长|书记|局长|董事长|总经理|冠军|牵头人|主播|编辑顾问|研究员)", body)
+    speeches = re.findall(r"[\u4e00-\u9fa5·]{2,4}(?:表示|坦言|讲述|回忆|分享|介绍|说道)", body)
+    total = len(titles) + len(speeches)
+    if total >= 4 and len(body) <= 800:
+        warn(f"正文有 {total} 处头衔词与人名署名（{('、'.join(speeches[:3])) or '见正文'}）——"
+             f"按 H6h 做一次剥离：把人名、头衔、引语署名划掉，剩下的若只有「某人讲了某事 / "
+             f"某人到场」、撑不起「这是什么、怎么运作」，就该按 H6c 退出；"
+             f"剩下的是机制、条文、参数才建卡，人名降为身份指称")
+
+
 def check(content):
     """单卡静态自检入口：只做编排——按编号顺序调用各项检查。
 
@@ -1350,6 +1391,7 @@ def check(content):
     _check_abstract_dep(lines)            # 6) 摘要依赖
     _check_deixis(lines)                  # 7) 材料指示词
     _check_bullet_label(lines)            # 8) 空要点标签
+    _check_person_case(lines)             # 9) 人名剥离检验（H6h）
 
 
 def _signature_of(content):
