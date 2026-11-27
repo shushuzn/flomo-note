@@ -8,7 +8,7 @@
 又是数值位，写错会让同一张卡出现两个簇，比没有评分更难收拾。
 """
 
-COVERS = ("score_check", "validate_memo")
+COVERS = ("score_check", "validate_memo", "score_backfill")
 
 import importlib.util
 import io
@@ -32,6 +32,7 @@ def _load(name):
 
 SC = _load("score_check")
 VM = _load("validate_memo")
+BF = _load("score_backfill")
 
 
 def run_case(name, fn, want):
@@ -50,6 +51,14 @@ def cli(*argv):
     with redirect_stdout(buf):
         code = SC.main(list(argv))
     return code, buf.getvalue()
+
+
+def _skip(fn, *a, **kw):
+    try:
+        fn(*a, **kw)
+    except BF.Skip as exc:
+        return str(exc)
+    return "<没有跳过>"
 
 
 def check_errors(content, require=False):
@@ -113,6 +122,37 @@ def main():
         results.append(run_case(f"写法 {bad} 判错",
                                 lambda b=bad: check_errors(
                                     f"#数学/泛函分析 {b}\n某概念\n\n要点：\n- 内容\n") > 0, True))
+
+    # ---- 五、存量回填：云端 <br> 归一、只动首行、拒不该动的卡 ----
+    card = "#数学/线性代数<br>某概念<br><br>要点：<br>- 内容<br>"
+    results.append(run_case("云端 <br> 归一后拆出标签行",
+                            lambda: BF.split_card(card)[0], "#数学/线性代数"))
+    results.append(run_case("拆出概念名", lambda: BF.split_card(card)[1], "某概念"))
+    results.append(run_case("正文保留其余行",
+                            lambda: "内容" in BF.split_card(card)[2], True))
+    results.append(run_case("回填只动首行：加评分位",
+                            lambda: BF.desired_tagline("#数学/线性代数", 80, overwrite=False),
+                            "#数学/线性代数 #评分/80"))
+    results.append(run_case("已有评分位默认跳过",
+                            lambda: _skip(BF.desired_tagline, "#数学/线性代数 #评分/60", 90, overwrite=False),
+                            "已有评分位（要改分加 --overwrite）"))
+    results.append(run_case("--overwrite 改写而不叠加",
+                            lambda: BF.desired_tagline("#数学/线性代数 #评分/60", 90, overwrite=True),
+                            "#数学/线性代数 #评分/90"))
+    results.append(run_case("截断卡拒绝回填",
+                            lambda: _skip(BF.plan_one, "x", "#数学/线性代数<br>某概念<br><br>要点：<br>- [此处省略30字]<br>",
+                                                {"grade": "mainstream", "adj": {}}, overwrite=False),
+                            "正文含截断占位符，回写会固化缺失段落"))
+    results.append(run_case("待清理骨架拒绝回填",
+                            lambda: _skip(BF.plan_one, "x", "#待清理<br>某概念<br><br>原文 300 字",
+                                                {"grade": "proved", "adj": {}}, overwrite=False),
+                            "待清理骨架"))
+    results.append(run_case("首行非标签行拒绝回填",
+                            lambda: _skip(BF.plan_one, "x", "某概念<br><br>正文", {"grade": "proved", "adj": {}}, overwrite=False),
+                            "首行不是标签行（先按 H6 修形态）"))
+    results.append(run_case("等级表缺这张就不动它",
+                            lambda: _skip(BF.plan_one, "x", card, {"grade": "maybe", "adj": {}}, overwrite=False),
+                            "未知等级 maybe"))
 
     print("---")
     print("全部通过" if all(results) else "存在失败用例")
