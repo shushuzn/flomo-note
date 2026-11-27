@@ -158,7 +158,7 @@ def confirm(root: str | Path | None = None, quote: str = "") -> int:
     if len(given) < MIN_QUOTE:
         print(f"[阻塞] 引用太短（{len(given)} 字，下限 {MIN_QUOTE}）：引该行开头的连续十余字", file=sys.stderr)
         return 1
-    if not actual.startswith(given):
+    if given not in actual:
         print(f"[阻塞] 引用与第 {line_no} 行对不上：去读那一行，别按记忆填", file=sys.stderr)
         return 1
     token = {

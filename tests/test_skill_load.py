@@ -48,11 +48,11 @@ def _fixture(tmp: Path, lines: int = 60) -> Path:
     return root
 
 
-def _challenge_quote(root: Path) -> str:
+def _challenge_quote(root: Path, span: slice = slice(0, 12)) -> str:
     """按挑战行号取该行开头，模拟「真去读了那一行」。"""
     challenge = json.loads((root / ".workbuddy" / SL.CHALLENGE_NAME).read_text(encoding="utf-8"))
     line = (root / "SKILL.md").read_text(encoding="utf-8").splitlines()[challenge["line"] - 1]
-    return line.strip()[:12]
+    return line.strip()[span]
 
 
 def run_cases():
@@ -76,6 +76,13 @@ def run_cases():
         check("凭证已落盘", (root / ".workbuddy" / SL.TOKEN_NAME).exists())
         check("闸门放行", SL.guard(root) == 0)
         check("挑战用完即删", not (root / ".workbuddy" / SL.CHALLENGE_NAME).exists())
+
+        # ③b 行中片段也算读过（不要求正好是开头，行内任何连续片段都可举证）
+        one = _fixture(tmp / "e")
+        os.environ[SL.ROOT_ENV] = str(one)
+        SL.issue(one)
+        mid = _challenge_quote(one, slice(6, 20))
+        check("行中片段可作引用", SL.confirm(one, mid) == 0, mid)
 
         # ④ 无凭证：闸门退出 9
         clean = _fixture(tmp / "b")
