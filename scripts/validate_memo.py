@@ -50,11 +50,6 @@ GATE_DIR = PROJECT_ROOT / ".sop_gate"
 
 TAG_CHAR_OK = re.compile(r"^[\w\u4e00-\u9fff/]+$")
 
-# 评分标签（H35）：`#评分/N`，N 取 0–100 的整数。评分是数值位，不进标签树核对，
-# 但必须恰好一个、写法固定，否则同一张卡会出现 `#评分/80` 与 `#评分80` 两个簇。
-SCORE_TAG_TOP = "评分"
-SCORE_TAG_RE = re.compile(r"^评分/(0|[1-9]\d?|100)$")
-
 # 表格：分隔行（|---|---|）、被竖线包裹的行（| a | b |）、空格包围的竖线成组（a | b | c）
 # 半角 `|` 与全角 `｜`（U+FF5C）同等认定——中文输入法下常打出全角，漏认会造成漏报。
 _P = "|｜"
@@ -302,30 +297,6 @@ def _check_tag_line(lines):
             # 子标签前缀检查：存在带 / 的主标签时，裸二级（无 /）即疑似建错顶层
             if has_slash and "/" not in name:
                 err(f"疑似裸子标签（无主标签前缀）：{t} —— 应写成 #主/子，否则会建出独立顶层标签")
-
-
-def _check_score_tag(lines, require: bool = False):
-    """2) 评分标签（H35）：`#评分/N` 恰好一个，N 取 0–100 整数。
-
-    存量卡没有评分位，默认只给 WARN，避免历史卡一片红；写云前的草稿走
-    `--require-score`，缺位即 ERR。写法与取值一律 ERR：数值位写错会让同一张卡
-    出现两个簇，比没有评分更难收拾。
-    """
-    first = lines[0].strip() if lines else ""
-    tags = first.split()
-    score_tags = [t for t in tags if t.lstrip("#").split("/")[0] == SCORE_TAG_TOP]
-    if not score_tags:
-        if require:
-            err("首行标签段缺评分位 `#评分/N`（N 取 0–100，按 SCORING.md 的等级底分"
-                "加四项修正算出，用 scripts/score_check.py 校验）")
-        return
-    if len(score_tags) > 1:
-        err(f"评分标签只能有一个，当前 {len(score_tags)} 个：{' '.join(score_tags)}")
-    for t in score_tags:
-        name = t[1:]
-        if not SCORE_TAG_RE.match(name):
-            err(f"评分标签写法不合规：{t} —— 只允许 `#评分/N`，N 取 0–100 的整数，"
-                "不留前导零，不写小数点与百分号")
 
 
 def _check_concept_layout(lines):
@@ -1405,7 +1376,7 @@ def _check_person_case(lines):
              f"剩下的是机制、条文、参数或法定表述才建卡，人名降为身份指称")
 
 
-def check(content, require_score: bool = False):
+def check(content):
     """单卡静态自检入口：只做编排——按编号顺序调用各项检查。
 
     顺序即报告顺序：各项直接向 ERR / WARN 追加，调用次序决定使用者看到的条目
@@ -1422,7 +1393,6 @@ def check(content, require_score: bool = False):
     _check_truncation(content)            # 0) 截断占位符
     _check_tool_echo(content)             # 0b) 工具回包混入
     _check_tag_line(lines)                # 1) 首行标签段
-    _check_score_tag(lines, require_score)  # 2) 评分位（H35）
     _check_concept_layout(lines)          # 2) 概念名结构
     _check_heading_block(lines)           # 2b) 缺「要点：」引导行
     _check_body_length(content, lines)    # 3) 正文与字数上限
@@ -1606,8 +1576,6 @@ def main():
     WARN.clear()
     argv = sys.argv[1:]
     no_gate = False
-    require_score = "--require-score" in argv
-    argv = [a for a in argv if a != "--require-score"]
     if "--no-gate" in argv:
         no_gate = True
         argv = [a for a in argv if a != "--no-gate"]
@@ -1616,7 +1584,7 @@ def main():
     except (IndexError, FileNotFoundError, json.JSONDecodeError) as e:
         sys.stderr.write(f"读取输入失败：{e}\n")
         return 2
-    check(content, require_score=require_score)
+    check(content)
     # 流程闸门降级（--no-gate）不再是无条件开关：须凭证里带 sop_gate.py --allow-no-gate 的
     # 授权标记才生效，否则照常判 ERR。避免"谁加个参数谁就绕过整套 SOP"。
     if no_gate and _no_gate_authorized(content):
