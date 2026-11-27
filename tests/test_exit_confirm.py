@@ -21,6 +21,20 @@ SCRIPT = ROOT / "scripts" / "exit_confirm.py"
 
 RESULTS = []
 
+# 关账入口带加载闸门：用例要跑的是「校验逻辑」而不是「有没有读细则」，故造一份
+# 等价的技能目录（SKILL.md 原样复制 + 按它的 sha256 写凭证），闸门因此如实放行。
+SKILL_ROOT = Path(tempfile.mkdtemp(prefix="exit-confirm-skill-"))
+import hashlib
+import shutil
+
+shutil.copyfile(ROOT / "SKILL.md", SKILL_ROOT / "SKILL.md")
+(SKILL_ROOT / ".workbuddy").mkdir(exist_ok=True)
+_SHA = hashlib.sha256((SKILL_ROOT / "SKILL.md").read_bytes()).hexdigest()
+(SKILL_ROOT / ".workbuddy" / "skill_load.json").write_text(
+    json.dumps({"ts": int(__import__("time").time()), "sha256": _SHA, "line": 10,
+                "quote_len": 12, "doc": str(SKILL_ROOT / "SKILL.md")}),
+    encoding="utf-8")
+
 
 def check(label, ok, detail=""):
     RESULTS.append(ok)
@@ -51,7 +65,8 @@ def _decode(raw):
 
 
 def run(args):
-    env = {**os.environ, "FLOMO_ROUND_LEDGER": str(LEDGER)}
+    env = {**os.environ, "FLOMO_ROUND_LEDGER": str(LEDGER),
+           "FLOMO_SKILL_ROOT": str(SKILL_ROOT)}
     p = subprocess.run([sys.executable, str(SCRIPT), "--skip-fetch", *args],
                        cwd=ROOT, capture_output=True, timeout=60, env=env)
     return p.returncode, _decode(p.stdout), _decode(p.stderr)

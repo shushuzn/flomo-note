@@ -84,6 +84,11 @@ def main():
     blocked = write_guard()
     if blocked:
         return blocked
+    # 关账同样要凭「这一轮读过细则」：没读就关账，等于把按记忆跑的结果记成合规轮次。
+    from skill_load import guard as load_guard
+    blocked = load_guard()
+    if blocked:
+        return blocked
     ap = argparse.ArgumentParser()
     ap.add_argument("--objects", default="", help="逗号分隔的对象清单（退出模式必填）")
     ap.add_argument("--url", required=True,

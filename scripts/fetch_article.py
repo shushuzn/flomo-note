@@ -803,4 +803,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     # 用法错（参数写成非数字等）由入口渲染：`main` 里不再各写一份报错文案。
-    sys.exit(cli_entry(main, errors=(), usage_code=1))
+    sys.exit(cli_entry(main, errors=(), usage_code=1, load=True))

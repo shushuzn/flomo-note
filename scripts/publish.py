@@ -1475,4 +1475,4 @@ if __name__ == "__main__":
     # 与其余命令行脚本同一出口：`FlomoError` / `UsageError` 收成一行 + 退出码，
     # 不让「没配 token」变成 traceback（`main` 里子进程的失败是靠退出码判的，
     # 但本脚本自己也会解 JSON、读文件，兜底不能省）。
-    sys.exit(CLI.cli_entry(main, errors=(FC.FlomoError,), usage_code=1, write=True))
+    sys.exit(CLI.cli_entry(main, errors=(FC.FlomoError,), usage_code=1, write=True, load=True))

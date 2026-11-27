@@ -96,6 +96,9 @@ def _defined_names(tree):
 
 
 LEAF_ALLOWANCE = "skill_sync"
+# 第二个例外：加载闸门。它与 skill_sync 同性质——只读本地文件、只依赖标准库，
+# 且必须是函数内惰性导入，否则 cli_util 一被 import 就先把细则文件读上。
+LEAF_ALLOWANCE_EXTRA = ("skill_load",)
 
 
 def _module_level_imports(tree):
@@ -119,8 +122,9 @@ def run_leaf_layer():
           "；".join(sorted(top)))
 
     lazy = [n for m, n, _node in _local_imports(tree, known) if m == LEAF_ALLOWANCE]
+    allowed = (LEAF_ALLOWANCE, *LEAF_ALLOWANCE_EXTRA)
     stray = [f"{m}->{n}" for m, n, _node in _local_imports(tree, known)
-             if m != LEAF_ALLOWANCE]
+             if m not in allowed]
     check(f"cli_util.py 函数内只惰性导入 {LEAF_ALLOWANCE}", not stray,
           "；".join(stray))
     check(f"cli_util.py 确实在函数里用了 {LEAF_ALLOWANCE}（否则例外名存实亡）",

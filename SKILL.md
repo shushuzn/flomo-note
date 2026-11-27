@@ -7,7 +7,7 @@ description: Use when the user sends a link, asks to save an article, clip a web
 
 > **唯一细则源**，须在 20000 字内（`check_skill_docs.py` 硬拦）。环境见 `ENVIRONMENT.md`，总则见 `AGENTS.md`。
 >
-> **先读后做**：每轮开工先完整读本文件，禁凭记忆复刻命令。
+> **先读后做（硬拦）**：每轮开工先完整读本文件，禁凭记忆复刻命令。读没读由凭证判：`python3 scripts/skill_load.py` 只打行号，读过该行后 `--quote "该行开头十余字"` 回填；凭证 12 小时有效、文档一改即失效。`fetch_article` / `publish` / `exit_confirm` 三处无凭证退出 9。
 >
 > **版本自愈**：技能目录有两份——镜像内副本（容器重启退回构建时提交）与持久副本（`/home/user/flomo-note`，规范工作副本，入口经 `.user_skills` 软链指向它）。开工先 `python3 scripts/baseline_check.py` 判定本轮跑的是哪一份：非 `ok` 先修副本（见 `ENVIRONMENT.md` 的恢复命令）。所有 CLI 入口开跑前已自动快进，看到 `[同步] …已快进` 属正常，不必再手工 `pull`。只读命令取不到远端时照跑；**写云的三条命令（`publish` / `exit_confirm` / `retire`）在版本未确认时直接拒写并退出 8**——旧版跑只读还能靠人复核，旧版写云只能事后人工回滚。
 

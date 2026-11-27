@@ -210,7 +210,7 @@ def _ensure_fresh() -> None:
 def cli_entry(main: Callable[[], Any], *,
               errors: tuple[type[BaseException], ...], code: int = 1,
               prefix: str = "[失败]", usage_code: int = 2,
-              sync: bool = True, write: bool = False) -> Any:
+              sync: bool = True, write: bool = False, load: bool = False) -> Any:
     """CLI 入口的统一出口：跑 `main`，把**预期内**的失败转成退出码。
 
     所有命令行脚本的 `__main__` 都走这里。凭据缺失、握手失败、协议错误都是可预期
@@ -229,7 +229,22 @@ def cli_entry(main: Callable[[], Any], *,
     `write=True` 是给**会落云端账**的命令用的（`publish` / `exit_confirm` / `retire`）：
     版本没确认（取不到远端、快进失败、本地脏、本地领先）就拒绝执行并退出 8，不再往下跑。
     只读命令不传它——旧版跑只读还能靠人复核，旧版写云只在事后人工回滚。
+
+    `load=True` 是给**流程必经点**用的（`fetch_article` / `publish` / `exit_confirm`）：
+    没有技能加载凭证、凭证过期、或 `SKILL.md` 改过之后没重读，就退出 9。加载口径见
+    `skill_load.py`——它要的是引用一行随机原文，不是打勾，理由是「读没读」只能靠原文举证。
+    只读的辅助脚本不传它：拦太宽会把人逼到「为过检而编凭证」，比不拦更坏。
     """
+    # 查手册不算开工：`--help` 放行，否则连「这条命令怎么用」都得先取证。
+    if load and not any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+        try:
+            from skill_load import guard
+        except Exception:  # noqa: BLE001 —— 取不到实现时不额外拦，主流程照旧
+            guard = None  # type: ignore[assignment]
+        if guard is not None:
+            blocked = guard()
+            if blocked:
+                return blocked
     if sync:
         _ensure_fresh()
     if write:
