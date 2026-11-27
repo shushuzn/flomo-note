@@ -1010,7 +1010,7 @@ def precheck(run, draft: str, verify: str, skip_web: bool, update_id: str = "",
     print("[通过] 闸门")
 
     _step(prefix + "② 文本质检 validate_memo")
-    code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft])
+    code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft, "--require-score"])
     if out.strip():
         print(_tail(out))
     if code != 0:
@@ -1057,7 +1057,7 @@ def write_one(run, draft: str, verify: str, *, update_id: str = "",
            "word_count": None, "tags": [], "checks": 0, "human": []}
     if expect_digest and _digest(Path(draft)) != expect_digest:
         print("[告警] 草稿在预检之后被改动过，重跑质检确认凭证仍覆盖这份正文")
-        code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft])
+        code, out, err = run([PY, str(SCRIPT_DIR / "validate_memo.py"), "--file", draft, "--require-score"])
         if out.strip():
             print(_tail(out))
         if code != 0:

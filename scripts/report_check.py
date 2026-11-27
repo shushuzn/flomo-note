@@ -122,6 +122,8 @@ def main(argv=None) -> int:
     ap.add_argument("--text", help="直接给报告文本（与 --report 二选一）")
     ap.add_argument("--url", required=True, help="本轮素材链接，用于从账本取已建卡 id")
     ap.add_argument("--emit", help="校验通过后把可原样发出的报告写到该路径，并打印指纹")
+    ap.add_argument("--require-score", action="store_true",
+                    help="每条明细必须带 `#评分/N`（H35 新轮次口径；默认不要求，兼容历史报告）")
     args = ap.parse_args(argv)
 
     if not args.report and not args.text:
@@ -237,6 +239,10 @@ def main(argv=None) -> int:
     dup = [i for i in set(got_ids) if got_ids.count(i) > 1]
     if dup:
         errors.append(f"同一 id 写了多条明细：{', '.join(dup)}")
+    if getattr(args, "require_score", False):
+        for r in detail_rows:
+            if not re.search(r"#评分/(0|[1-9]\d?|100)(?![\d/])", r["tags"]):
+                errors.append(f"{r['id']} 明细缺评分位 `#评分/N`（按 SCORING.md 算，标签须与云端一致）")
 
     # ---- 2. 逐卡对账（回读云端，不手抄） ----
     # 同名只提示不拦：两张同名卡可分别更新，也可各自改名，检测层不替人做决定。

@@ -227,6 +227,16 @@ def main(argv: list[str] | None = None, client=None) -> int:
     bad = 0
     unverifiable = 0
     for tag in tags_wanted:
+        # 评分位（H35）是数值标签，不进标签树：结构固定、取值由 score_check.py 校验。
+        # 放进树核对只会得到「不存在」的假报，所以这里单独判写法。
+        if tag.split("/")[0] == "评分":
+            import re as _re
+            if _re.fullmatch(r"评分/(0|[1-9]\d?|100)", tag):
+                print(f"✓ {tag}  评分位（数值标签，免树核对；取值用 score_check.py 算）")
+            else:
+                print(f"✗ {tag}  评分位写法不合规：只允许 #评分/N，N 取 0–100 的整数")
+                bad += 1
+            continue
         info = inspect_tag(tag, tags)
         if info["dup_of"]:
             # 先判写法重复再判层级：全角斜杠会让层级判定失败，报「层级不合规」会把人
